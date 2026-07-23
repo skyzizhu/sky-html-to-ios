@@ -205,7 +205,7 @@ python3 scripts/build_ui_ir.py render-tree.json \
 
 运行 `scripts/validate_ui_ir.py`。自动映射置信度低于 `0.7` 的节点必须人工复核；IR 未通过校验时不得开始生成代码。
 
-随后读取 `references/text-calibration.md`、`references/responsive-auto-layout.md` 和 `references/page-regions-and-system-chrome.md`，运行 `scripts/build_text_calibration.py` 和 `scripts/analyze_responsive_layout.cjs`。固定缩小画板只允许将设计 token 一次性归一化到基准设备；原生页面始终使用 Auto Layout/SwiftUI layout，不能运行时整体缩放。文字行数、baseline、截断和富文本 range 进入专项验收。顶部栏、底部栏、浮动操作和 presentation 必须进入 screen regions，不得只靠 class 名在代码生成阶段临时猜测。
+随后读取 `references/text-calibration.md`、`references/responsive-auto-layout.md` 和 `references/page-regions-and-system-chrome.md`，运行 `scripts/build_text_calibration.py`、`scripts/analyze_responsive_layout.cjs` 和 `scripts/probe_scroll_region_behaviors.cjs`。固定缩小画板只允许将设计 token 一次性归一化到基准设备；原生页面始终使用 Auto Layout/SwiftUI layout，不能运行时整体缩放。文字行数、baseline、截断和富文本 range 进入专项验收。顶部栏、底部栏、浮动操作和 presentation 必须进入 screen regions；fixed、sticky、scroll-away、hide-on-scroll、collapse 和 appearance-change 必须用真实滚动采样判定，不得只靠 class 名或首帧位置猜测。
 
 多页面项目保留独立 `html-route-graph.json` 和 `interaction-state-graph.json` 作为跨 screen 契约。每个 screen 的 UI IR 负责页面内部结构；路由图负责 screen 集合，交互图负责 push/present 候选、sheet、popover、Tab、返回/关闭、计时跳转和局部状态。覆盖文件中的已确认原生所有权必须合并进 IR，禁止把所有页面压成一个 screen IR。
 
@@ -225,6 +225,8 @@ python3 scripts/build_ui_ir.py render-tree.json \
 - Web 状态 → 原生局部状态
 - 不可直接映射的 CSS → CALayer、Core Graphics 或局部 UIKit fallback
 - 系统无对应控件 → 项目组件、组合 View、自定义 UIControl/View 或在确有生命周期需要时自定义 ViewController
+
+总控必须运行 `scripts/build_native_architecture_plan.py` 生成 `native-architecture-plan.json`。它将 controller/container 所有权、导航栈、导航栏绘制、滚动行为、presentation 和 Safe Area 分开建模。系统导航栈与顶部栏是否使用系统样式是两个独立决策；滚动页面的容器宽高始终等于父容器 bounds，禁止用 `width/height - safeAreaInsets` 计算 frame。
 
 控件映射必须先判断语义，再选择原生控件，最后还原外观。不要仅按 HTML tag 映射，也不要为了视觉方便把 Button、输入框和选择控件退化成无语义的普通 View。
 
@@ -268,6 +270,7 @@ python3 scripts/generate_ios_from_ir.py \
 - 每个可交互节点使用 UI IR 中的稳定 ID 作为 `accessibilityIdentifier`。
 - 保持 source node → IR node → native view 的追溯关系。
 - Safe Area、状态栏、导航栏和 Home Indicator 只计算一次。
+- 每个 screen 必须有且只有一个 Safe Area owner。默认由 SwiftUI/`UIScrollView.adjustedContentInset` 管理系统安全区；滚动容器铺满父容器，不得预先减去顶部、底部、左侧或右侧安全距离。自绘栏位只追加栏位自身高度一次，禁止把系统 safe area 再手工加入 contentInset、padding 或 frame。
 - 自绘顶部栏和底部操作栏必须从滚动内容拆出；普通文档 footer 保持随内容滚动。
 - 容器轴向优先取浏览器 computed style 的 `display` 与 `flex-direction`；`layout.mode` 只作为缺失 computed style 时的回退。`row-reverse`/`column-reverse` 必须同步原生子节点顺序，不能因元素是 absolute/fixed 就丢失其内部 Flex 语义。
 - 浏览器测得的 `preferredWidth` 不能无条件套到每层 SwiftUI 容器。结构容器由父级 Stack、Grid 和可用宽度分配；叶子节点保留理想宽度，Button、输入和选择类原生控件在来源明确时保留最小宽度，避免文字内在尺寸把等宽操作栏压缩。

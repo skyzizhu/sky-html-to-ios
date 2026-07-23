@@ -28,12 +28,13 @@ python3 scripts/run_html_to_ios.py \
 6. 没有 Xcode 工程时创建 App 工程。
 7. 发现项目组件并核验本机 SDK。
 8. HTML 模式逐 screen 提取 render tree、截图、生成并校验 UI IR。
-9. 默认逐 screen 生成文本标定、多尺寸响应式分析、视觉状态清单和 HTML 状态基准图。
-10. 生成原生代码和 Payload，接入指定 target。
-11. 新建工程自动接入根 View/根 ViewController；现有工程只检测入口，不覆盖启动架构。
-12. 默认执行 iOS Simulator `xcodebuild`。
-13. 入口已接通时，创建隔离的 generator-owned UI Test target，逐 screen 执行状态动作、导出 xcresult 截图并归一化到目标逻辑 viewport。
-14. 对 required states 执行节点分区视觉门禁；任一状态缺失或超阈值时总控返回 `failed`，保留 review bundle 供 Agent 局部纠偏。
+9. 默认逐 screen 生成文本标定、多尺寸响应式分析、滚动区域行为探测、视觉状态清单和 HTML 状态基准图。
+10. 汇总生成 `native-architecture-plan.json`，验证 controller/navigation/presentation/Safe Area 单一所有权。
+11. 生成原生代码和 Payload，接入指定 target。
+12. 新建工程自动接入根 View/根 ViewController；现有工程只检测入口，不覆盖启动架构。
+13. 默认执行 iOS Simulator `xcodebuild`。
+14. 入口已接通时，创建隔离的 generator-owned UI Test target，逐 screen 执行状态动作、导出 xcresult 截图并归一化到目标逻辑 viewport。
+15. 对 required states 执行节点分区视觉门禁；任一状态缺失或超阈值时总控返回 `failed`，保留 review bundle 供 Agent 局部纠偏。
 
 ## 工程决策
 
@@ -91,10 +92,13 @@ python3 scripts/run_html_to_ios.py \
 - `ui-ir.json`
 - `text-calibration.json`
 - `responsive-layout.json`
+- `scroll-region-behavior.json`
 - `visual-state-manifest.json`
 - `visual-states/html/captures.json` 与同名状态截图
 - `visual-states/ios/captures.json` 与同名逻辑尺寸截图
 - `visual-review/review-bundle.json`、逐状态 diff/overlay/comparison/regions
+
+跨 screen 的 `<report-dir>/native-architecture-plan.json` 是生成器必须读取的结构契约。其硬约束包括：滚动容器使用父容器完整 bounds，系统 Safe Area 不从宽高预扣，每个 screen 只有一个 Safe Area owner，自绘栏位高度只作为内容 inset 追加一次。
 
 ## 入口策略
 
@@ -111,7 +115,7 @@ python3 scripts/run_html_to_ios.py \
 - `failed`：输入、工具、生成、工程接入或构建失败。
 - `planned`：`--dry-run` 只输出工程决策，不写文件。
 
-`qualityGates` 独立记录 UI IR、文本标定、响应式分析、HTML 基准、构建、iOS 状态截图和 visual diff。`iosStateCapture` 或 `visualDiff` 不是 `passed` 时，只能声称已完成对应前置阶段，不能声称高保真验收通过。
+`qualityGates` 独立记录 UI IR、文本标定、响应式分析、滚动行为、原生架构计划、HTML 基准、构建、iOS 状态截图和 visual diff。`iosStateCapture` 或 `visualDiff` 不是 `passed` 时，只能声称已完成对应前置阶段，不能声称高保真验收通过。
 
 ## 安全约束
 

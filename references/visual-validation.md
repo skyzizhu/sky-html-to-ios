@@ -39,6 +39,8 @@
 
 默认门禁同时检查 exact-size、全局 mismatch ratio、平均绝对差异、critical region mismatch 和 text edge mismatch。文本抗锯齿、阴影和透明 blur 需要更宽容；关键布局锚点建议控制在约 1–2pt。多模态只能解释失败并给出修复建议，不能覆盖 required state 的确定性失败。
 
+Review bundle 同时输出 `fidelityPercent`、`targetFidelityPercent=100` 和 `exactFidelityAchieved`。百分比按 required states 的全局像素、平均色差、critical region 与文字边缘差异加权计算；缺图按 0 计。只有全部 required states 尺寸一致且比较区域像素差异为 0 时，`exactFidelityAchieved` 才能为 true。阈值门禁通过表示达到工程验收线，不等于可以口头宣称“已经 100%”；100 是持续纠偏的最终目标和可验证结果。
+
 ## Mask
 
 可以 mask：

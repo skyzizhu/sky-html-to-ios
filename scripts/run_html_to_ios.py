@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = "html-to-ios-orchestration-1.2"
+SCHEMA_VERSION = "html-to-ios-orchestration-1.3"
 PROJECT_MARKER_NAME = ".html-to-ios-created-project.json"
 SKIP_PARTS = {".git", ".build", "build", "DerivedData", "Pods", "Carthage", "node_modules", "xcuserdata"}
 
@@ -178,6 +178,8 @@ class Orchestrator:
                 "uiIRValidation": "pending",
                 "textCalibration": "pending" if args.html else "not-applicable-with-supplied-ir",
                 "responsiveAnalysis": "pending" if args.html else "not-applicable-with-supplied-ir",
+                "scrollBehaviorAnalysis": "pending" if args.html else "not-applicable-with-supplied-ir",
+                "nativeArchitecturePlan": "pending",
                 "htmlVisualBaselines": "pending" if args.html and not args.skip_visual_baselines else "skipped",
                 "build": "pending",
                 "iosStateCapture": "pending-agent-runtime",
@@ -561,12 +563,14 @@ class Orchestrator:
         ir_paths: list[Path] = []
         text_calibrations: list[str] = []
         responsive_analyses: list[str] = []
+        scroll_behavior_analyses: list[str] = []
         visual_manifests: list[str] = []
         html_state_captures: list[str] = []
         visual_review_plans: list[dict[str, Any]] = []
         self.artifacts["uiIRs"] = []
         self.artifacts["textCalibrations"] = text_calibrations
         self.artifacts["responsiveAnalyses"] = responsive_analyses
+        self.artifacts["scrollBehaviorAnalyses"] = scroll_behavior_analyses
         if not self.args.skip_visual_baselines:
             self.artifacts["visualStateManifests"] = visual_manifests
             self.artifacts["htmlStateCaptures"] = html_state_captures
@@ -667,6 +671,34 @@ class Orchestrator:
             responsive_analyses.append(str(responsive_analysis))
             self.report["qualityGates"]["responsiveAnalysis"] = "generated-for-processed-screens"
 
+            scroll_behavior = screen_dir / "scroll-region-behavior.json"
+            scroll_command: list[str | Path] = [
+                self.node,
+                self.scripts / "probe_scroll_region_behaviors.cjs",
+                "--html",
+                html,
+                "--out",
+                scroll_behavior,
+                "--screen-id",
+                screen_id,
+                "--width",
+                str(self.args.width),
+                "--height",
+                str(self.args.height),
+            ]
+            if container_selector:
+                scroll_command.extend(["--selector", str(container_selector)])
+            if activation.get("type") == "click" and selectors:
+                scroll_command.extend(["--activate-selector", str(selectors[0])])
+            self.run_command(
+                f"probe-scroll-behavior-{screen_id}",
+                scroll_command,
+                environment=self.node_environment,
+                parse_json=False,
+            )
+            scroll_behavior_analyses.append(str(scroll_behavior))
+            self.report["qualityGates"]["scrollBehaviorAnalysis"] = "generated-for-processed-screens"
+
             if not self.args.skip_visual_baselines:
                 visual_manifest = screen_dir / "visual-state-manifest.json"
                 self.run_command(
@@ -731,9 +763,32 @@ class Orchestrator:
             "uiIRValidation": "passed",
             "textCalibration": "generated",
             "responsiveAnalysis": "generated",
+            "scrollBehaviorAnalysis": "generated",
             "htmlVisualBaselines": "captured" if visual_manifests else "skipped",
         })
         return ir_paths
+
+    def build_native_architecture_plan(
+        self,
+        ir_paths: list[Path],
+        ui_stack: str,
+        minimum_ios: str,
+    ) -> Path:
+        plan = self.report_dir / "native-architecture-plan.json"
+        command: list[str | Path] = [sys.executable, self.scripts / "build_native_architecture_plan.py"]
+        for path in ir_paths:
+            command.extend(["--ir", path])
+        for path in self.artifacts.get("scrollBehaviorAnalyses") or []:
+            command.extend(["--scroll-behavior", Path(path)])
+        command.extend([
+            "--out", plan,
+            "--ui-stack", ui_stack,
+            "--minimum-ios", minimum_ios,
+        ])
+        self.run_command("build-native-architecture-plan", command)
+        self.artifacts["nativeArchitecturePlan"] = str(plan)
+        self.report["qualityGates"]["nativeArchitecturePlan"] = "passed"
+        return plan
 
     def validate_supplied_irs(self) -> list[Path]:
         paths = [resolve_input(path, self.workspace) for path in self.args.ir or []]
@@ -759,12 +814,18 @@ class Orchestrator:
         source_root: Path,
         ui_stack: str,
         minimum_ios: str,
+        architecture_plan: Path,
     ) -> Path:
         generated_dir = source_root / "Generated" / "HTMLToIOS"
         command: list[str | Path] = [sys.executable, self.scripts / "generate_ios_from_ir.py"]
         for path in ir_paths:
             command.extend(["--ir", path])
-        command.extend(["--out-dir", generated_dir, "--ui-stack", ui_stack, "--module-name", target])
+        command.extend([
+            "--out-dir", generated_dir,
+            "--ui-stack", ui_stack,
+            "--module-name", target,
+            "--architecture-plan", architecture_plan,
+        ])
         generation = self.run_command("generate-ios-code", command)
         self.run_command(
             "integrate-generated-sources",
@@ -970,7 +1031,8 @@ struct ContentView: View {
             ir_paths = self.build_irs_from_html(ui_stack, minimum_ios, sdk_report, html_contracts)
         if ir_paths is None:
             raise OrchestrationError("prepare-ui-ir", "No UI IR inputs are available.")
-        self.generate_and_integrate(ir_paths, project, target, source_root, ui_stack, minimum_ios)
+        architecture_plan = self.build_native_architecture_plan(ir_paths, ui_stack, minimum_ios)
+        self.generate_and_integrate(ir_paths, project, target, source_root, ui_stack, minimum_ios, architecture_plan)
         self.wire_managed_entry(source_root, ui_stack)
         symbol = "HTMLToIOSGeneratedRootView" if ui_stack == "swiftui" else "HTMLToIOSGeneratedRootViewController"
         self.entry_wired = self.entry_wired or self.detect_existing_entry(source_root, symbol)

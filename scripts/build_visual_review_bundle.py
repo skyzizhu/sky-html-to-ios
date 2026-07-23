@@ -84,17 +84,32 @@ def main() -> int:
         if diagnostics.get("maxTextEdgeMismatchRatio", 0) > args.max_text_edge_mismatch:
             failures.append({"gate": "text-edge-mismatch", "actual": diagnostics["maxTextEdgeMismatchRatio"], "maximum": args.max_text_edge_mismatch})
         passed = not failures
+        fidelity = max(0.0, 100.0 * (1.0 - (
+            report["mismatchRatio"] * 0.45
+            + min(report["meanAbsoluteDifference"] / 255.0, 1.0) * 0.25
+            + min(diagnostics.get("maxCriticalRegionMismatchRatio", 0), 1.0) * 0.20
+            + min(diagnostics.get("maxTextEdgeMismatchRatio", 0), 1.0) * 0.10
+        )))
+        if report["resizedCurrent"]:
+            fidelity = min(fidelity, 95.0)
         results.append({
             "id": state_id,
             "required": state.get("required", True),
             "status": "passed" if passed else "failed-threshold",
             "gateFailures": failures,
+            "fidelityPercent": round(fidelity, 4),
+            "exactPixelMatch": not report["resizedCurrent"] and report["mismatchRatio"] == 0 and report["meanAbsoluteDifference"] == 0,
             "report": report,
         })
 
     missing_required = [item["id"] for item in results if item["required"] and item["status"] == "missing"]
     review_required = [item["id"] for item in results if item["status"] == "failed-threshold"]
     required_failures = [item["id"] for item in results if item["required"] and item["status"] == "failed-threshold"]
+    required_states = [item for item in results if item["required"]]
+    fidelity_percent = round(
+        sum(float(item.get("fidelityPercent") or 0) for item in required_states) / max(1, len(required_states)),
+        4,
+    )
     image_capability, capability_source = resolve_image_capability(args.multimodal_capability)
     if missing_required:
         multimodal_status = "blocked-missing-screenshots"
@@ -130,6 +145,9 @@ def main() -> int:
             "missingRequired": missing_required,
             "requiredFailures": required_failures,
             "qualityGate": "passed" if not missing_required and not required_failures else "failed",
+            "targetFidelityPercent": 100.0,
+            "fidelityPercent": fidelity_percent,
+            "exactFidelityAchieved": bool(required_states) and not missing_required and all(item.get("exactPixelMatch") for item in required_states),
             "readyForAgentReview": not missing_required and bool(review_required) and image_capability == "available",
             "multimodalReviewStatus": multimodal_status,
         },

@@ -120,9 +120,9 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("Color(htmlToIOS: screen.root.style.background)", runtime_text)
             self.assertIn("screen.root.primaryScrollContent ?? screen.root", runtime_text)
             self.assertIn(".accessibilityIdentifier(screen.root.id)", runtime_text)
-            self.assertIn(".padding(.bottom, screen.bottomBar?.style.preferredHeight ?? 0)", runtime_text)
-            self.assertIn(".overlay(alignment: .bottom)", runtime_text)
-            self.assertIn(".ignoresSafeArea(.container, edges: .bottom)", runtime_text)
+            self.assertNotIn(".padding(.bottom, screen.bottomBar?.style.preferredHeight ?? 0)", runtime_text)
+            self.assertIn(".safeAreaInset(edge: .bottom, spacing: 0)", runtime_text)
+            self.assertIn("screen.safeArea.owner == \"system\"", runtime_text)
             self.assertIn("private struct HTMLToIOSRichTextView: View", runtime_text)
             self.assertIn("Text(attributedText)", runtime_text)
             self.assertIn("private struct HTMLToIOSFrameModifier: ViewModifier", runtime_text)
@@ -469,7 +469,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("safeAreaInset(edge: .top", runtime)
             self.assertIn("presentationDetents", root_source)
 
-    def test_source_status_bar_height_aligns_native_content_coordinates(self) -> None:
+    def test_system_safe_area_owns_status_bar_without_source_height_compensation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             payload = ir("home")
@@ -486,13 +486,20 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             out_dir = root / "out"
             self.run_generator([path], out_dir)
             generated = json.loads((out_dir / PAYLOAD).read_text(encoding="utf-8"))
-            self.assertEqual(generated["screens"][0]["sourceStatusBarHeight"], 52)
+            self.assertIsNone(generated["screens"][0]["sourceStatusBarHeight"])
+            self.assertEqual(generated["screens"][0]["safeArea"]["owner"], "system")
+            self.assertFalse(generated["screens"][0]["safeArea"]["subtractFromContainerDimensions"])
             runtime = (out_dir / RUNTIME_FILE).read_text(encoding="utf-8")
-            self.assertIn(".padding(.top, sourceStatusBarHeight)", runtime)
+            self.assertIn("screen.safeArea.owner != \"system\"", runtime)
+            self.assertIn(".safeAreaInset(edge: .top, spacing: 0)", runtime)
             uikit_dir = root / "uikit-out"
             self.run_generator([path], uikit_dir, ui_stack="uikit")
             uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
-            self.assertIn("constant: CGFloat(screen.sourceStatusBarHeight ?? 0)", uikit_runtime)
+            self.assertIn("scroll.contentInsetAdjustmentBehavior = screen.safeArea.contentInsetAdjustment == \"never\" ? .never : .automatic", uikit_runtime)
+            self.assertIn("scroll.topAnchor.constraint(equalTo: view.topAnchor)", uikit_runtime)
+            self.assertIn("scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor)", uikit_runtime)
+            self.assertNotIn("scroll.topAnchor.constraint(equalTo: top.bottomAnchor)", uikit_runtime)
+            self.assertNotIn("scroll.bottomAnchor.constraint(equalTo: bottom.topAnchor)", uikit_runtime)
 
     def test_symbol_text_is_promoted_to_directional_system_icon(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

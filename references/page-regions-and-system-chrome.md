@@ -23,6 +23,8 @@
 
 `native` 必须生成系统导航容器，并将 HTML 返回/操作节点提升为 leading、principal、trailing 或 primary toolbar item；原 HTML top bar 不再重复渲染。`custom` 保留为 safe-area 内自绘区域，系统导航栏隐藏。`immersive` 允许背景越过顶部 Safe Area，但标题、返回和交互点击区仍要安全避让。返回按钮的 `system|custom|hidden` 与页面进入方式分别建模，不能以隐藏系统返回按钮代替正确的 pop/dismiss 所有权。
 
+导航容器所有权、导航栏绘制方式和滚动行为必须分开记录。页面可以处于 `UINavigationController`/`NavigationStack` 中，但视觉上使用 custom top bar；也可以使用系统栏并通过 large-title collapse、scroll-edge appearance 或 hide-on-swipe 响应滚动。只有浏览器滚动探测确认 region 随内容移出时才实现 scroll-away；确认先移动后吸附时才实现 sticky；确认透明度、transform 或高度变化时分别映射 hide/collapse/appearance-change。无法分类时保持 fixed 并进入必检状态，禁止为了“像导航”就强行使用系统置顶栏。
+
 ## 底部区域
 
 候选证据包括：贴近应用根底部、宽度通常超过 72%、高度约 36–180pt、固定或吸底、横向排列，以及包含一个或多个交互控件。根据语义分为：

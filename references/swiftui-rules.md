@@ -63,6 +63,10 @@ content
 - 全屏背景可以 `.ignoresSafeArea()`，内容仍通过 safe area 或 `safeAreaInset` 避让。
 - 自定义应用导航栏不要同时再显示 `NavigationStack` 默认导航栏。
 - 底部自定义 Tab Bar 与 Home Indicator 间距只计算一次。
+- `ScrollView` 使用父容器提供的完整尺寸；禁止先用 `GeometryReader` 计算 `proxy.size - safeAreaInsets`，也禁止把来源 HTML 的状态栏/Home Indicator 高度再次从 frame 中扣除。
+- 系统管理页面使用 `safeAreaInset(edge:spacing:)` 放置自绘 top/bottom bar。`safeAreaInset` 已改变可用内容区域时，不得再给滚动内容添加同一栏位高度的 `.padding`。
+- 全屏背景可以越过安全区，但背景越界不等于内容越界。仅在架构计划标记 `immersive-content` 时让主内容忽略 Safe Area，并由该页面一次性负责标题、按钮和底栏的可点击安全距离。
+- 原生 `TabView`、NavigationStack toolbar 和系统 sheet 自己拥有相应安全区；升级为这些系统容器后，删除 HTML 模拟栏位及其 inset。
 
 ## 状态与导航
 

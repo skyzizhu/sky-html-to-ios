@@ -53,6 +53,10 @@
 - 接入已有 `UINavigationController`、Coordinator 或 Router。
 - 自定义导航栏时按项目方式隐藏系统 navigation bar，避免双导航栏。
 - full-screen、page sheet、popover 和 overlay 按交互图分类，不用一个 `present` 处理全部语义。
+- 滚动页的 `UIScrollView` leading/trailing/top/bottom 约束到父 View 完整 bounds，不创建 `safeAreaInsets` 相减后的宽高常量，也不在 `viewDidLoad` 读取尚未稳定的 `view.safeAreaInsets`。
+- 系统管理页面保留 `contentInsetAdjustmentBehavior = .automatic`，由 `adjustedContentInset` 反映状态栏、导航栏、Tab Bar 和 Home Indicator。开启 `.automatic` 后不得再把 `view.safeAreaInsets` 加入 `contentInset`。
+- 自绘 top/bottom bar 可以覆盖在全尺寸 ScrollView 上，只把栏位自身实际高度追加到 `contentInset`/`scrollIndicatorInsets` 一次。系统安全区仍由 `.automatic` 负责。
+- 只有架构计划明确为 `immersive-content` 或完全自管容器时才使用 `.never`；此时页面必须独立处理所有系统遮挡，并在旋转、分屏、键盘和 interactive transition 后重新验证。
 
 ## 事件
 

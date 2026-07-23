@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.7.0"
+GENERATOR_VERSION = "1.8.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -51,6 +51,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-dir", required=True, type=Path)
     parser.add_argument("--ui-stack", choices=("swiftui", "uikit"))
     parser.add_argument("--module-name", default="HTMLToIOSGenerated")
+    parser.add_argument("--architecture-plan", type=Path)
     parser.add_argument("--conflict-dir", type=Path)
     parser.add_argument("--allow-unresolved", action="store_true")
     parser.add_argument("--overwrite-modified", action="store_true")
@@ -85,6 +86,28 @@ def load_ir(path: Path) -> dict[str, Any]:
     if not data.get("screens"):
         raise ValueError(f"{path}: no screens found")
     return data
+
+
+def load_architecture_plan(path: Path | None) -> dict[str, dict[str, Any]]:
+    if path is None:
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("schemaVersion") != "native-architecture-plan-1.0":
+        raise ValueError(f"{path}: expected native-architecture-plan-1.0")
+    if not (data.get("invariants") or {}).get("safeAreaNeverSubtractedFromWidthOrHeight"):
+        raise ValueError(f"{path}: Safe Area dimension invariant is missing")
+    screens = data.get("screens") or []
+    result = {str(screen.get("screenId") or ""): screen for screen in screens}
+    if "" in result:
+        raise ValueError(f"{path}: every architecture screen needs a screenId")
+    for screen_id, screen in result.items():
+        safe_area = screen.get("safeArea") or {}
+        scroll = screen.get("scroll") or {}
+        if safe_area.get("subtractFromContainerDimensions") is not False:
+            raise ValueError(f"{path}: {screen_id} attempts to subtract Safe Area from container dimensions")
+        if scroll.get("subtractSafeAreaFromFrame") is not False:
+            raise ValueError(f"{path}: {screen_id} attempts to subtract Safe Area from a scroll frame")
+    return result
 
 
 def safe_identifier(value: str) -> str:
@@ -649,7 +672,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     return payload
 
 
-def build_screen(ir: dict[str, Any]) -> dict[str, Any]:
+def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None) -> dict[str, Any]:
     screen = ir["screens"][0]
     screen_id = str(screen.get("id") or "screen")
     nodes_list = screen.get("nodes") or []
@@ -927,13 +950,24 @@ def build_screen(ir: dict[str, Any]) -> dict[str, Any]:
                 })
                 break
 
+    architecture = architecture or {}
+    safe_area = architecture.get("safeArea") if isinstance(architecture.get("safeArea"), dict) else {}
+    scroll_plan = architecture.get("scroll") if isinstance(architecture.get("scroll"), dict) else {}
+    safe_area_payload = {
+        "owner": str(safe_area.get("owner") or "system"),
+        "contentInsetAdjustment": str(scroll_plan.get("contentInsetAdjustment") or "automatic"),
+        "containerWidthPolicy": "full-parent-bounds",
+        "containerHeightPolicy": "full-parent-bounds",
+        "subtractFromContainerDimensions": False,
+    }
     return {
         "id": screen_id,
         "swiftCase": safe_identifier(screen_id),
         "moduleId": str(screen.get("moduleId") or "").strip() or None,
         "title": navigation["title"],
         "showsNavigationBar": navigation_style == "native",
-        "sourceStatusBarHeight": source_status_bar_height if aligns_to_source_status_bar else None,
+        "sourceStatusBarHeight": source_status_bar_height if aligns_to_source_status_bar and safe_area_payload["owner"] != "system" else None,
+        "safeArea": safe_area_payload,
         "navigation": navigation,
         "tabContainer": tab_container,
         "root": root,
@@ -973,12 +1007,21 @@ struct HTMLToIOSScreenSpec: Codable, Identifiable {{
     let title: String
     let showsNavigationBar: Bool
     let sourceStatusBarHeight: Double?
+    let safeArea: HTMLToIOSSafeAreaSpec
     let navigation: HTMLToIOSNavigationSpec
     let root: HTMLToIOSNodeSpec
     let topBar: HTMLToIOSNodeSpec?
     let bottomBar: HTMLToIOSNodeSpec?
     let presentations: [HTMLToIOSPresentationSpec]
     let automaticActions: [HTMLToIOSActionSpec]
+}}
+
+struct HTMLToIOSSafeAreaSpec: Codable {{
+    let owner: String
+    let contentInsetAdjustment: String
+    let containerWidthPolicy: String
+    let containerHeightPolicy: String
+    let subtractFromContainerDimensions: Bool
 }}
 
 enum HTMLToIOSLaunchConfiguration {{
@@ -1849,7 +1892,6 @@ struct HTMLToIOSGeneratedScrollContent: View {
             ScrollView {
                 HTMLToIOSNativeNodeView(store: store, spec: scrollRoot)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(.bottom, screen.bottomBar?.style.preferredHeight ?? 0)
                     .id(screen.root.id)
             }
             .accessibilityIdentifier(screen.root.id)
@@ -1906,7 +1948,7 @@ struct HTMLToIOSGeneratedScreenView: View {
     }
 
     @ViewBuilder private var chromeAlignedNavigationContent: some View {
-        if let sourceStatusBarHeight = screen.sourceStatusBarHeight, sourceStatusBarHeight > 0 {
+        if screen.safeArea.owner != "system", let sourceStatusBarHeight = screen.sourceStatusBarHeight, sourceStatusBarHeight > 0 {
             navigationContent
                 .padding(.top, sourceStatusBarHeight)
                 .ignoresSafeArea(.container, edges: .top)
@@ -1915,20 +1957,31 @@ struct HTMLToIOSGeneratedScreenView: View {
         }
     }
 
-    private var insetContent: some View {
-        chromeAlignedNavigationContent
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if let topBar = screen.topBar {
-                HTMLToIOSNativeNodeView(store: store, spec: topBar)
-                    .frame(maxWidth: .infinity)
-            }
+    @ViewBuilder private var insetContent: some View {
+        if screen.safeArea.owner == "system" {
+            chromeAlignedNavigationContent
+                .safeAreaInset(edge: .top, spacing: 0) { topBarContent }
+                .safeAreaInset(edge: .bottom, spacing: 0) { bottomBarContent }
+        } else {
+            chromeAlignedNavigationContent
+                .ignoresSafeArea(.container)
+                .overlay(alignment: .top) { topBarContent }
+                .overlay(alignment: .bottom) { bottomBarContent }
         }
-        .overlay(alignment: .bottom) {
-            if let bottomBar = screen.bottomBar {
-                HTMLToIOSNativeNodeView(store: store, spec: bottomBar)
-                    .frame(maxWidth: .infinity)
-                    .ignoresSafeArea(.container, edges: .bottom)
-            }
+    }
+
+    @ViewBuilder private var topBarContent: some View {
+        if let topBar = screen.topBar {
+            HTMLToIOSNativeNodeView(store: store, spec: topBar)
+                .frame(maxWidth: .infinity)
+        }
+    }
+
+    @ViewBuilder private var bottomBarContent: some View {
+        if let bottomBar = screen.bottomBar {
+            HTMLToIOSNativeNodeView(store: store, spec: bottomBar)
+                .frame(maxWidth: .infinity)
+                .background { Color(htmlToIOS: bottomBar.style.background).ignoresSafeArea(edges: .bottom) }
         }
     }
 
@@ -2304,6 +2357,9 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
     let actionHandler: (HTMLToIOSActionSpec?) -> Void
     private let generatedState = HTMLToIOSUIKitState()
     private var scheduledAutomaticActions = false
+    private weak var generatedScrollView: UIScrollView?
+    private weak var generatedTopBar: UIView?
+    private weak var generatedBottomBar: UIView?
 
     init(screen: HTMLToIOSScreenSpec, actionHandler: @escaping (HTMLToIOSActionSpec?) -> Void) {
         self.screen = screen; self.actionHandler = actionHandler; super.init(nibName: nil, bundle: nil)
@@ -2313,6 +2369,20 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateGeneratedLayers(in: view)
+        updateGeneratedScrollInsets()
+    }
+
+    private func updateGeneratedScrollInsets() {
+        guard let scroll = generatedScrollView else { return }
+        let insets = UIEdgeInsets(
+            top: generatedTopBar?.bounds.height ?? 0,
+            left: 0,
+            bottom: generatedBottomBar?.bounds.height ?? 0,
+            right: 0
+        )
+        if scroll.contentInset != insets { scroll.contentInset = insets }
+        if scroll.verticalScrollIndicatorInsets != insets { scroll.verticalScrollIndicatorInsets = insets }
+        if scroll.horizontalScrollIndicatorInsets != insets { scroll.horizontalScrollIndicatorInsets = insets }
     }
 
     private func updateGeneratedLayers(in current: UIView) {
@@ -2338,14 +2408,18 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
     }
 
     private func renderScreen() {
-        let previousOffset = view.subviews.compactMap { $0 as? UIScrollView }.first?.contentOffset ?? .zero
+        let previousOffset = generatedScrollView?.contentOffset ?? .zero
+        generatedScrollView = nil; generatedTopBar = nil; generatedBottomBar = nil
         view.subviews.forEach { $0.removeFromSuperview() }
         let renderer = HTMLToIOSNodeRenderer(state: generatedState, actionHandler: { [weak self] action in self?.perform(action) })
         let scroll = UIScrollView(); let content = wrapGeneratedContent(renderer.makeView(screen.root))
         scroll.backgroundColor = view.backgroundColor
+        scroll.contentInsetAdjustmentBehavior = screen.safeArea.contentInsetAdjustment == "never" ? .never : .automatic
         scroll.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(scroll); scroll.addSubview(content)
+        generatedScrollView = scroll
         var constraints = [
             scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: view.topAnchor), scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             content.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
             content.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
@@ -2355,32 +2429,25 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
         if let topBar = screen.topBar {
             let top = renderer.makeView(topBar)
             view.addSubview(top)
+            generatedTopBar = top
             constraints.append(contentsOf: [
                 top.leadingAnchor.constraint(equalTo: view.leadingAnchor),
                 top.trailingAnchor.constraint(equalTo: view.trailingAnchor),
                 top.topAnchor.constraint(
-                    equalTo: screen.sourceStatusBarHeight == nil ? view.safeAreaLayoutGuide.topAnchor : view.topAnchor,
+                    equalTo: screen.safeArea.owner == "system" ? view.safeAreaLayoutGuide.topAnchor : view.topAnchor,
                     constant: CGFloat(screen.sourceStatusBarHeight ?? 0)
-                ),
-                scroll.topAnchor.constraint(equalTo: top.bottomAnchor)
+                )
             ])
-        } else {
-            constraints.append(scroll.topAnchor.constraint(
-                equalTo: view.topAnchor,
-                constant: CGFloat(screen.sourceStatusBarHeight ?? 0)
-            ))
         }
         if let bottomBar = screen.bottomBar {
             let bottom = renderer.makeView(bottomBar)
             view.addSubview(bottom)
+            generatedBottomBar = bottom
             constraints.append(contentsOf: [
                 bottom.leadingAnchor.constraint(equalTo: view.leadingAnchor),
                 bottom.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-                bottom.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-                scroll.bottomAnchor.constraint(equalTo: bottom.topAnchor)
+                bottom.bottomAnchor.constraint(equalTo: screen.safeArea.owner == "system" ? view.safeAreaLayoutGuide.bottomAnchor : view.bottomAnchor)
             ])
-        } else {
-            constraints.append(scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor))
         }
         NSLayoutConstraint.activate(constraints)
         view.layoutIfNeeded()
@@ -2559,6 +2626,7 @@ final class HTMLToIOSGeneratedCoordinator: NSObject, UITabBarControllerDelegate 
                     title: "",
                     showsNavigationBar: false,
                     sourceStatusBarHeight: nil,
+                    safeArea: HTMLToIOSSafeAreaSpec(owner: "system", contentInsetAdjustment: "automatic", containerWidthPolicy: "full-parent-bounds", containerHeightPolicy: "full-parent-bounds", subtractFromContainerDimensions: false),
                     navigation: HTMLToIOSNavigationSpec(style: "hidden", title: "", titleMode: "inline", scrollEdgeAppearance: "automatic", backButton: "system", toolbarItems: []),
                     root: presentation.node,
                     topBar: nil,
@@ -2991,7 +3059,12 @@ def main() -> int:
     if ui_stack not in {"swiftui", "uikit"}:
         raise ValueError("--ui-stack is required when UI IR files disagree")
 
-    screens = [build_screen(ir) for ir in irs]
+    architecture_by_screen = load_architecture_plan(args.architecture_plan)
+    ir_screen_ids = [str((ir.get("screens") or [{}])[0].get("id") or "screen") for ir in irs]
+    unknown_architecture_screens = sorted(set(architecture_by_screen) - set(ir_screen_ids))
+    if unknown_architecture_screens:
+        raise ValueError("architecture plan contains unknown screens: " + ", ".join(unknown_architecture_screens))
+    screens = [build_screen(ir, architecture_by_screen.get(screen_id)) for ir, screen_id in zip(irs, ir_screen_ids)]
     ids = [screen["id"] for screen in screens]
     if len(ids) != len(set(ids)):
         raise ValueError("screen IDs must be unique")
@@ -3052,6 +3125,7 @@ def main() -> int:
         "screenIDs": ids,
         "screenModules": {screen["id"]: screen["moduleId"] for screen in screens},
         "inputs": [{"path": str(path.resolve()), "sha256": sha256_file(path)} for path in args.ir],
+        "architecturePlan": str(args.architecture_plan.resolve()) if args.architecture_plan else None,
     }
     manifest = write_incremental(args.out_dir, conflict_dir, files, metadata, args.overwrite_modified)
     asset_catalog = write_asset_catalog(args.out_dir, irs)

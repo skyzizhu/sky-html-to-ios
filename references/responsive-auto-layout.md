@@ -18,6 +18,17 @@ designScale = targetBaselineWidthPt / sourceAppRootWidthCssPx
 
 将字号、边距、圆角和固定控件尺寸转换为基准 token；随后用原生约束布局，运行时不再整体缩放。模拟状态栏、刘海和 Home Indicator 不参与等比换算，由 iOS Safe Area 接管。
 
+## Safe Area 与容器尺寸
+
+Safe Area 是内容避让信息，不是设备画布尺寸。滚动页面先让 `ScrollView`/`UIScrollView` 铺满父容器，再由系统在内容层形成可见 inset：
+
+```text
+scrollFrame = parentBounds
+adjustedContentInset = systemSafeArea + nativeSystemChrome + customBarInsetOnce
+```
+
+禁止生成 `scrollHeight = viewportHeight - safeAreaTop - safeAreaBottom` 或对应宽度公式。这样会在 SwiftUI/UIKit 自动适配后重复扣减，并导致背景、滚动指示器、吸顶栏和底部弹层坐标错误。普通非滚动内容是否约束到 `safeAreaLayoutGuide` 仍按视觉所有权判断；这个规则不等于所有内容都忽略 Safe Area。
+
 ## 多宽度分析
 
 ```bash

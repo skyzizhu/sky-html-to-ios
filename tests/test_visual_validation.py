@@ -215,6 +215,8 @@ class VisualValidationTests(unittest.TestCase):
             bundle = json.loads((out_dir / "review-bundle.json").read_text(encoding="utf-8"))
             self.assertEqual(bundle["summary"]["qualityGate"], "failed")
             self.assertEqual(bundle["summary"]["requiredFailures"], ["initial"])
+            self.assertLess(bundle["summary"]["fidelityPercent"], 100)
+            self.assertFalse(bundle["summary"]["exactFidelityAchieved"])
             self.assertIn("critical-region-mismatch", {item["gate"] for item in bundle["states"][0]["gateFailures"]})
 
     def test_review_bundle_applies_manifest_comparison_masks(self) -> None:
@@ -244,6 +246,9 @@ class VisualValidationTests(unittest.TestCase):
             report = json.loads((out_dir / "initial" / "report.json").read_text(encoding="utf-8"))
             self.assertEqual(report["mismatchRatio"], 0)
             self.assertEqual(report["masks"], [[0, 0, 80, 20]])
+            bundle = json.loads((out_dir / "review-bundle.json").read_text(encoding="utf-8"))
+            self.assertEqual(bundle["summary"]["fidelityPercent"], 100)
+            self.assertTrue(bundle["summary"]["exactFidelityAchieved"])
 
 
 if __name__ == "__main__":
