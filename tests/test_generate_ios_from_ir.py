@@ -236,6 +236,9 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("private var scrollContainer: some View", swiftui_runtime)
             self.assertIn(".lineLimit(style.textLineLimit)", swiftui_runtime)
             self.assertIn("HTMLToIOSAspectRatioModifier", swiftui_runtime)
+            self.assertIn("style.fixedWidth.map { CGFloat($0) }", swiftui_runtime)
+            self.assertIn("let typography = content", swiftui_runtime)
+            self.assertNotIn("map(CGFloat.init)", swiftui_runtime)
             self.assertIn(".clipped()", swiftui_runtime)
 
             uikit_dir = root / "uikit"

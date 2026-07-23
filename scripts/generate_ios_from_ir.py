@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.10.0"
+GENERATOR_VERSION = "1.10.1"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -1647,10 +1647,10 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
         let minWidth: CGFloat? = (enforcesPreferredWidth || style.resistsCompression == true) && preferredWidth > 0 ? preferredWidth : nil
         let rawMinHeight = style.minHeight ?? 0
         let minHeight: CGFloat? = rawMinHeight > 0 ? CGFloat(rawMinHeight) : nil
-        let fixedWidth = style.fixedWidth.map(CGFloat.init)
-        let fixedHeight = style.fixedHeight.map(CGFloat.init)
+        let fixedWidth: CGFloat? = style.fixedWidth.map { CGFloat($0) }
+        let fixedHeight: CGFloat? = style.fixedHeight.map { CGFloat($0) }
         let lineSpacing = max((style.lineHeight ?? style.fontSize ?? 16) - (style.fontSize ?? 16), 0)
-        return content
+        let typography = content
             .font(.system(size: style.fontSize ?? 16, weight: fontWeight(style.fontWeight)))
             .foregroundStyle(foreground)
             .multilineTextAlignment(alignment)
@@ -1659,11 +1659,13 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
             .tracking(style.letterSpacing ?? 0)
             .fixedSize(horizontal: style.preservesIntrinsicWidth == true, vertical: false)
             .layoutPriority(style.preservesIntrinsicWidth == true ? 1 : 0)
+        let insetContent = typography
             .padding(.top, padding.indices.contains(0) ? padding[0] : 0)
             .padding(.trailing, padding.indices.contains(1) ? padding[1] : 0)
             .padding(.bottom, padding.indices.contains(2) ? padding[2] : 0)
             .padding(.leading, padding.indices.contains(3) ? padding[3] : 0)
-            .modifier(HTMLToIOSAspectRatioModifier(ratio: style.aspectRatio.map(CGFloat.init)))
+            .modifier(HTMLToIOSAspectRatioModifier(ratio: style.aspectRatio.map { CGFloat($0) }))
+        let framedContent = insetContent
             .modifier(HTMLToIOSFrameModifier(
                 fixedWidth: fixedWidth,
                 fixedHeight: fixedHeight,
@@ -1672,6 +1674,7 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
                 maxWidth: maxWidth,
                 minHeight: minHeight
             ))
+        return framedContent
             .modifier(HTMLToIOSBackgroundModifier(style: style, assetName: assetName, backgroundOverride: backgroundOverride, gradientOverride: gradientOverride))
             .modifier(HTMLToIOSClipModifier(style: style))
             .modifier(HTMLToIOSBorderModifier(style: style))
