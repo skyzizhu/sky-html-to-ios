@@ -58,6 +58,10 @@ NODE_PATH=<playwright-node-modules> node scripts/analyze_responsive_layout.cjs \
 - 单行紧凑文本：保留 measured line count、nowrap 和 compression resistance；只有空间策略明确允许时才截断，不能静默换行改变 item 高度。
 - `preferredHeight` 必须保留浏览器实测高度，不得用统一经验上限截断。媒体占位图、列表预估高度等需要限制时，应在具体控件分支局部限制，不能污染叠层、画布、圆环和大型视觉容器的几何信息。
 - 没有文本和子节点、仅依赖背景、边框、圆角、渐变或阴影表达的视觉叶节点没有可靠 intrinsic content size。对于非满宽的此类节点，必须保留实测宽高或等价约束；否则边框环、光圈、装饰条和占位块会在原生布局中塌缩为零。
+- `::before`/`::after`、`aria-hidden` 等装饰节点只表示不进入辅助功能树，不表示视觉上可以删除。只要它们有背景、边框、渐变、阴影或资源，就必须保留，并按相对最近定位父容器的实测中心偏移放入 overlay。
+- 当容器全部可见子项均为 absolute/fixed 时，应生成 `ZStack`/自定义 overlay container。容器同时包含流式和 absolute/fixed 子项时，必须在生成模型中拆分为 `children` 与 `overlayChildren`：前者参与 VStack/HStack/UIStackView 的 intrinsic size 计算，后者使用相对父容器中心的定位叠加，不得撑大、压缩或重排父容器。
+- 宽度小于父容器约 75% 的紧凑混合叠层（圆环、仪表盘、头像角标、局部画布）应保留浏览器实测宽高，避免父容器退化为底图或文字的 intrinsic size。接近满宽的卡片和页面区块仍使用约束布局，不因存在角标或光晕而锁死整体尺寸。
+- 圆角只决定背景、边框和形状，不等于 `overflow: hidden`。叠层子项是否裁剪必须严格服从计算样式中的 `overflow: hidden/clip`；`overflow: visible` 的轨道圆点、角标、光晕和阴影允许越过圆角边界。
 - 带点击行为的复合容器仍须保留原布局语义。CSS Grid/Flex 容器映射为 `Button`/`UIControl` 时，点击语义只能包裹内容，不得把 Grid 子项展平成按钮标题或单行内容。
 
 ## 滚动轴隔离

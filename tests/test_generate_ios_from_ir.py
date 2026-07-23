@@ -569,8 +569,14 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             generated_root = generated["screens"][0]["root"]
             generated_ring = next(child for child in generated_root["children"] if child["id"] == ring["id"])
             generated_stats = next(child for child in generated_root["children"] if child["id"] == stats["id"])
-            self.assertEqual(generated_ring["axis"], "overlay")
+            self.assertEqual(generated_ring["axis"], "horizontal")
             self.assertEqual(generated_ring["children"][0]["assetName"], "html_page3_ring")
+            self.assertEqual(generated_ring["style"]["fixedWidth"], 88)
+            self.assertEqual(generated_ring["style"]["fixedHeight"], 88)
+            self.assertEqual(
+                [item["id"] for item in generated_ring["overlayChildren"]],
+                [value["id"]],
+            )
             self.assertEqual(generated_stats["style"]["gridColumnCount"], 3)
             self.assertTrue((out_dir / ASSET_CATALOG / "html_page3_ring.imageset" / "html_page3_ring.svg").is_file())
 
@@ -671,6 +677,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertEqual(presentation["node"]["style"]["opacity"], 1)
             self.assertEqual(presentation["node"]["style"]["fixedWidth"], 345)
             self.assertEqual(presentation["node"]["style"]["fixedHeight"], 190)
+            self.assertEqual(presentation["node"]["style"]["offsetX"], 0)
+            self.assertEqual(presentation["node"]["style"]["offsetY"], 0)
             root_source = (swiftui_dir / NAVIGATION_FILE).read_text(encoding="utf-8")
             self.assertIn("systemPopoverIsPresented", root_source)
             self.assertIn("customPopoverOverlay", root_source)
@@ -705,6 +713,45 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "position": "absolute",
                 "backgroundColor": "rgb(120, 100, 255)",
             })
+            artwork_dot = node("home.artwork-dot", artwork["id"], "decoration")
+            artwork_dot["layout"].update({
+                "mode": "absolute",
+                "position": "absolute",
+                "rect": {"x": 191.5, "y": 80, "width": 10, "height": 10},
+            })
+            artwork_dot["style"].update({
+                "position": "absolute",
+                "backgroundColor": "rgb(255, 255, 255)",
+                "cornerRadii": ["50%"] * 4,
+            })
+            artwork_dot["content"]["isDecorative"] = True
+
+            mixed_card = node("home.mixed-card", root_node["id"], "container")
+            mixed_card["layout"].update({
+                "mode": "flow",
+                "rect": {"x": 24, "y": 310, "width": 345, "height": 120},
+            })
+            mixed_card["style"].update({
+                "position": "relative",
+                "display": "flex",
+                "flexDirection": "column",
+                "overflowX": "hidden",
+                "overflowY": "hidden",
+                "backgroundColor": "rgb(30, 32, 48)",
+            })
+            mixed_label = node("home.mixed-label", mixed_card["id"], "text", "Flow content")
+            mixed_label["layout"]["rect"] = {"x": 44, "y": 330, "width": 120, "height": 24}
+            mixed_glow = node("home.mixed-glow", mixed_card["id"], "decoration")
+            mixed_glow["layout"].update({
+                "mode": "absolute",
+                "position": "absolute",
+                "rect": {"x": 260, "y": 280, "width": 140, "height": 140},
+            })
+            mixed_glow["style"].update({
+                "position": "absolute",
+                "backgroundImage": "radial-gradient(circle, rgba(120, 100, 255, 0.5), transparent 65%)",
+            })
+            mixed_glow["content"]["isDecorative"] = True
 
             grid_action = node("home.grid-action", root_node["id"], "button")
             grid_action["layout"].update({
@@ -727,7 +774,28 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 }
                 payload["screens"][0]["nodes"].append(child)
 
-            payload["screens"][0]["nodes"].extend([artwork, artwork_child, grid_action])
+            payload["screens"][0]["nodes"].extend([
+                artwork,
+                artwork_child,
+                artwork_dot,
+                mixed_card,
+                mixed_label,
+                mixed_glow,
+                grid_action,
+            ])
+            payload["motions"] = [{
+                "id": "motion-artwork",
+                "sourceNodeId": artwork["id"],
+                "durationMs": 8000,
+                "delayMs": 0,
+                "iterationCount": "Infinity",
+                "direction": "reverse",
+                "properties": ["transform"],
+                "keyframes": [
+                    {"computedOffset": 0, "transform": "none"},
+                    {"computedOffset": 1, "transform": "rotate(360deg)"},
+                ],
+            }]
             payload["interactions"] = [{
                 "id": "interaction-grid",
                 "sourceNodeId": grid_action["id"],
@@ -742,15 +810,39 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             generated = json.loads((swiftui_dir / PAYLOAD).read_text(encoding="utf-8"))
             generated_root = generated["screens"][0]["root"]
             generated_artwork = next(item for item in generated_root["children"] if item["id"] == artwork["id"])
+            generated_mixed_card = next(item for item in generated_root["children"] if item["id"] == mixed_card["id"])
             generated_grid = next(item for item in generated_root["children"] if item["id"] == grid_action["id"])
             self.assertEqual(generated_artwork["style"]["preferredHeight"], 224)
             self.assertEqual(generated_artwork["children"][0]["style"]["fixedWidth"], 253)
             self.assertEqual(generated_artwork["children"][0]["style"]["fixedHeight"], 224)
+            self.assertEqual(generated_artwork["axis"], "overlay")
+            self.assertEqual(generated_artwork["motions"][0]["rotationDegrees"], 360)
+            self.assertTrue(generated_artwork["motions"][0]["repeats"])
+            self.assertTrue(generated_artwork["motions"][0]["reverses"])
+            generated_dot = next(item for item in generated_artwork["children"] if item["id"] == artwork_dot["id"])
+            self.assertEqual(generated_dot["style"]["fixedWidth"], 10)
+            self.assertEqual(generated_dot["style"]["fixedHeight"], 10)
+            self.assertEqual(generated_dot["style"]["offsetX"], 0)
+            self.assertEqual(generated_dot["style"]["offsetY"], -107)
+            self.assertEqual(generated_mixed_card["axis"], "vertical")
+            self.assertIsNone(generated_mixed_card["style"]["fixedWidth"])
+            self.assertIsNone(generated_mixed_card["style"]["fixedHeight"])
+            self.assertEqual([item["id"] for item in generated_mixed_card["children"]], [mixed_label["id"]])
+            self.assertEqual(
+                [item["id"] for item in generated_mixed_card["overlayChildren"]],
+                [mixed_glow["id"]],
+            )
             self.assertEqual(generated_grid["axis"], "grid")
             self.assertEqual(generated_grid["style"]["gridColumnCount"], 4)
             swiftui_runtime = (swiftui_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn('if spec.axis == "grid" {', swiftui_runtime)
             self.assertIn("LazyVGrid(columns: gridColumns", swiftui_runtime)
+            self.assertIn("ForEach(spec.overlayChildren)", swiftui_runtime)
+            self.assertIn("private struct HTMLToIOSOverlayClipModifier: ViewModifier", swiftui_runtime)
+            self.assertIn("if style.clipsContent == true", swiftui_runtime)
+            self.assertIn(".offset(x: style.offsetX ?? 0, y: style.offsetY ?? 0)", swiftui_runtime)
+            self.assertIn("private struct HTMLToIOSMotionModifier: ViewModifier", swiftui_runtime)
+            self.assertIn("HTMLToIOSLaunchConfiguration.motionProgress", swiftui_runtime)
 
             uikit_dir = root / "uikit"
             self.run_generator([path], uikit_dir, ui_stack="uikit")
@@ -758,6 +850,11 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn('let content = spec.axis == "grid" ? makeGrid(spec) : makeStack(spec)', uikit_runtime)
             self.assertIn("private func makeGrid(_ spec: HTMLToIOSNodeSpec) -> UIStackView", uikit_runtime)
             self.assertIn("row.distribution = .fillEqually", uikit_runtime)
+            self.assertIn("private func makeOverlay(_ spec: HTMLToIOSNodeSpec) -> UIView", uikit_runtime)
+            self.assertIn("private func attachOverlayChildren(_ spec: HTMLToIOSNodeSpec, to parent: UIView)", uikit_runtime)
+            self.assertIn("childSpec.style.offsetX ?? 0", uikit_runtime)
+            self.assertIn("private func applyMotion(_ spec: HTMLToIOSNodeSpec, to view: UIView)", uikit_runtime)
+            self.assertIn('CABasicAnimation(keyPath: "transform.rotation")', uikit_runtime)
 
     def test_system_safe_area_owns_status_bar_without_source_height_compensation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

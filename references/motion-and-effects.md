@@ -11,6 +11,9 @@
 
 Motion pass 记录 source selector、属性、duration、delay、timing function、iteration、direction、fill mode 和关键帧。Static pass 是布局基准，两者通过 selector/runtime node ID 合并到 UI IR。
 
+- 生成阶段必须把可支持的 transform/opacity keyframes 绑定到来源节点，至少保留 duration、delay、iteration、direction、rotation、scale 和 opacity 采样；不能只在 IR 中记录后丢弃。
+- 正常 App 运行时使用 SwiftUI Timeline/Animation 或 Core Animation 执行动画；视觉验收时通过 `-HTMLToIOSMotionProgress 0...1` 固定采样进度，保证 HTML 与 iOS 对比的是同一关键帧。
+
 ## 动效分类
 
 | 类型 | 例子 | 原生策略 |

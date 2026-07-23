@@ -72,9 +72,11 @@ end
 state_methods = (manifest["states"] || []).each_with_index.map do |state, index|
   actions = (state["iosActions"] || []).map { |action| "        #{action_source(action)}" }.join("\n")
   actions = "        _ = app" if actions.empty?
+  motion_progress = state.key?("animationProgress") ? state["animationProgress"].to_f : nil
+  launch_call = motion_progress.nil? ? "launchApp()" : "launchApp(motionProgress: #{motion_progress})"
   <<~SWIFT
       func #{swift_identifier(state["id"], index)}() throws {
-          let app = launchApp()
+          let app = #{launch_call}
   #{actions}
           capture(name: #{swift_string(state["id"] + ".png")})
       }
@@ -99,9 +101,12 @@ swift = <<~SWIFT
           continueAfterFailure = false
       }
 
-      private func launchApp() -> XCUIApplication {
+      private func launchApp(motionProgress: Double? = nil) -> XCUIApplication {
           let app = XCUIApplication()
           app.launchArguments += #{launch_arguments}
+          if let motionProgress {
+              app.launchArguments += ["-HTMLToIOSMotionProgress", String(motionProgress)]
+          }
           app.launchArguments += ["-UIAnimationsEnabled", "NO"]
           app.launch()
           return app

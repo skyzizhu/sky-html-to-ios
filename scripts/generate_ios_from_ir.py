@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.12.0"
+GENERATOR_VERSION = "1.13.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -390,6 +390,45 @@ def grid_column_count(value: Any) -> int:
     return min(max(columns, 1), 12)
 
 
+def transform_component(value: Any, name: str, default: float) -> float:
+    text = str(value or "").strip().lower()
+    if name == "rotation":
+        match = re.search(r"rotate\(\s*(-?\d+(?:\.\d+)?)deg\s*\)", text)
+    else:
+        match = re.search(r"scale\(\s*(-?\d+(?:\.\d+)?)\s*\)", text)
+    return float(match.group(1)) if match else default
+
+
+def motion_payload(raw: dict[str, Any]) -> dict[str, Any] | None:
+    keyframes = raw.get("keyframes") or []
+    properties = set(raw.get("properties") or [])
+    if not keyframes or not properties.intersection({"transform", "opacity"}):
+        return None
+    ordered = sorted(keyframes, key=lambda item: number(item.get("computedOffset"), number(item.get("offset"))))
+    start = ordered[0]
+    middle = min(ordered, key=lambda item: abs(number(item.get("computedOffset"), number(item.get("offset"))) - 0.5))
+    end = ordered[-1]
+    rotation_start = transform_component(start.get("transform"), "rotation", 0)
+    rotation_end = transform_component(end.get("transform"), "rotation", rotation_start)
+    scale_start = transform_component(start.get("transform"), "scale", 1)
+    scale_middle = transform_component(middle.get("transform"), "scale", scale_start)
+    scale_end = transform_component(end.get("transform"), "scale", scale_start)
+    opacity_start = number(start.get("opacity"), 1)
+    opacity_middle = number(middle.get("opacity"), opacity_start)
+    opacity_end = number(end.get("opacity"), opacity_start)
+    return {
+        "id": str(raw.get("id") or "motion"),
+        "durationMilliseconds": max(int(number(raw.get("durationMs"), 0)), 1),
+        "delayMilliseconds": max(int(number(raw.get("delayMs"), 0)), 0),
+        "repeats": str(raw.get("iterationCount") or "1").lower() in {"infinity", "infinite"},
+        "reverses": str(raw.get("direction") or "normal").lower() in {"reverse", "alternate-reverse"},
+        "autoreverses": str(raw.get("direction") or "normal").lower() in {"alternate", "alternate-reverse"},
+        "rotationDegrees": rotation_end - rotation_start,
+        "scaleValues": [scale_start, scale_middle, scale_end],
+        "opacityValues": [opacity_start, opacity_middle, opacity_end],
+    }
+
+
 def primary_transition(interaction: dict[str, Any]) -> dict[str, Any]:
     effects = (((interaction.get("evidence") or {}).get("ast") or {}).get("effects") or [])
     feedback_effect = next((item for item in effects if item.get("type") == "content-mutation" and item.get("value")), None)
@@ -435,6 +474,7 @@ class ScreenBuildContext:
     expansion_states: dict[str, str]
     selection_bindings: dict[str, dict[str, Any]]
     selection_count_bindings: dict[str, dict[str, Any]]
+    motions: dict[str, list[dict[str, Any]]]
     detached_root_ids: set[str]
     has_bottom_bar: bool
 
@@ -510,11 +550,27 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     ):
         return None
 
-    child_payloads = []
+    child_entries = []
     for child_id in context.children.get(node_id, []):
         child = node_payload(context, child_id, presentation=presentation)
         if child:
-            child_payloads.append(child)
+            child_node = context.nodes.get(child_id) or {}
+            child_layout = child_node.get("layout") or {}
+            child_style = child_node.get("style") or {}
+            child_position = str(child_layout.get("position") or child_style.get("position") or "")
+            child_entries.append((child, child_position in {"absolute", "fixed"}))
+
+    flow_child_payloads = [child for child, is_positioned_child in child_entries if not is_positioned_child]
+    absolute_child_payloads = [child for child, is_positioned_child in child_entries if is_positioned_child]
+    # Pure absolute-positioned groups are native overlays themselves. In mixed
+    # containers, keep positioned children out of Stack layout so CSS decoration
+    # and floating controls cannot change the parent's measured size.
+    if flow_child_payloads and absolute_child_payloads:
+        child_payloads = flow_child_payloads
+        overlay_child_payloads = absolute_child_payloads
+    else:
+        child_payloads = [child for child, _ in child_entries]
+        overlay_child_payloads = []
 
     semantic = str(node.get("semanticType") or "container")
     content = node.get("content") or {}
@@ -533,21 +589,9 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     mode = str(layout.get("mode") or "flow")
     display = str(style.get("display") or "").lower()
     flex_direction = str(style.get("flexDirection") or "row").lower()
-    has_absolute_child = False
-    if width > 0 and height > 0:
-        for child_id in context.children.get(node_id, []):
-            if child_id in context.detached_root_ids:
-                continue
-            child_layout = (context.nodes.get(child_id) or {}).get("layout") or {}
-            child_rect = child_layout.get("rect") or {}
-            if (
-                str(child_layout.get("position") or "") in {"absolute", "fixed"}
-                and number(child_rect.get("width")) >= width * 0.8
-                and number(child_rect.get("height")) >= height * 0.8
-            ):
-                has_absolute_child = True
-                break
-    if has_absolute_child:
+    absolute_child_count = len(absolute_child_payloads)
+    flow_child_count = len(flow_child_payloads)
+    if absolute_child_count > 0 and flow_child_count == 0:
         axis = "overlay"
     elif display in {"flex", "inline-flex"}:
         axis = "vertical" if flex_direction.startswith("column") else "horizontal"
@@ -611,6 +655,26 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     parent = context.nodes.get(parent_id) or {}
     parent_style = parent.get("style") or {}
     parent_layout = parent.get("layout") or {}
+    parent_rect = parent_layout.get("rect") or {}
+    is_positioned = str(layout.get("position") or "") in {"absolute", "fixed"}
+    offset_x = 0.0
+    offset_y = 0.0
+    if is_positioned and number(parent_rect.get("width")) > 0 and number(parent_rect.get("height")) > 0:
+        offset_x = (
+            number(rect.get("x"))
+            + width / 2
+            - number(parent_rect.get("x"))
+            - number(parent_rect.get("width")) / 2
+        )
+        offset_y = (
+            number(rect.get("y"))
+            + height / 2
+            - number(parent_rect.get("y"))
+            - number(parent_rect.get("height")) / 2
+        )
+    if presentation and node_id in context.detached_root_ids:
+        offset_x = 0.0
+        offset_y = 0.0
     parent_flex_direction = str(parent_style.get("flexDirection") or "row").lower()
     parent_horizontal = (
         (
@@ -657,6 +721,13 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         and not action
     )
     horizontal_scroll_item = parent_scroll_axis == "horizontal" and width_fraction < 0.95
+    compact_overlay_geometry = bool(
+        overlay_child_payloads
+        and width > 0
+        and height > 0
+        and width_fraction < 0.75
+        and semantic not in {"text", "label", "heading", "image", "icon"}
+    )
     preserves_intrinsic_width = bool(
         str(style.get("flexShrink") or "1") == "0"
         or explicit_no_wrap
@@ -664,15 +735,18 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         or horizontal_scroll_item
         or compact_visual_container
         or measured_visual_leaf
+        or compact_overlay_geometry
     )
     fixed_width = width if (
         compact_visual_container
         or measured_visual_leaf
+        or compact_overlay_geometry
         or (horizontal_scroll_item and semantic not in {"image", "icon"})
     ) else None
     fixed_height = height if (
         compact_visual_container
         or measured_visual_leaf
+        or compact_overlay_geometry
         or (semantic == "carousel" and scroll_axis == "horizontal")
     ) else None
     preserves_aspect_ratio = bool(
@@ -680,13 +754,30 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         and (
             compact_visual_container
             or measured_visual_leaf
+            or compact_overlay_geometry
             or semantic in {"image", "icon", "canvas-artwork"}
         )
     )
 
-    if not child_payloads and not text and not placeholder and not action and decorative:
+    if (
+        not child_payloads
+        and not overlay_child_payloads
+        and not text
+        and not placeholder
+        and not action
+        and decorative
+        and not has_visual_style
+        and not node.get("assetRef")
+    ):
         return None
-    if semantic == "container" and not child_payloads and not text and not action and not has_visual_style:
+    if (
+        semantic == "container"
+        and not child_payloads
+        and not overlay_child_payloads
+        and not text
+        and not action
+        and not has_visual_style
+    ):
         return None
 
     asset = context.assets.get(str(node.get("assetRef") or "")) or {}
@@ -701,6 +792,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         "placeholder": placeholder,
         "axis": axis,
         "children": child_payloads,
+        "overlayChildren": overlay_child_payloads,
         "action": action,
         "style": {
             "fontSize": min(max(number(style.get("fontSize"), 16) * context.design_scale, 8), 72),
@@ -723,6 +815,9 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "shadowOffsetY": shadow["y"],
             "shadowRadius": min(shadow["radius"], 80),
             "shadowSpread": min(max(shadow["spread"], -40), 40),
+            "offsetX": offset_x,
+            "offsetY": offset_y,
+            "zIndex": number(style.get("zIndex"), 0),
             "clipsContent": str(style.get("overflowX") or "visible") in {"hidden", "clip"}
                 or str(style.get("overflowY") or "visible") in {"hidden", "clip"},
             "padding": padding,
@@ -768,6 +863,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         "selectionCountInitial": selection_count.get("initial"),
         "selectionCountTotal": selection_count.get("total"),
         "richTextRuns": inline_runs if inline_text_container else rich_text_runs(context, node),
+        "motions": context.motions.get(node_id) or [],
     }
     if expansion_content:
         payload["visibleWhenStateID"] = parent_state_id
@@ -1019,6 +1115,16 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
         expansion_states=expansion_states,
         selection_bindings=selection_bindings,
         selection_count_bindings=selection_count_bindings,
+        motions={
+            node_id: [
+                payload
+                for item in (ir.get("motions") or [])
+                if str(item.get("sourceNodeId") or "") == node_id
+                for payload in [motion_payload(item)]
+                if payload
+            ]
+            for node_id in nodes
+        },
         detached_root_ids=detached_root_ids,
         has_bottom_bar=bottom_bar_id is not None,
     )
@@ -1029,9 +1135,11 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
         "placeholder": "",
         "axis": "vertical",
         "children": [],
+        "overlayChildren": [],
         "action": None,
         "style": {},
         "accessibilityLabel": None,
+        "motions": [],
     }
     root["style"]["cornerRadius"] = 0
     top_bar = node_payload(context, top_bar_id, presentation=True) if top_bar_id else None
@@ -1153,6 +1261,14 @@ enum HTMLToIOSLaunchConfiguration {{
         let value = arguments[index + 1].trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
     }}
+
+    static var motionProgress: Double? {{
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-HTMLToIOSMotionProgress"), arguments.indices.contains(index + 1) else {{
+            return nil
+        }}
+        return Double(arguments[index + 1]).map {{ min(max($0, 0), 1) }}
+    }}
 }}
 
 struct HTMLToIOSNavigationSpec: Codable {{
@@ -1229,6 +1345,7 @@ struct HTMLToIOSNodeSpec: Codable, Identifiable {{
     let placeholder: String
     let axis: String
     let children: [HTMLToIOSNodeSpec]
+    let overlayChildren: [HTMLToIOSNodeSpec]
     let action: HTMLToIOSActionSpec?
     let style: HTMLToIOSStyleSpec
     let systemImage: String?
@@ -1249,6 +1366,19 @@ struct HTMLToIOSNodeSpec: Codable, Identifiable {{
     let selectionCountInitial: Int?
     let selectionCountTotal: Int?
     let richTextRuns: [HTMLToIOSRichTextRunSpec]?
+    let motions: [HTMLToIOSMotionSpec]
+}}
+
+struct HTMLToIOSMotionSpec: Codable, Identifiable {{
+    let id: String
+    let durationMilliseconds: Int
+    let delayMilliseconds: Int
+    let repeats: Bool
+    let reverses: Bool
+    let autoreverses: Bool
+    let rotationDegrees: Double
+    let scaleValues: [Double]
+    let opacityValues: [Double]
 }}
 
 struct HTMLToIOSRichTextRunSpec: Codable {{
@@ -1282,6 +1412,9 @@ struct HTMLToIOSStyleSpec: Codable {{
     let shadowOffsetY: Double?
     let shadowRadius: Double?
     let shadowSpread: Double?
+    let offsetX: Double?
+    let offsetY: Double?
+    let zIndex: Double?
     let clipsContent: Bool?
     let padding: [Double]?
     let margin: [Double]?
@@ -1604,6 +1737,18 @@ private struct HTMLToIOSClipModifier: ViewModifier {
     }
 }
 
+private struct HTMLToIOSOverlayClipModifier: ViewModifier {
+    let style: HTMLToIOSStyleSpec
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if style.clipsContent == true {
+            content.clipShape(RoundedRectangle(cornerRadius: style.cornerRadius ?? 0, style: .continuous))
+        } else {
+            content
+        }
+    }
+}
+
 private struct HTMLToIOSBorderModifier: ViewModifier {
     let style: HTMLToIOSStyleSpec
 
@@ -1671,6 +1816,61 @@ private struct HTMLToIOSAspectRatioModifier: ViewModifier {
     }
 }
 
+private struct HTMLToIOSMotionModifier: ViewModifier {
+    let motions: [HTMLToIOSMotionSpec]
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if motions.isEmpty {
+            content
+        } else {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: HTMLToIOSLaunchConfiguration.motionProgress != nil)) { timeline in
+                content
+                    .rotationEffect(.degrees(rotation(at: timeline.date)))
+                    .scaleEffect(scale(at: timeline.date))
+                    .opacity(opacity(at: timeline.date))
+            }
+        }
+    }
+
+    private func progress(_ motion: HTMLToIOSMotionSpec, at date: Date) -> Double {
+        if let forced = HTMLToIOSLaunchConfiguration.motionProgress {
+            return motion.reverses ? 1 - forced : forced
+        }
+        let duration = max(Double(motion.durationMilliseconds) / 1000, 0.001)
+        let delayed = max(date.timeIntervalSinceReferenceDate - Double(motion.delayMilliseconds) / 1000, 0)
+        var value: Double
+        if motion.autoreverses {
+            let phase = delayed.truncatingRemainder(dividingBy: duration * 2) / duration
+            value = phase <= 1 ? phase : 2 - phase
+        } else if motion.repeats {
+            value = delayed.truncatingRemainder(dividingBy: duration) / duration
+        } else {
+            value = min(delayed / duration, 1)
+        }
+        return motion.reverses ? 1 - value : value
+    }
+
+    private func sampled(_ values: [Double], progress: Double, fallback: Double) -> Double {
+        guard values.count >= 3 else { return values.first ?? fallback }
+        if progress <= 0.5 {
+            return values[0] + (values[1] - values[0]) * progress * 2
+        }
+        return values[1] + (values[2] - values[1]) * (progress - 0.5) * 2
+    }
+
+    private func rotation(at date: Date) -> Double {
+        motions.reduce(0) { $0 + $1.rotationDegrees * progress($1, at: date) }
+    }
+
+    private func scale(at date: Date) -> Double {
+        motions.reduce(1) { $0 * sampled($1.scaleValues, progress: progress($1, at: date), fallback: 1) }
+    }
+
+    private func opacity(at date: Date) -> Double {
+        motions.reduce(1) { $0 * sampled($1.opacityValues, progress: progress($1, at: date), fallback: 1) }
+    }
+}
+
 private struct HTMLToIOSStyleModifier: ViewModifier {
     let style: HTMLToIOSStyleSpec
     let assetName: String?
@@ -1730,6 +1930,8 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
                 y: style.shadowOffsetY ?? 0
             )
             .opacity(style.opacity ?? 1)
+            .offset(x: style.offsetX ?? 0, y: style.offsetY ?? 0)
+            .zIndex(style.zIndex ?? 0)
             .padding(.top, margin.indices.contains(0) ? margin[0] : 0)
             .padding(.trailing, margin.indices.contains(1) ? margin[1] : 0)
             .padding(.bottom, margin.indices.contains(2) ? margin[2] : 0)
@@ -1749,7 +1951,7 @@ private struct HTMLToIOSAccessibilityModifier: ViewModifier {
     let spec: HTMLToIOSNodeSpec
 
     @ViewBuilder func body(content: Content) -> some View {
-        if spec.action != nil || spec.children.isEmpty {
+        if spec.action != nil || (spec.children.isEmpty && spec.overlayChildren.isEmpty) {
             content
                 .accessibilityIdentifier(spec.id)
                 .accessibilityLabel(spec.accessibilityLabel ?? spec.text)
@@ -1791,6 +1993,15 @@ struct HTMLToIOSNativeNodeView: View {
             constrainsPreferredWidth: spec.children.isEmpty || isNativeControl,
             enforcesPreferredWidth: isNativeControl
         ))
+        .overlay {
+            ZStack {
+                ForEach(spec.overlayChildren) { child in
+                    HTMLToIOSNativeNodeView(store: store, spec: child)
+                }
+            }
+        }
+        .modifier(HTMLToIOSOverlayClipModifier(style: spec.style))
+        .modifier(HTMLToIOSMotionModifier(motions: spec.motions))
     }
 
     private var selectionForeground: String? {
@@ -2384,7 +2595,7 @@ final class HTMLToIOSNodeRenderer {
         let view: UIView
         switch spec.semantic {
         case "button", "link", "menu-item", "tab-item":
-            if spec.children.isEmpty {
+            if spec.children.isEmpty && spec.overlayChildren.isEmpty {
                 let button = UIButton(type: .system)
                 button.setTitle(displayText(spec), for: .normal)
                 button.titleLabel?.numberOfLines = spec.style.textLineLimit ?? 0
@@ -2450,7 +2661,14 @@ final class HTMLToIOSNodeRenderer {
         case "text", "label", "heading":
             view = makeLabel(flattenedText(spec), spec: spec)
         default:
-            let stack = spec.axis == "grid" ? makeGrid(spec) : makeStack(spec)
+            let stack: UIView
+            if spec.axis == "grid" {
+                stack = makeGrid(spec)
+            } else if spec.axis == "overlay" {
+                stack = makeOverlay(spec)
+            } else {
+                stack = makeStack(spec)
+            }
             if spec.action != nil {
                 stack.isUserInteractionEnabled = true
                 stack.addGestureRecognizer(HTMLToIOSClosureTapGestureRecognizer { [actionHandler] in actionHandler(spec.action) })
@@ -2458,6 +2676,8 @@ final class HTMLToIOSNodeRenderer {
             view = stack
         }
         applyStyle(spec, to: view)
+        attachOverlayChildren(spec, to: view)
+        applyMotion(spec, to: view)
         view.isHidden = state.hiddenNodeIDs.contains(spec.id)
             || (spec.visibleWhenStateID != nil && !state.flags.contains(spec.visibleWhenStateID!))
         view.accessibilityIdentifier = spec.id
@@ -2503,6 +2723,39 @@ final class HTMLToIOSNodeRenderer {
             grid.addArrangedSubview(row)
         }
         return grid
+    }
+
+    private func makeOverlay(_ spec: HTMLToIOSNodeSpec) -> UIView {
+        let overlay = UIView()
+        for childSpec in spec.children {
+            let child = makeView(childSpec)
+            overlay.addSubview(child)
+            NSLayoutConstraint.activate([
+                child.centerXAnchor.constraint(equalTo: overlay.centerXAnchor, constant: childSpec.style.offsetX ?? 0),
+                child.centerYAnchor.constraint(equalTo: overlay.centerYAnchor, constant: childSpec.style.offsetY ?? 0),
+            ])
+        }
+        return overlay
+    }
+
+    private func attachOverlayChildren(_ spec: HTMLToIOSNodeSpec, to parent: UIView) {
+        for childSpec in spec.overlayChildren.sorted(by: {
+            ($0.style.zIndex ?? 0) < ($1.style.zIndex ?? 0)
+        }) {
+            let child = makeView(childSpec)
+            parent.addSubview(child)
+            var constraints = [
+                child.centerXAnchor.constraint(equalTo: parent.centerXAnchor, constant: childSpec.style.offsetX ?? 0),
+                child.centerYAnchor.constraint(equalTo: parent.centerYAnchor, constant: childSpec.style.offsetY ?? 0),
+            ]
+            if childSpec.style.fixedWidth == nil, let width = childSpec.style.preferredWidth, width > 0 {
+                constraints.append(child.widthAnchor.constraint(equalToConstant: width))
+            }
+            if childSpec.style.fixedHeight == nil, let height = childSpec.style.preferredHeight, height > 0 {
+                constraints.append(child.heightAnchor.constraint(equalToConstant: height))
+            }
+            NSLayoutConstraint.activate(constraints)
+        }
     }
 
     private func makeScrollContainer(_ spec: HTMLToIOSNodeSpec) -> UIView {
@@ -2576,6 +2829,63 @@ final class HTMLToIOSNodeRenderer {
         let value = Int(raw ?? "400") ?? 400
         if value >= 700 { return .bold }; if value >= 600 { return .semibold }; if value >= 500 { return .medium }
         return .regular
+    }
+
+    private func motionProgress(_ motion: HTMLToIOSMotionSpec, forced: Double) -> Double {
+        motion.reverses ? 1 - forced : forced
+    }
+
+    private func sampled(_ values: [Double], progress: Double, fallback: Double) -> Double {
+        guard values.count >= 3 else { return values.first ?? fallback }
+        if progress <= 0.5 {
+            return values[0] + (values[1] - values[0]) * progress * 2
+        }
+        return values[1] + (values[2] - values[1]) * (progress - 0.5) * 2
+    }
+
+    private func applyMotion(_ spec: HTMLToIOSNodeSpec, to view: UIView) {
+        guard !spec.motions.isEmpty else { return }
+        if let forced = HTMLToIOSLaunchConfiguration.motionProgress {
+            var transform = CGAffineTransform.identity
+            var alpha = view.alpha
+            for motion in spec.motions {
+                let progress = motionProgress(motion, forced: forced)
+                transform = transform
+                    .rotated(by: CGFloat(motion.rotationDegrees * progress * .pi / 180))
+                    .scaledBy(
+                        x: CGFloat(sampled(motion.scaleValues, progress: progress, fallback: 1)),
+                        y: CGFloat(sampled(motion.scaleValues, progress: progress, fallback: 1))
+                    )
+                alpha *= sampled(motion.opacityValues, progress: progress, fallback: 1)
+            }
+            view.transform = transform
+            view.alpha = alpha
+            return
+        }
+        for motion in spec.motions {
+            let duration = max(Double(motion.durationMilliseconds) / 1000, 0.001)
+            if abs(motion.rotationDegrees) > 0.001 {
+                let rotation = CABasicAnimation(keyPath: "transform.rotation")
+                rotation.fromValue = 0
+                rotation.toValue = motion.rotationDegrees * (motion.reverses ? -1 : 1) * .pi / 180
+                rotation.duration = duration
+                rotation.beginTime = CACurrentMediaTime() + Double(motion.delayMilliseconds) / 1000
+                rotation.repeatCount = motion.repeats ? .infinity : 0
+                rotation.autoreverses = motion.autoreverses
+                rotation.timingFunction = CAMediaTimingFunction(name: .linear)
+                view.layer.add(rotation, forKey: "html-to-ios-\(motion.id)-rotation")
+            }
+            if motion.scaleValues.count >= 3 && motion.scaleValues.max() != motion.scaleValues.min() {
+                let scale = CAKeyframeAnimation(keyPath: "transform.scale")
+                scale.values = motion.scaleValues
+                scale.keyTimes = [0, 0.5, 1]
+                scale.duration = duration
+                scale.beginTime = CACurrentMediaTime() + Double(motion.delayMilliseconds) / 1000
+                scale.repeatCount = motion.repeats ? .infinity : 0
+                scale.autoreverses = motion.autoreverses
+                view.layer.add(scale, forKey: "html-to-ios-\(motion.id)-scale")
+            }
+        }
     }
 
     private func applyStyle(_ spec: HTMLToIOSNodeSpec, to view: UIView) {
