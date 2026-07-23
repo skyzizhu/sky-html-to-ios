@@ -196,6 +196,9 @@ python3 scripts/build_ui_ir.py render-tree.json \
 - 页面元数据、目标 viewport 和 system chrome
 - 节点树、稳定 ID、来源 selector 和来源矩形
 - 布局语义、样式、内容、资源和交互
+- 每个滚动容器的 `scrollAxis`、scroll/client 尺寸、实际溢出方向和滚动轴所有权
+- 文字实测行数、`nowrap`/line clamp/ellipsis、横向裁剪状态和紧凑内容的 intrinsic-size 策略
+- 固定尺寸、最小/最大尺寸、宽高比、flex shrink/wrap 以及横向重复条目的实测 item 尺寸
 - 页面导航图和状态变化
 - 支持级别、降级项和警告
 - 每个节点的 SwiftUI/UIKit 控件建议、样式策略、置信度和映射理由
@@ -275,6 +278,10 @@ python3 scripts/generate_ios_from_ir.py \
 - 自绘顶部栏和底部操作栏必须从滚动内容拆出；普通文档 footer 保持随内容滚动。
 - 容器轴向优先取浏览器 computed style 的 `display` 与 `flex-direction`；`layout.mode` 只作为缺失 computed style 时的回退。`row-reverse`/`column-reverse` 必须同步原生子节点顺序，不能因元素是 absolute/fixed 就丢失其内部 Flex 语义。
 - 浏览器测得的 `preferredWidth` 不能无条件套到每层 SwiftUI 容器。结构容器由父级 Stack、Grid 和可用宽度分配；叶子节点保留理想宽度，Button、输入和选择类原生控件在来源明确时保留最小宽度，避免文字内在尺寸把等宽操作栏压缩。
+- 每个 scroll node 必须具有单独的轴向契约。页面根纵向滚动容器只拥有 vertical；嵌套横向列表只拥有 horizontal。不得因为某个子节点暂时越界就把根页面升级为双轴滚动，也不得用一个双轴 ScrollView 包住整页兜底。
+- 横向重复条目的来源 rect、`flex-basis`、`min-width`、`flex-shrink` 和 gap 是 item sizing 证据。来源未换行且实测为一行时，原生条目必须保持 intrinsic/fixed width 与单行语义，禁止由父容器平均拉伸后导致文字换行。
+- 紧凑图标、状态槽、缩略图和其视觉容器应保留来源宽高比；接近方形且尺寸稳定的容器生成等宽高或 aspect-ratio 约束。禁止只固定一边后被 HStack/UIStackView 拉成长方形。
+- `overflow:hidden/clip` 只表示裁剪；只有计算样式允许滚动且 scroll/client 度量或行为 probe 证明轴向成立时才生成滚动容器。
 - SwiftUI 尺寸 Modifier 只有存在有效参数时才能生成；禁止批量输出全为 `nil` 的 `.frame(...)`，也禁止在父子结构容器上叠加相互反馈的有限 `maxWidth`。
 - `@Published` 集合状态用于删除、隐藏、选择或展开时必须产生可观察的新值；交互不能只改变临时局部副本或依赖不确定的原地集合变更。
 - 背景图按容器 background 渲染并保留 cover/contain、position、repeat；图标保留测量尺寸，不统一夹成固定小号。
@@ -305,6 +312,7 @@ python3 scripts/generate_ios_from_ir.py \
 10. 按 UI IR node 局部纠偏，重新构建并回归所有受影响状态；默认最多 3 轮。
 11. 至少复核首屏、有意义的长页末端、弹层和切换状态。动画 0/50/100 帧只有具备原生确定性采样钩子时才设为 required，否则作为 advisory，不能用三张相同静态图冒充动画验证。
 12. 在项目支持的 320/375/393/430pt 或实际设备宽度上验证 Auto Layout、文字换行、边距和横向溢出；使用 `scripts/compare_text_calibration.py` 核对 iOS 文字测量结果。
+13. 执行轴向隔离走查：纵向页面的横向拖动不得移动根内容；横向 carousel 的纵向拖动不得带动其自身产生纵向偏移。逐项核对横向 item 宽度、文字行数、图标容器宽高比和末项可达性。
 
 对于大展示板中的固定手机画板，状态捕获使用 HTML 源 viewport 执行动作，再按 UI IR 的目标 viewport 生成归一化对比图；这是验收图片的单次设计归一化，不得转化为 iOS 运行时整页缩放。归一化方式和原始尺寸必须写入 captures report。
 

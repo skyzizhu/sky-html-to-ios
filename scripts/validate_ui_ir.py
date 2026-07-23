@@ -36,6 +36,7 @@ ALLOWED_ACTIONS = {
     "open-url", "submit", "set-flow-state", "unknown",
 }
 ALLOWED_AVAILABILITY_STATUS = {"pending-verification", "available", "available-review-version", "requires-fallback", "deprecated", "unavailable", "review-required"}
+ALLOWED_SCROLL_AXES = {"none", "horizontal", "vertical", "both"}
 
 
 def validate_rect(rect, location, errors):
@@ -117,11 +118,31 @@ def validate(data):
             if parent_id is not None:
                 if not isinstance(parent_id, str) or not parent_id:
                     errors.append(f"{nwhere}.parentId must be null or a non-empty string")
+            scroll_axis = None
+            scroll_metrics = None
             layout = node.get("layout")
             if not isinstance(layout, dict):
                 errors.append(f"{nwhere}.layout must be an object")
             else:
                 validate_rect(layout.get("rect"), f"{nwhere}.layout", errors)
+                scroll_axis = layout.get("scrollAxis")
+                if scroll_axis is not None and scroll_axis not in ALLOWED_SCROLL_AXES:
+                    errors.append(f"{nwhere}.layout.scrollAxis has invalid value: {scroll_axis}")
+                scroll_metrics = layout.get("scrollMetrics")
+                if scroll_metrics is not None:
+                    if not isinstance(scroll_metrics, dict):
+                        errors.append(f"{nwhere}.layout.scrollMetrics must be an object")
+                    else:
+                        for key in ("scrollWidth", "scrollHeight", "clientWidth", "clientHeight"):
+                            value = scroll_metrics.get(key)
+                            if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) or value < 0:
+                                errors.append(f"{nwhere}.layout.scrollMetrics.{key} must be a non-negative finite number")
+                        for key in (
+                            "horizontalAllowed", "verticalAllowed",
+                            "overflowsHorizontally", "overflowsVertically",
+                        ):
+                            if not isinstance(scroll_metrics.get(key), bool):
+                                errors.append(f"{nwhere}.layout.scrollMetrics.{key} must be a boolean")
             if not isinstance(node.get("style"), dict):
                 errors.append(f"{nwhere}.style must be an object")
             if not isinstance(node.get("content"), dict):
@@ -131,6 +152,25 @@ def validate(data):
             semantic_type = node.get("semanticType")
             if semantic_type not in ALLOWED_SEMANTIC_TYPES:
                 errors.append(f"{nwhere}.semanticType has invalid value: {semantic_type}")
+            elif semantic_type == "carousel" and scroll_axis != "horizontal":
+                errors.append(f"{nwhere} carousel must declare layout.scrollAxis='horizontal'")
+            elif semantic_type == "scroll" and scroll_axis in {None, "none"}:
+                errors.append(f"{nwhere} scroll container must declare an active layout.scrollAxis")
+            if parent_id is None and scroll_axis == "both":
+                warnings.append(
+                    f"{nwhere} root uses two-axis scrolling; confirm the source is a true two-dimensional surface."
+                )
+            if (
+                parent_id is None
+                and isinstance(scroll_metrics, dict)
+                and scroll_metrics.get("overflowsHorizontally") is True
+                and scroll_axis != "horizontal"
+                and scroll_axis != "both"
+            ):
+                warnings.append(
+                    f"{nwhere} root has measured horizontal overflow outside its declared axis; "
+                    "locate the oversized descendant instead of enabling page-level horizontal scrolling."
+                )
             mapping = node.get("nativeMapping")
             if not isinstance(mapping, dict):
                 errors.append(f"{nwhere}.nativeMapping must be an object")

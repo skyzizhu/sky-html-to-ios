@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.9.0"
+GENERATOR_VERSION = "1.10.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -601,6 +601,63 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         or shadow["color"] is not None
         or bool(node.get("assetRef"))
     )
+    parent = context.nodes.get(parent_id) or {}
+    parent_style = parent.get("style") or {}
+    parent_layout = parent.get("layout") or {}
+    parent_flex_direction = str(parent_style.get("flexDirection") or "row").lower()
+    parent_horizontal = (
+        (
+            str(parent_style.get("display") or "").lower() in {"flex", "inline-flex"}
+            and parent_flex_direction.startswith("row")
+        )
+        or str(parent_layout.get("mode") or "") in {"flex-row", "grid-row"}
+        or str(parent_layout.get("scrollAxis") or "") == "horizontal"
+    )
+    scroll_axis = str(layout.get("scrollAxis") or "none")
+    parent_scroll_axis = str(parent_layout.get("scrollAxis") or "none")
+    line_count = int(number(content.get("lines"), 0))
+    explicit_line_clamp = int(number(style.get("webkitLineClamp"), 0))
+    explicit_no_wrap = str(style.get("whiteSpace") or "").lower() == "nowrap"
+    inferred_compact_single_line = bool(
+        parent_horizontal
+        and line_count == 1
+        and semantic in {"text", "label", "heading", "button", "link", "menu-item", "tab-item"}
+        and not content.get("clippedHorizontally")
+    )
+    text_line_limit = explicit_line_clamp if explicit_line_clamp > 0 else (1 if explicit_no_wrap or inferred_compact_single_line else None)
+    ratio = width / height if width > 0 and height > 0 else None
+    compact_visual_container = bool(
+        parent_horizontal
+        and width > 0
+        and height > 0
+        and width <= 120
+        and height <= 120
+        and ratio is not None
+        and 0.8 <= ratio <= 1.25
+        and semantic not in {"text", "label", "heading", "image", "icon"}
+        and has_visual_style
+        and not text
+    )
+    horizontal_scroll_item = parent_scroll_axis == "horizontal" and width_fraction < 0.95
+    preserves_intrinsic_width = bool(
+        str(style.get("flexShrink") or "1") == "0"
+        or explicit_no_wrap
+        or inferred_compact_single_line
+        or horizontal_scroll_item
+        or compact_visual_container
+    )
+    fixed_width = width if (
+        compact_visual_container
+        or (horizontal_scroll_item and semantic not in {"image", "icon"})
+    ) else None
+    fixed_height = height if compact_visual_container or (semantic == "carousel" and scroll_axis == "horizontal") else None
+    preserves_aspect_ratio = bool(
+        ratio is not None
+        and (
+            compact_visual_container
+            or semantic in {"image", "icon", "canvas-artwork"}
+        )
+    )
 
     if not child_payloads and not text and not placeholder and not action and decorative:
         return None
@@ -651,6 +708,13 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "preferredWidth": min(max(width, 0), context.root_width),
             "preferredHeight": min(max(number(rect.get("height")), 0), 180),
             "resistsCompression": str(style.get("flexShrink") or "1") == "0",
+            "preservesIntrinsicWidth": preserves_intrinsic_width,
+            "fixedWidth": min(max(fixed_width, 0), context.root_width) if fixed_width is not None else None,
+            "fixedHeight": min(max(fixed_height, 0), 240) if fixed_height is not None else None,
+            "aspectRatio": ratio if preserves_aspect_ratio else None,
+            "scrollAxis": scroll_axis,
+            "textLineLimit": text_line_limit,
+            "textOverflow": str(style.get("textOverflow") or "clip"),
             "textAlignment": str(style.get("textAlign") or "start"),
             "justifyContent": str(style.get("justifyContent") or "normal"),
             "alignItems": str(style.get("alignItems") or "normal"),
@@ -1182,6 +1246,13 @@ struct HTMLToIOSStyleSpec: Codable {{
     let preferredWidth: Double?
     let preferredHeight: Double?
     let resistsCompression: Bool?
+    let preservesIntrinsicWidth: Bool?
+    let fixedWidth: Double?
+    let fixedHeight: Double?
+    let aspectRatio: Double?
+    let scrollAxis: String?
+    let textLineLimit: Int?
+    let textOverflow: String?
     let textAlignment: String?
     let justifyContent: String?
     let alignItems: String?
@@ -1510,13 +1581,17 @@ private struct HTMLToIOSBorderModifier: ViewModifier {
 }
 
 private struct HTMLToIOSFrameModifier: ViewModifier {
+    let fixedWidth: CGFloat?
+    let fixedHeight: CGFloat?
     let minWidth: CGFloat?
     let idealWidth: CGFloat?
     let maxWidth: CGFloat?
     let minHeight: CGFloat?
 
     @ViewBuilder func body(content: Content) -> some View {
-        if minWidth != nil || idealWidth != nil {
+        if fixedWidth != nil || fixedHeight != nil {
+            content.frame(width: fixedWidth, height: fixedHeight)
+        } else if minWidth != nil || idealWidth != nil {
             firstFrame(content)
         } else if maxWidth != nil || minHeight != nil {
             secondFrame(content)
@@ -1536,6 +1611,18 @@ private struct HTMLToIOSFrameModifier: ViewModifier {
 
     private func secondFrame(_ content: Content) -> some View {
         content.frame(maxWidth: maxWidth, minHeight: minHeight)
+    }
+}
+
+private struct HTMLToIOSAspectRatioModifier: ViewModifier {
+    let ratio: CGFloat?
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if let ratio, ratio > 0 {
+            content.aspectRatio(ratio, contentMode: .fit)
+        } else {
+            content
+        }
     }
 }
 
@@ -1560,18 +1647,26 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
         let minWidth: CGFloat? = (enforcesPreferredWidth || style.resistsCompression == true) && preferredWidth > 0 ? preferredWidth : nil
         let rawMinHeight = style.minHeight ?? 0
         let minHeight: CGFloat? = rawMinHeight > 0 ? CGFloat(rawMinHeight) : nil
+        let fixedWidth = style.fixedWidth.map(CGFloat.init)
+        let fixedHeight = style.fixedHeight.map(CGFloat.init)
         let lineSpacing = max((style.lineHeight ?? style.fontSize ?? 16) - (style.fontSize ?? 16), 0)
         return content
             .font(.system(size: style.fontSize ?? 16, weight: fontWeight(style.fontWeight)))
             .foregroundStyle(foreground)
             .multilineTextAlignment(alignment)
+            .lineLimit(style.textLineLimit)
             .lineSpacing(lineSpacing)
             .tracking(style.letterSpacing ?? 0)
+            .fixedSize(horizontal: style.preservesIntrinsicWidth == true, vertical: false)
+            .layoutPriority(style.preservesIntrinsicWidth == true ? 1 : 0)
             .padding(.top, padding.indices.contains(0) ? padding[0] : 0)
             .padding(.trailing, padding.indices.contains(1) ? padding[1] : 0)
             .padding(.bottom, padding.indices.contains(2) ? padding[2] : 0)
             .padding(.leading, padding.indices.contains(3) ? padding[3] : 0)
+            .modifier(HTMLToIOSAspectRatioModifier(ratio: style.aspectRatio.map(CGFloat.init)))
             .modifier(HTMLToIOSFrameModifier(
+                fixedWidth: fixedWidth,
+                fixedHeight: fixedHeight,
                 minWidth: minWidth,
                 idealWidth: idealWidth,
                 maxWidth: maxWidth,
@@ -1688,7 +1783,11 @@ struct HTMLToIOSNativeNodeView: View {
         case "carousel":
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: verticalAlignment, spacing: spec.style.spacing ?? 0) { children }
+                    .fixedSize(horizontal: true, vertical: false)
             }
+            .clipped()
+        case "scroll":
+            scrollContainer
         case "icon":
             let height = max(spec.style.preferredHeight ?? 18, 1)
             let width = max(spec.style.preferredWidth ?? height, 1)
@@ -1776,6 +1875,27 @@ struct HTMLToIOSNativeNodeView: View {
     private var mediaHeight: CGFloat? {
         guard let value = spec.style.preferredHeight else { return nil }
         return CGFloat(value)
+    }
+
+    @ViewBuilder private var scrollContainer: some View {
+        switch spec.style.scrollAxis {
+        case "horizontal":
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: verticalAlignment, spacing: spec.style.spacing ?? 0) { children }
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .clipped()
+        case "both":
+            ScrollView([.horizontal, .vertical]) { childContent }
+                .clipped()
+        case "none":
+            childContent
+        default:
+            ScrollView(.vertical, showsIndicators: true) {
+                childContent.frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .clipped()
+        }
     }
 
     @ViewBuilder private var buttonContent: some View {
@@ -1902,11 +2022,12 @@ struct HTMLToIOSGeneratedScrollContent: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-            ScrollView {
+            ScrollView(.vertical) {
                 HTMLToIOSNativeNodeView(store: store, spec: scrollRoot)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                     .id(screen.root.id)
             }
+            .clipped()
             .accessibilityIdentifier(screen.root.id)
             .background {
                 Color(htmlToIOS: screen.root.style.background)
@@ -2179,6 +2300,8 @@ final class HTMLToIOSNodeRenderer {
         case "button", "link", "menu-item", "tab-item":
             let button = UIButton(type: .system)
             button.setTitle(displayText(spec), for: .normal)
+            button.titleLabel?.numberOfLines = spec.style.textLineLimit ?? 0
+            button.titleLabel?.lineBreakMode = lineBreakMode(spec)
             if let icon = spec.children.first(where: { $0.semantic == "icon" }) {
                 button.setImage(UIImage(systemName: icon.systemImage ?? "circle.fill"), for: .normal)
                 button.configuration = .plain()
@@ -2207,6 +2330,8 @@ final class HTMLToIOSNodeRenderer {
         case "progress", "progress-view":
             let progress = UIProgressView(progressViewStyle: .default); progress.progress = 0.55
             view = progress
+        case "carousel", "scroll":
+            view = makeScrollContainer(spec)
         case "image", "icon":
             let image = UIImageView(image: UIImage(named: spec.assetName ?? "") ?? UIImage(systemName: spec.systemImage ?? (spec.semantic == "icon" ? "circle.fill" : "photo")))
             let mode = (spec.style.mediaContentMode ?? "contain").lowercased()
@@ -2228,12 +2353,7 @@ final class HTMLToIOSNodeRenderer {
         case "text", "label", "heading":
             view = makeLabel(flattenedText(spec), spec: spec)
         default:
-            let stack = UIStackView()
-            stack.axis = spec.axis == "horizontal" ? .horizontal : .vertical
-            stack.alignment = spec.axis == "horizontal" ? .center : .fill
-            stack.spacing = spec.style.spacing ?? 8
-            if !stateText(spec).isEmpty && spec.children.isEmpty { stack.addArrangedSubview(makeLabel(stateText(spec), spec: spec)) }
-            spec.children.forEach { stack.addArrangedSubview(makeView($0)) }
+            let stack = makeStack(spec)
             if spec.action != nil {
                 stack.isUserInteractionEnabled = true
                 stack.addGestureRecognizer(HTMLToIOSClosureTapGestureRecognizer { [actionHandler] in actionHandler(spec.action) })
@@ -2246,6 +2366,47 @@ final class HTMLToIOSNodeRenderer {
         view.accessibilityIdentifier = spec.id
         view.accessibilityLabel = spec.accessibilityLabel ?? (spec.text.isEmpty ? nil : spec.text)
         return view
+    }
+
+    private func makeStack(_ spec: HTMLToIOSNodeSpec) -> UIStackView {
+        let stack = UIStackView()
+        stack.axis = spec.axis == "horizontal" ? .horizontal : .vertical
+        stack.alignment = spec.axis == "horizontal" ? .center : .fill
+        stack.spacing = spec.style.spacing ?? 8
+        if !stateText(spec).isEmpty && spec.children.isEmpty {
+            stack.addArrangedSubview(makeLabel(stateText(spec), spec: spec))
+        }
+        spec.children.forEach { stack.addArrangedSubview(makeView($0)) }
+        return stack
+    }
+
+    private func makeScrollContainer(_ spec: HTMLToIOSNodeSpec) -> UIView {
+        let axis = spec.semantic == "carousel" ? "horizontal" : (spec.style.scrollAxis ?? "vertical")
+        if axis == "none" { return makeStack(spec) }
+        let scroll = UIScrollView()
+        let stack = makeStack(spec)
+        scroll.directionalLockEnabled = axis != "both"
+        scroll.alwaysBounceHorizontal = false
+        scroll.alwaysBounceVertical = false
+        scroll.showsHorizontalScrollIndicator = axis == "horizontal" || axis == "both"
+        scroll.showsVerticalScrollIndicator = axis == "vertical" || axis == "both"
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        scroll.addSubview(stack)
+        var constraints = [
+            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+        ]
+        if axis == "horizontal" {
+            stack.axis = .horizontal
+            constraints.append(stack.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor))
+        } else if axis == "vertical" {
+            stack.axis = .vertical
+            constraints.append(stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor))
+        }
+        NSLayoutConstraint.activate(constraints)
+        return scroll
     }
 
     private func displayText(_ spec: HTMLToIOSNodeSpec) -> String {
@@ -2268,9 +2429,22 @@ final class HTMLToIOSNodeRenderer {
     }
 
     private func makeLabel(_ text: String, spec: HTMLToIOSNodeSpec) -> UILabel {
-        let label = UILabel(); label.text = text; label.numberOfLines = 0
+        let label = UILabel()
+        label.text = text
+        label.numberOfLines = spec.style.textLineLimit ?? 0
+        label.lineBreakMode = lineBreakMode(spec)
         label.font = .systemFont(ofSize: spec.style.fontSize ?? 16, weight: fontWeight(spec.style.fontWeight))
+        if spec.style.preservesIntrinsicWidth == true {
+            label.setContentCompressionResistancePriority(.required, for: .horizontal)
+            label.setContentHuggingPriority(.required, for: .horizontal)
+        }
         return label
+    }
+
+    private func lineBreakMode(_ spec: HTMLToIOSNodeSpec) -> NSLineBreakMode {
+        if spec.style.textOverflow == "ellipsis" { return .byTruncatingTail }
+        if spec.style.textLineLimit == 1 { return .byClipping }
+        return .byWordWrapping
     }
 
     private func fontWeight(_ raw: String?) -> UIFont.Weight {
@@ -2345,6 +2519,21 @@ final class HTMLToIOSNodeRenderer {
         }
         let needsClipping = spec.style.clipsContent == true || (spec.style.cornerRadius ?? 0) > 0
         view.clipsToBounds = needsClipping && spec.style.shadowColor == nil
+        if let width = spec.style.fixedWidth, width > 0 {
+            view.widthAnchor.constraint(equalToConstant: width).isActive = true
+        }
+        if let height = spec.style.fixedHeight, height > 0 {
+            view.heightAnchor.constraint(equalToConstant: height).isActive = true
+        }
+        if let ratio = spec.style.aspectRatio,
+           ratio > 0,
+           spec.style.fixedWidth == nil || spec.style.fixedHeight == nil {
+            view.widthAnchor.constraint(equalTo: view.heightAnchor, multiplier: ratio).isActive = true
+        }
+        if spec.style.preservesIntrinsicWidth == true {
+            view.setContentCompressionResistancePriority(.required, for: .horizontal)
+            view.setContentHuggingPriority(.required, for: .horizontal)
+        }
         if let height = spec.style.minHeight, height > 0, height < 161 {
             view.heightAnchor.constraint(greaterThanOrEqualToConstant: height).isActive = true
         }
@@ -2426,6 +2615,9 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
         view.subviews.forEach { $0.removeFromSuperview() }
         let renderer = HTMLToIOSNodeRenderer(state: generatedState, actionHandler: { [weak self] action in self?.perform(action) })
         let scroll = UIScrollView(); let content = wrapGeneratedContent(renderer.makeView(screen.root))
+        scroll.directionalLockEnabled = true
+        scroll.alwaysBounceHorizontal = false
+        scroll.showsHorizontalScrollIndicator = false
         scroll.backgroundColor = view.backgroundColor
         scroll.contentInsetAdjustmentBehavior = screen.safeArea.contentInsetAdjustment == "never" ? .never : .automatic
         scroll.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(scroll); scroll.addSubview(content)

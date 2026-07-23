@@ -106,7 +106,7 @@
 | `ul/ol` 简单静态内容 | `list` | VStack/LazyVStack | UIStackView/自定义 View | 不为三个静态文本强制上 List/TableView |
 | 长列表或重复数据项 | `list` | LazyVStack/List | UITableView/UICollectionView | 依据原型样式决定是否使用系统 List |
 | `li` | `list-item` | 行 View | cell/content view | 重复结构生成可复用组件 |
-| 横向重复卡片 | `carousel` | horizontal ScrollView/LazyHStack | UICollectionView | snap/page 行为单独处理 |
+| 横向重复卡片 | `carousel` | horizontal ScrollView/LazyHStack | UICollectionView | 保留 measured item width、gap、nowrap/compression；snap/page 行为单独处理 |
 | `table` 数据表 | `data-table` | Grid/自定义滚动表格 | UICollectionView/自定义表格 | 不用 UITableView 假装多列表格 |
 | CSS Grid 卡片 | `grid` | LazyVGrid | UICollectionView | 保留列宽、gap 和自适应规则 |
 | 分组列表 | `sectioned-list` | Section + List/LazyVStack | table/collection sections | 保留 header、footer、sticky 语义 |

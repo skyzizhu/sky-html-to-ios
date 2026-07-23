@@ -282,11 +282,15 @@ def semantic_mapping(node: dict, has_interaction: bool) -> dict:
     if has_interaction:
         reasons.append("observable-click-interaction")
         return result("button", "Button", "UIControl/UIButton", 0.78)
-    if style.get("overflowX") in {"auto", "scroll"} or style.get("overflowY") in {"auto", "scroll"}:
-        reasons.append("computed-overflow:scroll")
-        if style.get("overflowX") in {"auto", "scroll"} and style.get("display") == "flex":
-            return result("carousel", "Horizontal ScrollView/LazyHStack", "UICollectionView", 0.78, "custom-native-view")
-        return result("scroll", "ScrollView", "UIScrollView", 0.88, "custom-native-view")
+    scroll = scroll_contract(node)
+    if scroll["axis"] != "none":
+        reasons.extend([
+            f"computed-overflow:{scroll['axis']}",
+            f"measured-overflow:x={scroll['overflowsHorizontally']},y={scroll['overflowsVertically']}",
+        ])
+        if scroll["axis"] == "horizontal" and style.get("display") in {"flex", "inline-flex"}:
+            return result("carousel", "Horizontal ScrollView/LazyHStack", "UICollectionView", 0.9, "custom-native-view")
+        return result("scroll", "ScrollView", "UIScrollView", 0.92, "custom-native-view")
     if style.get("display") in {"grid", "inline-grid"}:
         reasons.append("computed-display:grid")
         return result("grid", "Grid/LazyVGrid", "UICollectionView", 0.9, "custom-native-view")
@@ -318,6 +322,46 @@ def layout_mode(style: dict) -> str:
     if display in {"flex", "inline-flex"}:
         return "flex-row" if style.get("flexDirection") in {"row", "row-reverse"} else "flex-column"
     return "flow"
+
+
+def scroll_contract(node: dict) -> dict:
+    style = node.get("style") or {}
+    metrics = node.get("scroll") or {}
+    scroll_width = float(metrics.get("scrollWidth") or 0)
+    scroll_height = float(metrics.get("scrollHeight") or 0)
+    client_width = float(metrics.get("clientWidth") or 0)
+    client_height = float(metrics.get("clientHeight") or 0)
+    horizontal_overflow = scroll_width > client_width + 1
+    vertical_overflow = scroll_height > client_height + 1
+    horizontal_allowed = str(style.get("overflowX") or "visible") in {"auto", "scroll"}
+    vertical_allowed = str(style.get("overflowY") or "visible") in {"auto", "scroll"}
+
+    active_horizontal = horizontal_allowed and horizontal_overflow
+    active_vertical = vertical_allowed and vertical_overflow
+    if active_horizontal and active_vertical:
+        axis = "both"
+    elif active_horizontal:
+        axis = "horizontal"
+    elif active_vertical:
+        axis = "vertical"
+    elif horizontal_allowed and not vertical_allowed:
+        axis = "horizontal"
+    elif vertical_allowed and not horizontal_allowed:
+        axis = "vertical"
+    else:
+        axis = "none"
+
+    return {
+        "axis": axis,
+        "horizontalAllowed": horizontal_allowed,
+        "verticalAllowed": vertical_allowed,
+        "overflowsHorizontally": horizontal_overflow,
+        "overflowsVertically": vertical_overflow,
+        "scrollWidth": scroll_width,
+        "scrollHeight": scroll_height,
+        "clientWidth": client_width,
+        "clientHeight": client_height,
+    }
 
 
 ALLOWED_EXPLICIT_ACTIONS = {
@@ -1332,6 +1376,8 @@ def build_ir(data: dict, args) -> dict:
         keyboard_type, content_type = keyboard_metadata(str(attrs.get("type") or "text").lower())
         native_node_id = id_map[runtime_id]
         confidence = mapping["nativeMapping"]["confidence"]
+        text_metrics = node.get("textMetrics") or {}
+        scroll = scroll_contract(node)
         if node.get("rectEstimated"):
             warnings.append({
                 "code": "SYNTHETIC_RECT_ESTIMATED",
@@ -1374,6 +1420,15 @@ def build_ir(data: dict, args) -> dict:
                 "position": style.get("position"),
                 "overflowX": style.get("overflowX"),
                 "overflowY": style.get("overflowY"),
+                "scrollAxis": scroll["axis"],
+                "scrollMetrics": {
+                    key: scroll[key]
+                    for key in (
+                        "horizontalAllowed", "verticalAllowed",
+                        "overflowsHorizontally", "overflowsVertically",
+                        "scrollWidth", "scrollHeight", "clientWidth", "clientHeight",
+                    )
+                },
             },
             "style": style,
             "content": {
@@ -1390,7 +1445,10 @@ def build_ir(data: dict, args) -> dict:
                 "placeholder": attrs.get("placeholder"),
                 "value": first_known(properties.get("value"), attrs.get("value")),
                 "accessibilityLabel": attrs.get("aria-label"),
-                "lines": None,
+                "lines": text_metrics.get("lineCount"),
+                "lineRects": text_metrics.get("lineRects") or [],
+                "clippedHorizontally": bool(text_metrics.get("clippedHorizontally")),
+                "clippedVertically": bool(text_metrics.get("clippedVertically")),
                 "isDecorative": attrs.get("aria-hidden") == "true",
             },
             "state": {

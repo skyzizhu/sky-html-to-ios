@@ -52,6 +52,16 @@ NODE_PATH=<playwright-node-modules> node scripts/analyze_responsive_layout.cjs \
 - width/parentWidth 在多个样本中稳定：只有此时才使用比例宽度。
 - 高度随文字行数变化：让 intrinsic content size 决定，不写死高度。
 - absolute/overlay：相对最近定位容器建立约束，不使用页面全局坐标。
+- 横向滚动集合：容器宽度随 viewport，item 使用来源 fixed/intrinsic/bounded width；不得把 item 宽度按屏宽重新平均分配。
+- 紧凑方形视觉容器：一边固定或有界，另一边由 `aspectRatio = sourceWidth/sourceHeight` 推导；不能让 Stack 的 fill alignment 单独拉伸一边。
+- 单行紧凑文本：保留 measured line count、nowrap 和 compression resistance；只有空间策略明确允许时才截断，不能静默换行改变 item 高度。
+
+## 滚动轴隔离
+
+- 页面主滚动轴来自根容器 computed overflow、scroll/client 度量和实际拖动 probe。普通手机长页默认只能 vertical，不以内容越界自动推导 horizontal。
+- nested carousel、标签条或横向卡片列表单独拥有 horizontal；它们的高度与父布局约束，内容宽度由 item 累加形成。
+- 二维滚动只用于来源明确的画布、地图、缩放内容或双向数据表。不能把 `both` 当作约束冲突的逃生口。
+- 多宽度验证若出现根横向 overflow，应先定位超宽子节点、错误 fixed width、padding 重复或 compression priority，而不是打开根横向滚动。
 
 ## 左右边距示例
 
@@ -70,8 +80,10 @@ iOS 基准使用约 22.25pt 的 leading/trailing constraint。到 320、375、43
 
 - 无 Auto Layout ambiguity/constraint conflict
 - 无横向溢出和关键文字裁剪
+- 纵向根页面不能横向拖动；嵌套横向集合只能在自己的轴向移动
 - 关键边距、对齐和最大宽度规则正确
 - 文本行数变化合理
+- 横向 item 宽度、gap、末项可达性和紧凑图标宽高比正确
 - fixed header/footer、滚动和弹层仍可用
 
 多尺寸目标是保持设计语义和可用性，不要求每个尺寸都与单一 HTML 截图拥有相同换行。

@@ -10,6 +10,7 @@
 - 层叠和局部绝对定位：`ZStack`、`overlay`、`background`。
 - 长列表：`LazyVStack`、`LazyHStack`；仅在系统 List 行为符合原型时使用 `List`。
 - Grid：按列定义选择 `Grid` 或 `LazyVGrid`。
+- 横向重复集合：`ScrollView(.horizontal)` + `LazyHStack/HStack`；item 保留 measured/intrinsic width，不用 `.frame(maxWidth: .infinity)` 等分。
 - 固定底栏：优先 `safeAreaInset(edge:)`。
 - sticky header：`LazyVStack(pinnedViews:)`。
 
@@ -47,6 +48,7 @@ content
 - `Text` 使用明确 font size 和 weight。
 - 精确 line-height 时，根据实际字体 metrics 计算额外 line spacing；不要把 CSS line-height 直接传给 `.lineSpacing`。
 - line clamp 使用 `.lineLimit`，截断使用 `.truncationMode`。
+- `nowrap` 或实测单行横向 item 使用 `.lineLimit(1)`，并在有来源证据时使用 `.fixedSize(horizontal: true, vertical: false)`/`layoutPriority` 保持 intrinsic width。
 - 富文本优先使用 `AttributedString`；复杂 TextKit 排版可局部桥接 UIKit。
 - 自定义字体必须确保已加入 target 并在 Info 配置中注册。
 
@@ -64,6 +66,8 @@ content
 - 自定义应用导航栏不要同时再显示 `NavigationStack` 默认导航栏。
 - 底部自定义 Tab Bar 与 Home Indicator 间距只计算一次。
 - `ScrollView` 使用父容器提供的完整尺寸；禁止先用 `GeometryReader` 计算 `proxy.size - safeAreaInsets`，也禁止把来源 HTML 的状态栏/Home Indicator 高度再次从 frame 中扣除。
+- 根长页显式使用 `ScrollView(.vertical)` 并裁剪横向越界；nested carousel 显式使用 `.horizontal`。只有来源确认为二维内容时才使用双轴。
+- 横向集合 item 的固定/最小宽度加在 item 上，不加在整个 row 上；紧凑图标容器同时固定来源宽高或添加 `.aspectRatio(sourceRatio, contentMode: .fit)`，避免 HStack 拉伸。
 - 系统管理页面使用 `safeAreaInset(edge:spacing:)` 放置自绘 top/bottom bar。`safeAreaInset` 已改变可用内容区域时，不得再给滚动内容添加同一栏位高度的 `.padding`。
 - 全屏背景可以越过安全区，但背景越界不等于内容越界。仅在架构计划标记 `immersive-content` 时让主内容忽略 Safe Area，并由该页面一次性负责标题、按钮和底栏的可点击安全距离。
 - 原生 `TabView`、NavigationStack toolbar 和系统 sheet 自己拥有相应安全区；升级为这些系统容器后，删除 HTML 模拟栏位及其 inset。

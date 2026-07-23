@@ -21,6 +21,7 @@
 7. 模型支持图像时，按 `visual-agent-review.md` 执行多模态走查。
 8. 先处理大面积结构偏差，再处理字体、阴影和抗锯齿细节。
 9. 每轮只修改有限节点并重新验证。
+10. 执行方向手势：根页面横向拖动、根页面纵向拖动、每个 nested scroller 的主轴与交叉轴拖动，记录内容 offset 是否只在声明轴变化。
 
 ## 指标
 
@@ -61,6 +62,8 @@ Review bundle 同时输出 `fidelityPercent`、`targetFidelityPercent=100` 和 `
 
 - 首屏、中段和末端分别检查，避免间距误差累计。
 - 检查固定头部、吸顶、固定底栏和嵌套滚动。
+- 检查根页面是否出现意外横向位移、横向集合是否出现纵向位移，以及嵌套手势是否由正确容器接管。
+- 对每个横向 repeat region 比较 item rect、gap、首末项可达性、文字行数和截断；对紧凑 icon/status/thumbnail region 比较外框与内部资源的宽高比。
 - 每个重要 Tab、展开态、弹窗、sheet、错误态和空状态都应有对应基准。
 - 只有内容溢出超过 `max(24pt, viewportHeight * 5%)` 才自动增加滚动末端；内容超过 1.5 个 viewport 时再增加 middle，避免为几像素溢出制造伪必测状态。
 - 动画采样帧在没有原生确定性采样钩子时为 advisory；不能把未受控的原生帧设为 required。
@@ -83,11 +86,12 @@ Review bundle 同时输出 `fidelityPercent`、`targetFidelityPercent=100` 和 `
 
 1. viewport、scale 和 Safe Area
 2. 根容器和滚动容器
-3. 字体文件、weight、line-height 和换行
-4. 资源 content mode 与裁剪
-5. padding、gap、margin 和 constraint priority
-6. border、corner、shadow、gradient 和 blur
-7. transform、z-order 和 animation state
+3. 滚动轴所有权、超宽子节点和横向 item sizing
+4. 字体文件、weight、line-height、nowrap 和换行
+5. 资源容器宽高比、content mode 与裁剪
+6. padding、gap、margin 和 constraint priority
+7. border、corner、shadow、gradient 和 blur
+8. transform、z-order 和 animation state
 
 通过 UI IR source selector 和 `accessibilityIdentifier` 将差异区域映射回单个原生组件。
 

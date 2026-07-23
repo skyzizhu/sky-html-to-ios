@@ -31,7 +31,18 @@ def style(position: str = "static", direction: str = "column") -> dict:
     }
 
 
-def render_node(runtime_id: str, parent: str | None, tag: str, rect: dict, *, position: str = "static", direction: str = "column", dom_id: str | None = None) -> dict:
+def render_node(
+    runtime_id: str,
+    parent: str | None,
+    tag: str,
+    rect: dict,
+    *,
+    position: str = "static",
+    direction: str = "column",
+    dom_id: str | None = None,
+    scroll: dict | None = None,
+    text_metrics: dict | None = None,
+) -> dict:
     return {
         "runtimeId": runtime_id,
         "parentRuntimeId": parent,
@@ -48,10 +59,97 @@ def render_node(runtime_id: str, parent: str | None, tag: str, rect: dict, *, po
         "style": style(position, direction),
         "asset": None,
         "assetDetails": None,
+        "scroll": scroll or {
+            "scrollWidth": rect["width"],
+            "scrollHeight": rect["height"],
+            "clientWidth": rect["width"],
+            "clientHeight": rect["height"],
+        },
+        "textMetrics": text_metrics,
     }
 
 
 class BuildUIIRTests(unittest.TestCase):
+    def test_scroll_axis_text_lines_and_horizontal_carousel_survive_ir_conversion(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            nodes = [
+                render_node(
+                    "screen",
+                    None,
+                    "main",
+                    {"x": 0, "y": 0, "width": 393, "height": 852},
+                    scroll={
+                        "scrollWidth": 393,
+                        "scrollHeight": 1450,
+                        "clientWidth": 393,
+                        "clientHeight": 852,
+                    },
+                ),
+                render_node(
+                    "rail",
+                    "screen",
+                    "section",
+                    {"x": 20, "y": 80, "width": 353, "height": 56},
+                    direction="row",
+                    scroll={
+                        "scrollWidth": 620,
+                        "scrollHeight": 56,
+                        "clientWidth": 353,
+                        "clientHeight": 56,
+                    },
+                ),
+                render_node("item", "rail", "div", {"x": 20, "y": 88, "width": 88, "height": 40}, direction="row"),
+                render_node(
+                    "label",
+                    "item",
+                    "span",
+                    {"x": 36, "y": 98, "width": 64, "height": 20},
+                    text_metrics={
+                        "lineCount": 1,
+                        "lineRects": [{"x": 36, "y": 98, "width": 64, "height": 20}],
+                        "clippedHorizontally": False,
+                        "clippedVertically": False,
+                    },
+                ),
+            ]
+            nodes[0]["style"].update({"overflowX": "hidden", "overflowY": "auto"})
+            nodes[1]["style"].update({
+                "overflowX": "auto",
+                "overflowY": "hidden",
+                "flexWrap": "nowrap",
+            })
+            nodes[3]["text"] = "Single line"
+            nodes[3]["style"]["whiteSpace"] = "nowrap"
+            data = {
+                "schemaVersion": "render-tree-1.2",
+                "source": {"kind": "html-file", "entry": "/tmp/example.html"},
+                "document": {"viewport": {"width": 393, "height": 852}},
+                "nodes": nodes,
+                "interactions": [],
+                "phoneCandidates": [],
+            }
+            source = root / "render-tree.json"
+            output = root / "ui-ir.json"
+            source.write_text(json.dumps(data), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), str(source), "--out", str(output),
+                "--root-runtime-id", "screen", "--screen-id", "generic",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+            generated = json.loads(output.read_text(encoding="utf-8"))
+            by_runtime_id = {
+                item["source"]["runtimeId"]: item
+                for item in generated["screens"][0]["nodes"]
+            }
+            self.assertEqual(by_runtime_id["screen"]["layout"]["scrollAxis"], "vertical")
+            self.assertFalse(by_runtime_id["screen"]["layout"]["scrollMetrics"]["overflowsHorizontally"])
+            self.assertEqual(by_runtime_id["rail"]["semanticType"], "carousel")
+            self.assertEqual(by_runtime_id["rail"]["layout"]["scrollAxis"], "horizontal")
+            self.assertEqual(by_runtime_id["label"]["content"]["lines"], 1)
+            self.assertEqual(len(by_runtime_id["label"]["content"]["lineRects"]), 1)
+
     def test_explicit_native_navigation_and_tab_contracts_enter_ir(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

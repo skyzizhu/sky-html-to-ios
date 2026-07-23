@@ -138,7 +138,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("hiddenNodeIDs = nextHiddenNodeIDs", runtime_text)
             self.assertNotIn("UIViewRepresentable", runtime_text)
             self.assertNotIn("sizeThatFits(_ proposal:", runtime_text)
-            self.assertNotIn("fixedSize(horizontal:", runtime_text)
+            self.assertIn(".fixedSize(horizontal: style.preservesIntrinsicWidth == true, vertical: false)", runtime_text)
             self.assertNotIn("accessibilityElement(children: .contain)", runtime_text)
             models_text = (out_dir / MODELS_FILE).read_text(encoding="utf-8")
             navigation_text = (out_dir / NAVIGATION_FILE).read_text(encoding="utf-8")
@@ -153,6 +153,102 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 self.assertEqual(report["fileStatuses"][str(RUNTIME_FILE)], "preserved-user-modified")
                 self.assertIn("// User edit", runtime.read_text(encoding="utf-8"))
             self.assertTrue((out_dir.with_name("HTMLToIOS.conflicts") / f"{RUNTIME_FILE}.generated").exists())
+
+    def test_axis_isolation_intrinsic_item_width_and_compact_square_geometry(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("generic")
+            root_node = payload["screens"][0]["nodes"][0]
+            root_node["layout"]["scrollAxis"] = "vertical"
+            root_node["style"].update({"overflowX": "hidden", "overflowY": "auto"})
+
+            rail = node("generic.rail", root_node["id"], "carousel")
+            rail["layout"].update({
+                "mode": "flex-row",
+                "scrollAxis": "horizontal",
+                "rect": {"x": 20, "y": 80, "width": 353, "height": 56},
+            })
+            rail["style"].update({
+                "flexDirection": "row",
+                "flexWrap": "nowrap",
+                "overflowX": "auto",
+                "overflowY": "hidden",
+            })
+            item = node("generic.item", rail["id"], "container")
+            item["layout"].update({
+                "mode": "flex-row",
+                "rect": {"x": 20, "y": 88, "width": 88, "height": 40},
+            })
+            item["style"].update({"flexDirection": "row", "backgroundColor": "rgb(245, 245, 248)"})
+            label = node("generic.label", item["id"], "text", "Single line label")
+            label["layout"]["rect"] = {"x": 28, "y": 98, "width": 72, "height": 20}
+            label["style"].update({"whiteSpace": "nowrap", "textOverflow": "clip"})
+            label["content"]["lines"] = 1
+
+            row = node("generic.row", root_node["id"], "container")
+            row["layout"].update({
+                "mode": "flex-row",
+                "rect": {"x": 20, "y": 180, "width": 353, "height": 72},
+            })
+            row["style"]["flexDirection"] = "row"
+            icon_box = node("generic.icon-box", row["id"], "container")
+            icon_box["layout"]["rect"] = {"x": 20, "y": 196, "width": 40, "height": 40}
+            icon_box["style"].update({
+                "backgroundColor": "rgb(230, 235, 245)",
+                "cornerRadii": ["10px"] * 4,
+            })
+            icon = node("generic.icon", icon_box["id"], "icon")
+            icon["layout"]["rect"] = {"x": 30, "y": 206, "width": 20, "height": 20}
+            icon["assetRef"] = "asset.icon"
+
+            payload["screens"][0]["nodes"].extend([rail, item, label, row, icon_box, icon])
+            payload["assets"] = [{
+                "id": "asset.icon",
+                "kind": "inline-svg",
+                "source": "inline-svg",
+                "markup": '<svg viewBox="0 0 20 20"><path d="M2 10h16"/></svg>',
+                "iosName": "html_generic_icon",
+            }]
+            path = root / "generic.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            swiftui_dir = root / "swiftui"
+            self.run_generator([path], swiftui_dir)
+            generated = json.loads((swiftui_dir / PAYLOAD).read_text(encoding="utf-8"))
+            generated_root = generated["screens"][0]["root"]
+            generated_rail = next(child for child in generated_root["children"] if child["id"] == rail["id"])
+            generated_row = next(child for child in generated_root["children"] if child["id"] == row["id"])
+            generated_item = generated_rail["children"][0]
+            generated_label = generated_item["children"][0]
+            generated_icon_box = generated_row["children"][0]
+
+            self.assertEqual(generated_rail["style"]["scrollAxis"], "horizontal")
+            self.assertEqual(generated_item["style"]["fixedWidth"], 88)
+            self.assertTrue(generated_item["style"]["preservesIntrinsicWidth"])
+            self.assertEqual(generated_label["style"]["textLineLimit"], 1)
+            self.assertTrue(generated_label["style"]["preservesIntrinsicWidth"])
+            self.assertEqual(generated_icon_box["style"]["fixedWidth"], 40)
+            self.assertEqual(generated_icon_box["style"]["fixedHeight"], 40)
+            self.assertEqual(generated_icon_box["style"]["aspectRatio"], 1)
+
+            swiftui_runtime = (swiftui_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn("ScrollView(.vertical)", swiftui_runtime)
+            self.assertIn("private var scrollContainer: some View", swiftui_runtime)
+            self.assertIn(".lineLimit(style.textLineLimit)", swiftui_runtime)
+            self.assertIn("HTMLToIOSAspectRatioModifier", swiftui_runtime)
+            self.assertIn(".clipped()", swiftui_runtime)
+
+            uikit_dir = root / "uikit"
+            self.run_generator([path], uikit_dir, ui_stack="uikit")
+            uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn("directionalLockEnabled = true", uikit_runtime)
+            self.assertIn("alwaysBounceHorizontal = false", uikit_runtime)
+            self.assertIn("label.numberOfLines = spec.style.textLineLimit ?? 0", uikit_runtime)
+            self.assertIn("if spec.style.textLineLimit == 1 { return .byClipping }", uikit_runtime)
+            self.assertIn("return .byWordWrapping", uikit_runtime)
+            self.assertIn("widthAnchor.constraint(equalToConstant:", uikit_runtime)
+            self.assertIn("heightAnchor.constraint(equalToConstant:", uikit_runtime)
+            self.assertIn("makeScrollContainer", uikit_runtime)
 
     def test_unresolved_interaction_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

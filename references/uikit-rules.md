@@ -31,10 +31,14 @@
 - 百分比宽高使用 multiplier。
 - 固定底栏约束到 safeAreaLayoutGuide 或页面底部，依据 IR systemChrome 决定。
 - `UIScrollView` 内容容器横向必须与 frameLayoutGuide 同宽，避免错误横向滚动。
+- 根纵向 `UIScrollView` 启用 directional lock，关闭无来源的 horizontal bounce/indicator，并把 content layout guide 宽度锁到 frame layout guide。
+- 横向 collection/scroll container 把内容高度锁到自身 frame；item 使用来源 measured width、estimated/fixed item size 和 gap，不以屏幕剩余宽度强制等分。
+- 方形或固定比例的 icon/status/thumbnail container 同时生成 width/height 或 aspect-ratio constraint；仅设置图片 `contentMode` 不能防止容器被拉伸。
 
 ## 文本
 
 - `UILabel` 设置 font、textColor、numberOfLines、textAlignment、lineBreakMode。
+- `nowrap`/实测单行使用 `numberOfLines = 1` 和对应 lineBreakMode，并提高 horizontal content compression resistance/hugging；多行只在来源允许时设置为 0。
 - 精确 line-height、kern 和富文本使用 `NSAttributedString` paragraph style。
 - 输入控件保留 keyboard type、secure entry、placeholder、disabled 和焦点顺序。
 - 验证中英文和数字混排的 baseline 与换行。
