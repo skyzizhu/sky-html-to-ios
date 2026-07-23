@@ -10,6 +10,8 @@
 - system chrome 要么两边都纳入，要么两边都排除。
 - 固定时间、随机内容、异步数据、光标和动画帧。
 
+动态页面还必须来自同一个时间检查点。Render Tree 在激活 screen 后等待的 `activationWaitMs + settleWaitMs` 必须写入 UI IR/visual manifest；HTML 的 initial 和交互态截图先回放激活动作，再等待同一时长，之后才执行状态动作和截图。禁止一个阶段等待动态文本或进度更新、另一个阶段加载后立即截图，否则差异报告比较的是两个业务状态而不是两套 UI。
+
 ## 验证顺序
 
 1. 构建成功。

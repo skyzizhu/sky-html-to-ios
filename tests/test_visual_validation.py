@@ -66,6 +66,42 @@ class VisualValidationTests(unittest.TestCase):
                 "type": "not-exists", "accessibilityIdentifier": "home.card",
             })
 
+    def test_manifest_replays_render_tree_activation_settle_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = {
+                "schemaVersion": "1.2",
+                "source": {
+                    "entry": str(root / "prototype.html"),
+                    "viewport": {"width": 393, "height": 852},
+                    "screenActivation": {
+                        "type": "click",
+                        "selectors": ["[data-page='results']"],
+                        "settleDelayMs": 1600,
+                    },
+                },
+                "target": {"viewportPt": {"width": 393, "height": 852}},
+                "screens": [{
+                    "id": "results", "rootNodeId": "results.root", "sourceSelector": "#phone",
+                    "systemChrome": {}, "regions": {},
+                    "nodes": [node("results.root", None, "container", [0, 0, 393, 852])],
+                }],
+                "interactions": [],
+                "visualStates": [{"id": "initial", "required": True}],
+            }
+            source, output = root / "ui-ir.json", root / "visual-manifest.json"
+            source.write_text(json.dumps(payload), encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(MANIFEST_SCRIPT), str(source), "--out", str(output)],
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            actions = json.loads(output.read_text(encoding="utf-8"))["states"][0]["htmlActions"]
+            self.assertEqual(actions[:2], [
+                {"type": "click", "selector": "[data-page='results']", "purpose": "activate-screen"},
+                {"type": "wait", "ms": 1600, "purpose": "match-render-tree-capture-checkpoint"},
+            ])
+
     def test_manifest_contains_node_aligned_validation_regions(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -797,6 +797,11 @@ async function main() {
       schemaVersion: "render-tree-1.2",
       source: args.html ? { kind: "html-file", entry: path.resolve(args.html) } : { kind: "url", entry: args.url },
       capturedAt: new Date().toISOString(),
+      captureConfiguration: {
+        activationWaitMs: args.activateSelector ? args.activateWaitMs : 0,
+        settleWaitMs: args.waitMs,
+        totalPostActivationWaitMs: (args.activateSelector ? args.activateWaitMs : 0) + args.waitMs,
+      },
       screenshot: screenshotPath,
       warnings: Array.from(new Set(warnings)),
       motions,

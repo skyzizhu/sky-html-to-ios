@@ -53,7 +53,8 @@ NODE_PATH=<playwright-node-modules> node scripts/analyze_responsive_layout.cjs \
 - 高度随文字行数变化：让 intrinsic content size 决定，不写死高度。
 - absolute/overlay：相对最近定位容器建立约束，不使用页面全局坐标。
 - 横向滚动集合：容器宽度随 viewport，item 使用来源 fixed/intrinsic/bounded width；不得把 item 宽度按屏宽重新平均分配。
-- 紧凑方形视觉容器：一边固定或有界，另一边由 `aspectRatio = sourceWidth/sourceHeight` 推导；不能让 Stack 的 fill alignment 单独拉伸一边。
+- 紧凑方形视觉容器：只要浏览器实测宽高明确、尺寸不超过 180pt、宽高比接近 1，且节点依赖背景色、渐变、圆角、边框或阴影表达视觉，即使它位于纵向流或单格 CSS Grid 中，也必须保留 fixed/bounded width、height 与 `aspectRatio`；不能让 Stack/Grid 的 fill alignment 把圆形拉成胶囊。
+- 百分比圆角按实测容器短边计算，例如 `border-radius: 50%` 对 104×104 容器应得到 52pt，不能把百分数当作 px，也不能用与容器无关的圆角上限截断。
 - 单行紧凑文本：保留 measured line count、nowrap 和 compression resistance；只有空间策略明确允许时才截断，不能静默换行改变 item 高度。
 
 ## 滚动轴隔离

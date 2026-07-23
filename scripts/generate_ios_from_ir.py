@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.10.2"
+GENERATOR_VERSION = "1.11.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -589,7 +589,14 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     if context.has_bottom_bar and semantic == "scroll":
         padding[2] = 0
     radii = style.get("cornerRadii") or [0]
-    corner_radius = (max(number(item) for item in radii) if radii else 0.0) * context.design_scale
+    radius_values = []
+    for item in radii:
+        raw_radius = str(item or "").strip()
+        if raw_radius.endswith("%") and width > 0 and height > 0:
+            radius_values.append(min(width, height) * min(max(number(raw_radius), 0), 100) / 100)
+        else:
+            radius_values.append(number(item) * context.design_scale)
+    corner_radius = max(radius_values) if radius_values else 0.0
     measured_height = min(max(number(rect.get("height")), 0.0), 160.0)
     min_height = measured_height if semantic in {"button", "input", "text-field", "secure-field", "toggle", "switch", "progress", "progress-view"} else 0
     decorative = bool(content.get("isDecorative"))
@@ -627,11 +634,10 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     text_line_limit = explicit_line_clamp if explicit_line_clamp > 0 else (1 if explicit_no_wrap or inferred_compact_single_line else None)
     ratio = width / height if width > 0 and height > 0 else None
     compact_visual_container = bool(
-        parent_horizontal
-        and width > 0
+        width > 0
         and height > 0
-        and width <= 120
-        and height <= 120
+        and width <= 180
+        and height <= 180
         and ratio is not None
         and 0.8 <= ratio <= 1.25
         and semantic not in {"text", "label", "heading", "image", "icon"}
@@ -688,7 +694,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "gradientLocations": gradient["locations"],
             "gradientKind": gradient["kind"],
             "gradientAngle": gradient["angle"],
-            "cornerRadius": min(corner_radius, 56),
+            "cornerRadius": min(corner_radius, 120),
             "borderWidth": min(max(border_widths), 20),
             "borderColor": border_color,
             "borderStyle": border_style,
@@ -1021,6 +1027,17 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
                 # preserving that value would create a transparent native sheet,
                 # popover, or overlay. Descendant opacity remains unchanged.
                 presentation_node["style"]["opacity"] = 1
+                presentation_source_rect = ((nodes.get(target_id) or {}).get("layout") or {}).get("rect") or {}
+                source_rect = [
+                    number(presentation_source_rect.get("x")),
+                    number(presentation_source_rect.get("y")),
+                    number(presentation_source_rect.get("width")),
+                    number(presentation_source_rect.get("height")),
+                ]
+                uses_custom_overlay = str(state.get("kind") or "") == "popover-overlay"
+                if uses_custom_overlay:
+                    presentation_node["style"]["fixedWidth"] = source_rect[2]
+                    presentation_node["style"]["fixedHeight"] = source_rect[3]
                 presentations.append({
                     "stateID": str(state.get("id")),
                     "kind": str(state.get("kind") or "sheet"),
@@ -1029,6 +1046,8 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
                     "detents": (presentation_by_state.get(str(state.get("id"))) or {}).get("detents") or [],
                     "grabberVisible": (presentation_by_state.get(str(state.get("id"))) or {}).get("grabberVisible"),
                     "interactiveDismissDisabled": bool((presentation_by_state.get(str(state.get("id"))) or {}).get("interactiveDismissDisabled", False)),
+                    "usesCustomOverlay": uses_custom_overlay,
+                    "sourceRect": source_rect,
                 })
                 break
 
@@ -1161,6 +1180,8 @@ struct HTMLToIOSPresentationSpec: Codable, Identifiable {{
     let detents: [String]
     let grabberVisible: Bool?
     let interactiveDismissDisabled: Bool
+    let usesCustomOverlay: Bool
+    let sourceRect: [Double]
 }}
 
 struct HTMLToIOSActionSpec: Codable {{
@@ -2150,10 +2171,21 @@ struct HTMLToIOSGeneratedRootView: View {
         rootContent
         .sheet(item: $store.sheet) { state in presentationView(state.id) }
         .fullScreenCover(item: $store.fullScreen) { state in presentationView(state.id) }
-        .popover(isPresented: Binding(get: { store.popover != nil }, set: { if !$0 { store.popover = nil } })) {
+        .popover(isPresented: systemPopoverIsPresented) {
             if let state = store.popover { presentationView(state.id) }
         }
+        .overlay(alignment: .topLeading) { customPopoverOverlay }
         .overlay { if let state = store.overlay { presentationView(state.id) } }
+    }
+
+    private var systemPopoverIsPresented: Binding<Bool> {
+        Binding(
+            get: {
+                guard let state = store.popover, let presentation = catalog.presentation(state.id) else { return false }
+                return !presentation.usesCustomOverlay
+            },
+            set: { if !$0 { store.popover = nil } }
+        )
     }
 
     @ViewBuilder private var rootContent: some View {
@@ -2219,6 +2251,31 @@ struct HTMLToIOSGeneratedRootView: View {
                 .interactiveDismissDisabled(presentation.interactiveDismissDisabled)
         } else {
             EmptyView()
+        }
+    }
+
+    @ViewBuilder private var customPopoverOverlay: some View {
+        if let state = store.popover,
+           let presentation = catalog.presentation(state.id),
+           presentation.usesCustomOverlay {
+            GeometryReader { proxy in
+                let rect = presentation.sourceRect
+                let width = min(CGFloat(rect.indices.contains(2) ? rect[2] : 0), proxy.size.width)
+                let height = min(CGFloat(rect.indices.contains(3) ? rect[3] : 0), proxy.size.height)
+                let centerX = min(max(CGFloat(rect.indices.contains(0) ? rect[0] : 0) + width / 2, width / 2), proxy.size.width - width / 2)
+                let centerY = min(max(CGFloat(rect.indices.contains(1) ? rect[1] : 0) + height / 2, height / 2), proxy.size.height - height / 2)
+                ZStack(alignment: .topLeading) {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture { store.popover = nil }
+                    HTMLToIOSNativeNodeView(store: store, spec: presentation.node)
+                        .frame(width: width, height: height, alignment: .topLeading)
+                        .position(x: centerX, y: centerY)
+                }
+            }
+            .ignoresSafeArea()
+            .transition(.opacity)
+            .zIndex(1000)
         }
     }
 
@@ -2733,6 +2790,46 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
 UIKIT_ROOT = r'''// Generated by sky-html-to-ios. App entry surface for UIKit integration.
 import UIKit
 
+final class HTMLToIOSGeneratedCustomOverlayController: UIViewController {
+    private let presentation: HTMLToIOSPresentationSpec
+    private let actionHandler: (HTMLToIOSActionSpec?) -> Void
+    private let generatedState = HTMLToIOSUIKitState()
+
+    init(presentation: HTMLToIOSPresentationSpec, actionHandler: @escaping (HTMLToIOSActionSpec?) -> Void) {
+        self.presentation = presentation
+        self.actionHandler = actionHandler
+        super.init(nibName: nil, bundle: nil)
+        modalPresentationStyle = .overFullScreen
+        modalTransitionStyle = .crossDissolve
+    }
+
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        let backdrop = UIControl()
+        backdrop.translatesAutoresizingMaskIntoConstraints = false
+        backdrop.backgroundColor = .clear
+        backdrop.addAction(UIAction { [weak self] _ in self?.dismiss(animated: true) }, for: .touchUpInside)
+        view.addSubview(backdrop)
+
+        let renderer = HTMLToIOSNodeRenderer(state: generatedState, actionHandler: actionHandler)
+        let panel = renderer.makeView(presentation.node)
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(panel)
+        let rect = presentation.sourceRect
+        NSLayoutConstraint.activate([
+            backdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            backdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            backdrop.topAnchor.constraint(equalTo: view.topAnchor),
+            backdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            panel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: CGFloat(rect.indices.contains(0) ? rect[0] : 0)),
+            panel.topAnchor.constraint(equalTo: view.topAnchor, constant: CGFloat(rect.indices.contains(1) ? rect[1] : 0)),
+        ])
+    }
+}
+
 final class HTMLToIOSGeneratedCoordinator: NSObject, UITabBarControllerDelegate {
     private weak var hostController: UIViewController?
     private let catalog = HTMLToIOSGeneratedData.catalog
@@ -2832,6 +2929,14 @@ final class HTMLToIOSGeneratedCoordinator: NSObject, UITabBarControllerDelegate 
             currentNavigationController?.presentedViewController?.dismiss(animated: true)
         case "present-sheet", "present-fullscreen", "present-full-screen", "present-popover", "present-overlay", "show-dialog":
             guard let stateID, let presentation = catalog.presentation(stateID) else { return }
+            if presentation.usesCustomOverlay {
+                let controller = HTMLToIOSGeneratedCustomOverlayController(
+                    presentation: presentation,
+                    actionHandler: { [weak self] action in self?.perform(action) }
+                )
+                currentNavigationController?.present(controller, animated: true)
+                return
+            }
             let controller = HTMLToIOSGeneratedScreenViewController(
                 screen: HTMLToIOSScreenSpec(
                     id: stateID,

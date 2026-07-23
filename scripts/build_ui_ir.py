@@ -1509,6 +1509,10 @@ def build_ir(data: dict, args) -> dict:
         screen for screen in (args.route_graph_data or {}).get("screens") or []
         if isinstance(screen, dict) and screen.get("id") == args.screen_id
     ), None)
+    screen_activation = dict((route_screen or {}).get("activation") or {})
+    if screen_activation:
+        capture_configuration = data.get("captureConfiguration") or {}
+        screen_activation["settleDelayMs"] = int(capture_configuration.get("totalPostActivationWaitMs") or 0)
     screen_name = args.screen_name or str((route_screen or {}).get("title") or args.screen_id).title()
     navigation, tab_container = build_bar_contracts(root, nodes_out, regions, normalized_interactions, screen_name)
     return {
@@ -1526,7 +1530,7 @@ def build_ir(data: dict, args) -> dict:
             "interactionGraph": str(args.interaction_graph.resolve()) if args.interaction_graph else None,
             "interactionOverrides": str(args.interaction_overrides.resolve()) if args.interaction_overrides else None,
             "interactionFingerprint": ((args.interaction_graph_data or {}).get("source") or {}).get("fingerprint"),
-            "screenActivation": (route_screen or {}).get("activation"),
+            "screenActivation": screen_activation or None,
         },
         "target": {
             "platform": "ios",

@@ -201,7 +201,22 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             icon["layout"]["rect"] = {"x": 30, "y": 206, "width": 20, "height": 20}
             icon["assetRef"] = "asset.icon"
 
-            payload["screens"][0]["nodes"].extend([rail, item, label, row, icon_box, icon])
+            orb = node("generic.orb", root_node["id"], "grid")
+            orb["layout"].update({
+                "mode": "grid",
+                "rect": {"x": 144, "y": 280, "width": 104, "height": 104},
+            })
+            orb["style"].update({
+                "display": "grid",
+                "backgroundImage": "radial-gradient(circle, rgb(155, 138, 255), rgb(58, 43, 204))",
+                "cornerRadii": ["50%"] * 4,
+                "gridTemplateColumns": "104px",
+            })
+            orb_icon = node("generic.orb-icon", orb["id"], "icon")
+            orb_icon["layout"]["rect"] = {"x": 175, "y": 311, "width": 42, "height": 42}
+            orb_icon["assetRef"] = "asset.icon"
+
+            payload["screens"][0]["nodes"].extend([rail, item, label, row, icon_box, icon, orb, orb_icon])
             payload["assets"] = [{
                 "id": "asset.icon",
                 "kind": "inline-svg",
@@ -221,6 +236,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             generated_item = generated_rail["children"][0]
             generated_label = generated_item["children"][0]
             generated_icon_box = generated_row["children"][0]
+            generated_orb = next(child for child in generated_root["children"] if child["id"] == orb["id"])
 
             self.assertEqual(generated_rail["style"]["scrollAxis"], "horizontal")
             self.assertEqual(generated_item["style"]["fixedWidth"], 88)
@@ -230,6 +246,10 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertEqual(generated_icon_box["style"]["fixedWidth"], 40)
             self.assertEqual(generated_icon_box["style"]["fixedHeight"], 40)
             self.assertEqual(generated_icon_box["style"]["aspectRatio"], 1)
+            self.assertEqual(generated_orb["style"]["fixedWidth"], 104)
+            self.assertEqual(generated_orb["style"]["fixedHeight"], 104)
+            self.assertEqual(generated_orb["style"]["aspectRatio"], 1)
+            self.assertEqual(generated_orb["style"]["cornerRadius"], 52)
 
             swiftui_runtime = (swiftui_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn("ScrollView(.vertical)", swiftui_runtime)
@@ -619,6 +639,49 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             root_source = (out_dir / NAVIGATION_FILE).read_text(encoding="utf-8")
             self.assertIn("safeAreaInset(edge: .top", runtime)
             self.assertIn("presentationDetents", root_source)
+
+    def test_custom_popover_overlay_preserves_source_geometry_for_both_stacks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            open_popover = transition("open-emoji", "present-popover", "emoji-popover")
+            open_popover["presentation"] = {"style": "popover", "detents": []}
+            payload = ir("home", open_popover, states=[{
+                "id": "emoji-popover",
+                "kind": "popover-overlay",
+                "targetNodeIds": ["home.sheet"],
+            }])
+            popover = next(item for item in payload["screens"][0]["nodes"] if item["id"] == "home.sheet")
+            popover["layout"]["rect"] = {"x": 24, "y": 580, "width": 345, "height": 190}
+            popover["style"].update({
+                "opacity": "0",
+                "backgroundColor": "rgb(255, 255, 255)",
+                "cornerRadii": ["18px"] * 4,
+            })
+            child = node("home.emoji", popover["id"], "button", "Emoji")
+            payload["screens"][0]["nodes"].append(child)
+            path = root / "home.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            swiftui_dir = root / "swiftui"
+            self.run_generator([path], swiftui_dir)
+            generated = json.loads((swiftui_dir / PAYLOAD).read_text(encoding="utf-8"))
+            presentation = generated["screens"][0]["presentations"][0]
+            self.assertTrue(presentation["usesCustomOverlay"])
+            self.assertEqual(presentation["sourceRect"], [24, 580, 345, 190])
+            self.assertEqual(presentation["node"]["style"]["opacity"], 1)
+            self.assertEqual(presentation["node"]["style"]["fixedWidth"], 345)
+            self.assertEqual(presentation["node"]["style"]["fixedHeight"], 190)
+            root_source = (swiftui_dir / NAVIGATION_FILE).read_text(encoding="utf-8")
+            self.assertIn("systemPopoverIsPresented", root_source)
+            self.assertIn("customPopoverOverlay", root_source)
+            self.assertIn(".position(x: centerX, y: centerY)", root_source)
+
+            uikit_dir = root / "uikit"
+            self.run_generator([path], uikit_dir, ui_stack="uikit")
+            uikit_root = (uikit_dir / NAVIGATION_FILE).read_text(encoding="utf-8")
+            self.assertIn("HTMLToIOSGeneratedCustomOverlayController", uikit_root)
+            self.assertIn("presentation.usesCustomOverlay", uikit_root)
+            self.assertIn("panel.leadingAnchor.constraint", uikit_root)
 
     def test_system_safe_area_owns_status_bar_without_source_height_compensation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -155,6 +155,7 @@ def main() -> int:
     source_kind = "html" if source_entry and not str(source_entry).startswith(("http://", "https://")) else "url"
     activation = (data.get("source") or {}).get("screenActivation") or {}
     activation_selector = next(iter(activation.get("selectors") or []), None)
+    activation_settle_delay = max(int(activation.get("settleDelayMs") or 0), 0)
 
     states = []
     for state in data.get("visualStates") or []:
@@ -162,6 +163,12 @@ def main() -> int:
         ios_actions = []
         if activation_selector:
             html_actions.append({"type": "click", "selector": activation_selector, "purpose": "activate-screen"})
+            if activation_settle_delay:
+                html_actions.append({
+                    "type": "wait",
+                    "ms": activation_settle_delay,
+                    "purpose": "match-render-tree-capture-checkpoint",
+                })
         scroll = state.get("scroll")
         if scroll in {"top", "middle", "bottom"}:
             html_actions.append({"type": "scroll", "selector": screen.get("sourceSelector"), "position": scroll})
