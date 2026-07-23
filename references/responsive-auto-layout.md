@@ -56,6 +56,9 @@ NODE_PATH=<playwright-node-modules> node scripts/analyze_responsive_layout.cjs \
 - 紧凑方形视觉容器：只要浏览器实测宽高明确、尺寸不超过 180pt、宽高比接近 1，且节点依赖背景色、渐变、圆角、边框或阴影表达视觉，即使它位于纵向流或单格 CSS Grid 中，也必须保留 fixed/bounded width、height 与 `aspectRatio`；不能让 Stack/Grid 的 fill alignment 把圆形拉成胶囊。
 - 百分比圆角按实测容器短边计算，例如 `border-radius: 50%` 对 104×104 容器应得到 52pt，不能把百分数当作 px，也不能用与容器无关的圆角上限截断。
 - 单行紧凑文本：保留 measured line count、nowrap 和 compression resistance；只有空间策略明确允许时才截断，不能静默换行改变 item 高度。
+- `preferredHeight` 必须保留浏览器实测高度，不得用统一经验上限截断。媒体占位图、列表预估高度等需要限制时，应在具体控件分支局部限制，不能污染叠层、画布、圆环和大型视觉容器的几何信息。
+- 没有文本和子节点、仅依赖背景、边框、圆角、渐变或阴影表达的视觉叶节点没有可靠 intrinsic content size。对于非满宽的此类节点，必须保留实测宽高或等价约束；否则边框环、光圈、装饰条和占位块会在原生布局中塌缩为零。
+- 带点击行为的复合容器仍须保留原布局语义。CSS Grid/Flex 容器映射为 `Button`/`UIControl` 时，点击语义只能包裹内容，不得把 Grid 子项展平成按钮标题或单行内容。
 
 ## 滚动轴隔离
 

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.11.0"
+GENERATOR_VERSION = "1.12.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -644,6 +644,18 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         and has_visual_style
         and not text
     )
+    measured_visual_leaf = bool(
+        width > 0
+        and height > 0
+        and width <= context.root_width
+        and height <= context.root_width * 2
+        and width_fraction < 0.88
+        and semantic not in {"text", "label", "heading", "image", "icon"}
+        and has_visual_style
+        and not child_payloads
+        and not text
+        and not action
+    )
     horizontal_scroll_item = parent_scroll_axis == "horizontal" and width_fraction < 0.95
     preserves_intrinsic_width = bool(
         str(style.get("flexShrink") or "1") == "0"
@@ -651,16 +663,23 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         or inferred_compact_single_line
         or horizontal_scroll_item
         or compact_visual_container
+        or measured_visual_leaf
     )
     fixed_width = width if (
         compact_visual_container
+        or measured_visual_leaf
         or (horizontal_scroll_item and semantic not in {"image", "icon"})
     ) else None
-    fixed_height = height if compact_visual_container or (semantic == "carousel" and scroll_axis == "horizontal") else None
+    fixed_height = height if (
+        compact_visual_container
+        or measured_visual_leaf
+        or (semantic == "carousel" and scroll_axis == "horizontal")
+    ) else None
     preserves_aspect_ratio = bool(
         ratio is not None
         and (
             compact_visual_container
+            or measured_visual_leaf
             or semantic in {"image", "icon", "canvas-artwork"}
         )
     )
@@ -712,7 +731,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "widthFraction": width_fraction,
             "minHeight": min_height,
             "preferredWidth": min(max(width, 0), context.root_width),
-            "preferredHeight": min(max(number(rect.get("height")), 0), 180),
+            "preferredHeight": min(max(number(rect.get("height")), 0), max(context.root_width * 3, 1200)),
             "resistsCompression": str(style.get("flexShrink") or "1") == "0",
             "preservesIntrinsicWidth": preserves_intrinsic_width,
             "fixedWidth": min(max(fixed_width, 0), context.root_width) if fixed_width is not None else None,
@@ -1928,7 +1947,9 @@ struct HTMLToIOSNativeNodeView: View {
     }
 
     @ViewBuilder private var buttonContent: some View {
-        if spec.axis == "vertical" {
+        if spec.axis == "grid" {
+            LazyVGrid(columns: gridColumns, spacing: spec.style.spacing ?? 0) { buttonChildren }
+        } else if spec.axis == "vertical" {
             VStack(alignment: .center, spacing: spec.style.spacing ?? 8) { buttonChildren }
         } else {
             HStack(alignment: .center, spacing: spec.style.spacing ?? 8) { buttonChildren }
@@ -2363,18 +2384,29 @@ final class HTMLToIOSNodeRenderer {
         let view: UIView
         switch spec.semantic {
         case "button", "link", "menu-item", "tab-item":
-            let button = UIButton(type: .system)
-            button.setTitle(displayText(spec), for: .normal)
-            button.titleLabel?.numberOfLines = spec.style.textLineLimit ?? 0
-            button.titleLabel?.lineBreakMode = lineBreakMode(spec)
-            if let icon = spec.children.first(where: { $0.semantic == "icon" }) {
-                button.setImage(UIImage(systemName: icon.systemImage ?? "circle.fill"), for: .normal)
-                button.configuration = .plain()
-                button.configuration?.imagePadding = spec.style.spacing ?? 8
+            if spec.children.isEmpty {
+                let button = UIButton(type: .system)
+                button.setTitle(displayText(spec), for: .normal)
+                button.titleLabel?.numberOfLines = spec.style.textLineLimit ?? 0
+                button.titleLabel?.lineBreakMode = lineBreakMode(spec)
+                button.contentHorizontalAlignment = .leading
+                button.addAction(UIAction { [actionHandler] _ in actionHandler(spec.action) }, for: .touchUpInside)
+                view = button
+            } else {
+                let control = UIControl()
+                let content = spec.axis == "grid" ? makeGrid(spec) : makeStack(spec)
+                content.translatesAutoresizingMaskIntoConstraints = false
+                control.addSubview(content)
+                let padding = spec.style.padding ?? [0, 0, 0, 0]
+                NSLayoutConstraint.activate([
+                    content.topAnchor.constraint(equalTo: control.topAnchor, constant: padding.indices.contains(0) ? padding[0] : 0),
+                    content.trailingAnchor.constraint(equalTo: control.trailingAnchor, constant: -(padding.indices.contains(1) ? padding[1] : 0)),
+                    content.bottomAnchor.constraint(equalTo: control.bottomAnchor, constant: -(padding.indices.contains(2) ? padding[2] : 0)),
+                    content.leadingAnchor.constraint(equalTo: control.leadingAnchor, constant: padding.indices.contains(3) ? padding[3] : 0),
+                ])
+                control.addAction(UIAction { [actionHandler] _ in actionHandler(spec.action) }, for: .touchUpInside)
+                view = control
             }
-            button.contentHorizontalAlignment = .leading
-            button.addAction(UIAction { [actionHandler] _ in actionHandler(spec.action) }, for: .touchUpInside)
-            view = button
         case "text-field", "input", "search-field", "secure-field":
             let field = UITextField()
             field.borderStyle = .roundedRect
@@ -2418,7 +2450,7 @@ final class HTMLToIOSNodeRenderer {
         case "text", "label", "heading":
             view = makeLabel(flattenedText(spec), spec: spec)
         default:
-            let stack = makeStack(spec)
+            let stack = spec.axis == "grid" ? makeGrid(spec) : makeStack(spec)
             if spec.action != nil {
                 stack.isUserInteractionEnabled = true
                 stack.addGestureRecognizer(HTMLToIOSClosureTapGestureRecognizer { [actionHandler] in actionHandler(spec.action) })
@@ -2443,6 +2475,34 @@ final class HTMLToIOSNodeRenderer {
         }
         spec.children.forEach { stack.addArrangedSubview(makeView($0)) }
         return stack
+    }
+
+    private func makeGrid(_ spec: HTMLToIOSNodeSpec) -> UIStackView {
+        let grid = UIStackView()
+        grid.axis = .vertical
+        grid.alignment = .fill
+        grid.spacing = spec.style.spacing ?? 0
+        let columns = max(spec.style.gridColumnCount ?? 2, 1)
+        for start in stride(from: 0, to: spec.children.count, by: columns) {
+            let row = UIStackView()
+            row.axis = .horizontal
+            row.alignment = .fill
+            row.distribution = .fillEqually
+            row.spacing = spec.style.spacing ?? 0
+            let end = min(start + columns, spec.children.count)
+            for index in start..<end {
+                row.addArrangedSubview(makeView(spec.children[index]))
+            }
+            if end - start < columns {
+                for _ in 0..<(columns - (end - start)) {
+                    let placeholder = UIView()
+                    placeholder.isUserInteractionEnabled = false
+                    row.addArrangedSubview(placeholder)
+                }
+            }
+            grid.addArrangedSubview(row)
+        }
+        return grid
     }
 
     private func makeScrollContainer(_ spec: HTMLToIOSNodeSpec) -> UIView {

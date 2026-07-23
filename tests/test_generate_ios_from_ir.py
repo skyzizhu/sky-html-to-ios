@@ -683,6 +683,82 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("presentation.usesCustomOverlay", uikit_root)
             self.assertIn("panel.leadingAnchor.constraint", uikit_root)
 
+    def test_large_overlay_height_and_actionable_grid_are_preserved_for_both_stacks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("home")
+            root_node = payload["screens"][0]["nodes"][0]
+
+            artwork = node("home.artwork", root_node["id"], "container")
+            artwork["layout"].update({
+                "mode": "flow",
+                "rect": {"x": 70, "y": 80, "width": 253, "height": 224},
+            })
+            artwork["style"]["position"] = "relative"
+            artwork_child = node("home.artwork-child", artwork["id"], "container")
+            artwork_child["layout"].update({
+                "mode": "absolute",
+                "position": "absolute",
+                "rect": {"x": 70, "y": 80, "width": 253, "height": 224},
+            })
+            artwork_child["style"].update({
+                "position": "absolute",
+                "backgroundColor": "rgb(120, 100, 255)",
+            })
+
+            grid_action = node("home.grid-action", root_node["id"], "button")
+            grid_action["layout"].update({
+                "mode": "grid",
+                "rect": {"x": 24, "y": 340, "width": 345, "height": 132},
+            })
+            grid_action["style"].update({
+                "display": "grid",
+                "gridTemplateColumns": "repeat(4, 1fr)",
+                "gap": "4px",
+            })
+            grid_action["interactionRef"] = "interaction-grid"
+            for index in range(7):
+                child = node(f"home.grid-item-{index}", grid_action["id"], "text", str(index))
+                child["layout"]["rect"] = {
+                    "x": 24 + (index % 4) * 86,
+                    "y": 340 + (index // 4) * 64,
+                    "width": 82,
+                    "height": 60,
+                }
+                payload["screens"][0]["nodes"].append(child)
+
+            payload["screens"][0]["nodes"].extend([artwork, artwork_child, grid_action])
+            payload["interactions"] = [{
+                "id": "interaction-grid",
+                "sourceNodeId": grid_action["id"],
+                "action": "toggle-state",
+                "targetStateId": "grid-state",
+            }]
+            path = root / "home.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            swiftui_dir = root / "swiftui"
+            self.run_generator([path], swiftui_dir)
+            generated = json.loads((swiftui_dir / PAYLOAD).read_text(encoding="utf-8"))
+            generated_root = generated["screens"][0]["root"]
+            generated_artwork = next(item for item in generated_root["children"] if item["id"] == artwork["id"])
+            generated_grid = next(item for item in generated_root["children"] if item["id"] == grid_action["id"])
+            self.assertEqual(generated_artwork["style"]["preferredHeight"], 224)
+            self.assertEqual(generated_artwork["children"][0]["style"]["fixedWidth"], 253)
+            self.assertEqual(generated_artwork["children"][0]["style"]["fixedHeight"], 224)
+            self.assertEqual(generated_grid["axis"], "grid")
+            self.assertEqual(generated_grid["style"]["gridColumnCount"], 4)
+            swiftui_runtime = (swiftui_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn('if spec.axis == "grid" {', swiftui_runtime)
+            self.assertIn("LazyVGrid(columns: gridColumns", swiftui_runtime)
+
+            uikit_dir = root / "uikit"
+            self.run_generator([path], uikit_dir, ui_stack="uikit")
+            uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn('let content = spec.axis == "grid" ? makeGrid(spec) : makeStack(spec)', uikit_runtime)
+            self.assertIn("private func makeGrid(_ spec: HTMLToIOSNodeSpec) -> UIStackView", uikit_runtime)
+            self.assertIn("row.distribution = .fillEqually", uikit_runtime)
+
     def test_system_safe_area_owns_status_bar_without_source_height_compensation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
