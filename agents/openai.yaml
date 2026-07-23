@@ -1,0 +1,4 @@
+interface:
+  display_name: "HTML 转 iOS 原生页面"
+  short_description: "将高保真 HTML 原型转换并验证为 SwiftUI 或 UIKit 页面"
+  default_prompt: "Use $sky-html-to-ios to convert this mobile HTML prototype into a verified native iOS page."
