@@ -29,7 +29,7 @@ python3 scripts/discover_ios_components.py <ios-root> --out ios-component-index.
 - `swift-package-only`：先判断 Package 是否就是目标 UI 模块；若用户需要独立 App，创建 Xcode App 工程并按需接入 Package。
 - `empty-no-ios-project`：在用户指定或合理推断的输出目录创建可编译 iOS App 工程。
 
-空工程默认 SwiftUI；用户指定 UIKit 时创建 UIKit 工程。使用：
+空工程没有可继承的 UI 架构，必须先让用户选择 SwiftUI 或 UIKit + Swift。不要把“Swift”和“SwiftUI”作为同一层级选项。使用：
 
 ```bash
 ruby scripts/create_ios_project.rb \
@@ -43,3 +43,5 @@ ruby scripts/create_ios_project.rb \
 创建器使用 `xcodeproj` 生成工程，检测到现有 `.xcodeproj` 或 `.xcworkspace` 时会拒绝覆盖。工程名、Bundle ID 或最低版本无法可靠推断且会影响交付时，才询问用户；临时验证工程可使用明确标注的非生产 Bundle ID。
 
 创建后必须重新运行工程检查和组件发现，再开始页面代码生成。若本机缺少 `xcodeproj` gem，应准确报告依赖缺失，不允许手写或正则拼接 `project.pbxproj`。
+
+已有工程的技术栈检测以选定 target 的 source root 为范围，统计 Swift/Objective-C 文件、SwiftUI View 和 UIKit View/ViewController 证据，输出 `project-generation-decision.json`。排除 `Generated`、Pods、DerivedData 等目录，避免上一轮生成代码反过来污染项目判断。目标模块为混合栈或置信度不足时返回 `needs-input`；用户显式选择优先。纯 Objective-C 模块接入 Swift 代码时必须标记 Swift 集成复核，不能悄悄改变工程语言边界。

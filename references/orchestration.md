@@ -22,25 +22,25 @@ python3 scripts/run_html_to_ios.py \
 
 1. 检查输入文件和当前工作目录。
 2. 扫描 `.xcodeproj`、`.xcworkspace` 与 `Package.swift`。
-3. 确定 SwiftUI/UIKit、App target、shared scheme 和 target deployment target。
+3. 生成 `project-generation-decision.json`，确定语言边界、SwiftUI/UIKit、验证策略、App target、shared scheme 和 target deployment target。
 4. HTML 模式先发现 route/interaction，校验 overrides；未解决交互在创建工程前停止。
 5. UI IR 模式先校验所有 IR；无效 IR 在创建工程前停止。
 6. 没有 Xcode 工程时创建 App 工程。
 7. 发现项目组件并核验本机 SDK。
 8. HTML 模式逐 screen 提取 render tree、截图、生成并校验 UI IR。
 9. 默认逐 screen 生成文本标定、多尺寸响应式分析、滚动区域行为探测、视觉状态清单和 HTML 状态基准图。
-10. 汇总生成 `native-architecture-plan.json`，验证 controller/navigation/presentation/Safe Area 单一所有权。
-11. 生成原生代码和 Payload，接入指定 target。
+10. 生成 `native-naming-plan.json` 与 `native-architecture-plan.json`，验证命名冲突及 controller/navigation/presentation/Safe Area 单一所有权。
+11. 生成带稳定项目前缀的原生页面代码和 Payload，接入指定 target。
 12. 新建工程自动接入根 View/根 ViewController；现有工程只检测入口，不覆盖启动架构。
-13. 默认执行 iOS Simulator `xcodebuild`。
-14. 入口已接通时，创建隔离的 generator-owned UI Test target，逐 screen 执行状态动作、导出 xcresult 截图并归一化到目标逻辑 viewport。
+13. 根据 verification mode 决定停止、构建或启动：已有项目 `auto` 停止并等待确认，新建托管项目 `auto` 执行完整视觉验证。
+14. 用户选择 `visual` 且入口已接通时，创建隔离的 generator-owned UI Test target，逐 screen 执行状态动作、导出 xcresult 截图并归一化到目标逻辑 viewport。
 15. 对 required states 执行节点分区视觉门禁；任一状态缺失或超阈值时总控返回 `failed`，保留 review bundle 供 Agent 局部纠偏。
 
 ## 工程决策
 
 ### 没有工程
 
-`empty-no-ios-project` 默认创建 SwiftUI App；用户指定 `--ui-stack uikit` 时创建 UIKit App。项目名默认由 workspace 目录名安全转换，无法转换时使用 `HTMLToIOSApp`。可以用 `--app-name` 和 `--bundle-id` 覆盖。
+`empty-no-ios-project` 创建前必须通过 `--ui-stack swiftui|uikit` 明确选择 SwiftUI 或 UIKit + Swift。未选择时返回 `needs-input`，不得静默创建。项目名默认由 workspace 目录名安全转换，无法转换时使用 `HTMLToIOSApp`。可以用 `--app-name` 和 `--bundle-id` 覆盖。
 
 使用 `--no-create` 可以禁止创建；此时返回 `needs-input`。
 
@@ -100,6 +100,18 @@ python3 scripts/run_html_to_ios.py \
 
 跨 screen 的 `<report-dir>/native-architecture-plan.json` 是生成器必须读取的结构契约。其硬约束包括：滚动容器使用父容器完整 bounds，系统 Safe Area 不从宽高预扣，每个 screen 只有一个 Safe Area owner，自绘栏位高度只作为内容 inset 追加一次。
 
+`<report-dir>/project-generation-decision.json` 记录模块语言、UI 栈证据和 verification mode；`native-naming-plan.json` 记录页面文件/类型前缀、来源、置信度、上一轮继承和已有类型集合。生成器发现类型冲突时必须停止。
+
+## 验证模式
+
+- `--verification-mode auto`：新建托管项目解析为 `visual`；已有项目解析为 `ask`。
+- `ask`：只生成、关联 target 并返回 `generated-awaiting-verification`，不运行 `xcodebuild`，不启动 App。
+- `build`：只编译选定 scheme，不启动模拟器页面；HTML 视觉状态保持 pending。
+- `visual`：构建、启动、执行状态动作、截图和确定性视觉门禁。
+- `none`：显式跳过构建和视觉验证，返回 `generated-without-verification`。
+
+`--skip-build` 作为兼容参数等价于本轮 `none`。用户在原始请求中已经明确要求测试时，Agent 直接传 `build` 或 `visual`，不要生成后重复询问。
+
 ## 入口策略
 
 - 新建 SwiftUI 工程：将模板 `ContentView` 接到 `HTMLToIOSGeneratedRootView()`。
@@ -109,8 +121,11 @@ python3 scripts/run_html_to_ios.py \
 ## 状态
 
 - `completed`：代码生成、target 接入、入口确认、构建、required iOS 状态截图和确定性视觉门禁均通过。多模态复核仍按 capability gate 单独记录。
-- `built-pending-visual-acceptance`：使用了 `--skip-build`、入口未就绪或其他显式诊断路径，视觉链路尚未执行。
-- `generated-needs-entry-integration`：代码已生成并编译，但现有 App 流程还没有使用生成入口。
+- `generated-awaiting-verification`：已有项目已生成并接入 target，等待用户选择 build 或 visual。
+- `generated-without-verification`：用户明确跳过构建和运行；不得声称编译或视觉通过。
+- `built-awaiting-visual-verification`：已经构建，但尚未执行 HTML/iOS 状态截图。
+- `built-pending-visual-acceptance`：视觉链路已开始但尚未通过。
+- `generated-needs-entry-integration`：代码已生成并关联 target，但现有 App 流程还没有使用生成入口。
 - `needs-input`：多工程、多 target、混合技术栈、Swift Package 宿主、未解决交互或 API 版本需要人工决定。
 - `failed`：输入、工具、生成、工程接入或构建失败。
 - `planned`：`--dry-run` 只输出工程决策，不写文件。
@@ -124,6 +139,6 @@ python3 scripts/run_html_to_ios.py \
 - 现有 App 入口不自动改写。
 - 生成文件继续遵守增量 ownership manifest。
 - target deployment target 从选定 target 的 Build Settings 读取，不使用其他 target 的汇总值代替。
-- `--skip-build` 只用于诊断；正式交付仍必须构建。
+- 已有项目在用户确认前不得自动构建或启动；`ask` 状态不是验收完成。要声称可编译必须执行 `build`，要声称高保真必须执行 `visual`。
 - `HTMLToIOSVisualTests` 只允许修改带 `HTML_TO_IOS_MANAGED_VISUAL_TESTS=YES` 标记或可证明位于 `.html-to-ios` 的旧托管 target；现有同名业务 target 必须拒绝覆盖。
 - UI Test 源码与 DerivedData/xcresult 放在 `.html-to-ios`，业务生成源码仍只位于 `Generated/HTMLToIOS`。

@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 
 
-SKIP_DIRS = {".git", ".build", "build", "DerivedData", "Pods", "Carthage", "node_modules", "xcuserdata"}
+SKIP_DIRS = {".git", ".build", "build", "DerivedData", "Pods", "Carthage", "node_modules", "xcuserdata", "Generated"}
 TYPE_PATTERN = re.compile(
     r"(?m)^\s*(?:(open|public|package|internal|fileprivate|private)\s+)?(?:final\s+)?"
     r"(class|struct|enum)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*([^\{\n]+))?"

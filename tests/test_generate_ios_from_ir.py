@@ -86,11 +86,14 @@ class GenerateIOSFromIRTests(unittest.TestCase):
         out_dir: Path,
         expect_success: bool = True,
         ui_stack: str = "swiftui",
+        naming_plan: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         command = ["python3", str(SCRIPT)]
         for path in paths:
             command.extend(["--ir", str(path)])
         command.extend(["--out-dir", str(out_dir), "--ui-stack", ui_stack])
+        if naming_plan:
+            command.extend(["--naming-plan", str(naming_plan)])
         if out_dir.parts[-2:] != ("Generated", "HTMLToIOS"):
             command.append("--allow-nonstandard-output")
         result = subprocess.run(command, text=True, capture_output=True, check=False)
@@ -231,9 +234,9 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("HTMLToIOSGeneratedNavigationContainer", swiftui_root)
             self.assertIn("TabView(selection:", swiftui_navigation)
             self.assertIn("tabPathBinding", swiftui_navigation)
-            self.assertTrue((swiftui_dir / "Home/Screens/HomeScreen.swift").is_file())
-            self.assertTrue((swiftui_dir / "Home/Views/HomeContentView.swift").is_file())
-            self.assertTrue((swiftui_dir / "Profile/Screens/ProfileScreen.swift").is_file())
+            self.assertTrue((swiftui_dir / "Home/Screens/HTMLToIOSHomeScreen.swift").is_file())
+            self.assertTrue((swiftui_dir / "Home/Views/HTMLToIOSHomeContentView.swift").is_file())
+            self.assertTrue((swiftui_dir / "Profile/Screens/HTMLToIOSProfileScreen.swift").is_file())
             self.assertIn("HTMLToIOSHomeScreen", (swiftui_dir / SCREEN_FACTORY_FILE).read_text(encoding="utf-8"))
             self.assertIn("tabScrollToTopNonce", swiftui_runtime)
             self.assertIn("tabBarVisibility(for:", swiftui_runtime)
@@ -248,9 +251,9 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("popToRootViewController", uikit_navigation)
             self.assertIn('case "scroll-to-top"', uikit_navigation)
             self.assertIn("firstScrollView", uikit_navigation)
-            self.assertTrue((uikit_dir / "Home/Controllers/HomeViewController.swift").is_file())
-            self.assertTrue((uikit_dir / "Home/Views/HomeContentView.swift").is_file())
-            self.assertTrue((uikit_dir / "Profile/Controllers/ProfileViewController.swift").is_file())
+            self.assertTrue((uikit_dir / "Home/Controllers/HTMLToIOSHomeViewController.swift").is_file())
+            self.assertTrue((uikit_dir / "Home/Views/HTMLToIOSHomeContentView.swift").is_file())
+            self.assertTrue((uikit_dir / "Profile/Controllers/HTMLToIOSProfileViewController.swift").is_file())
 
     def test_nonstandard_output_directory_requires_explicit_override(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -281,13 +284,55 @@ class GenerateIOSFromIRTests(unittest.TestCase):
 
             out_dir = root / "Generated" / "HTMLToIOS"
             self.run_generator(paths, out_dir)
-            self.assertTrue((out_dir / "Home/Screens/HomeScreen.swift").is_file())
-            self.assertTrue((out_dir / "Home/Screens/HomeDetailScreen.swift").is_file())
-            self.assertTrue((out_dir / "Home/Views/HomeDetailContentView.swift").is_file())
-            self.assertTrue((out_dir / "ContentLibrary/Screens/ArticleListScreen.swift").is_file())
+            self.assertTrue((out_dir / "Home/Screens/HTMLToIOSHomeScreen.swift").is_file())
+            self.assertTrue((out_dir / "Home/Screens/HTMLToIOSHomeDetailScreen.swift").is_file())
+            self.assertTrue((out_dir / "Home/Views/HTMLToIOSHomeDetailContentView.swift").is_file())
+            self.assertTrue((out_dir / "ContentLibrary/Screens/HTMLToIOSArticleListScreen.swift").is_file())
             manifest = json.loads((out_dir / ".html-to-ios-generation.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["screenModules"]["home-detail"], "home")
             self.assertEqual(manifest["screenModules"]["article-list"], "content-library")
+
+    def test_naming_plan_prefixes_generated_page_files_and_types(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "home.json"
+            path.write_text(json.dumps(ir("home")), encoding="utf-8")
+            naming_plan = root / "native-naming-plan.json"
+            naming_plan.write_text(json.dumps({
+                "schemaVersion": "native-naming-plan-1.0",
+                "prefix": "Sky",
+                "source": "new-project-default",
+            }), encoding="utf-8")
+            out_dir = root / "Generated" / "HTMLToIOS"
+            result = self.run_generator([path], out_dir, naming_plan=naming_plan)
+            report = json.loads(result.stdout)
+            self.assertEqual(report["namePrefix"], "Sky")
+            screen_file = out_dir / "Home/Screens/SkyHomeScreen.swift"
+            content_file = out_dir / "Home/Views/SkyHomeContentView.swift"
+            self.assertTrue(screen_file.is_file())
+            self.assertTrue(content_file.is_file())
+            self.assertIn("struct SkyHomeScreen", screen_file.read_text(encoding="utf-8"))
+            self.assertIn("SkyHomeScreen", (out_dir / SCREEN_FACTORY_FILE).read_text(encoding="utf-8"))
+
+    def test_naming_plan_rejects_existing_type_collision(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "home.json"
+            path.write_text(json.dumps(ir("home")), encoding="utf-8")
+            naming_plan = root / "native-naming-plan.json"
+            naming_plan.write_text(json.dumps({
+                "schemaVersion": "native-naming-plan-1.0",
+                "prefix": "ABC",
+                "source": "existing-module-dominant-prefix",
+                "existingTypeNames": ["ABCHomeScreen"],
+            }), encoding="utf-8")
+            result = self.run_generator(
+                [path], root / "Generated" / "HTMLToIOS",
+                expect_success=False,
+                naming_plan=naming_plan,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("collide with existing target types", result.stderr)
 
     def test_asset_catalog_is_rebuilt_and_legacy_catalog_is_migrated(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

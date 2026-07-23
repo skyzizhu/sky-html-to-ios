@@ -18,14 +18,14 @@ Generated/HTMLToIOS/
 │   └── Runtime/
 ├── Home/
 │   ├── Screens/                 # SwiftUI
-│   │   ├── HomeScreen.swift
-│   │   └── HomeDetailScreen.swift
+│   │   ├── SkyHomeScreen.swift
+│   │   └── SkyHomeDetailScreen.swift
 │   ├── Controllers/             # UIKit
-│   │   ├── HomeViewController.swift
-│   │   └── HomeDetailViewController.swift
+│   │   ├── SkyHomeViewController.swift
+│   │   └── SkyHomeDetailViewController.swift
 │   └── Views/
-│       ├── HomeContentView.swift
-│       └── HomeHeaderView.swift
+│       ├── SkyHomeContentView.swift
+│       └── SkyHomeHeaderView.swift
 ├── ArticleList/
 │   ├── Screens/ | Controllers/
 │   └── Views/
@@ -48,11 +48,13 @@ Generated/HTMLToIOS/
 - 生成器默认拒绝不以 `Generated/HTMLToIOS` 结尾的输出路径。只有 Agent 已确认项目使用 Tuist、XcodeGen、同步文件夹或既有 feature 生成目录时，才允许显式使用 `--allow-nonstandard-output`，并在交付报告中记录实际映射。
 - 禁止直接输出到源码根目录、target 根目录、`Sources/` 根目录或人工维护的 `Features/` 根目录。
 - Swift 类型、Screen 目录和文件使用 `UpperCamelCase`；HTML screen ID 保持稳定的 `lower-kebab-case`，生成 Swift 名时做确定性转换。
+- 页面文件名与主要类型使用 `native-naming-plan.json` 的同一前缀。新项目默认 `Sky`；已有项目按显式参数、上一轮计划、稳定模块前缀、target 名回退的顺序决定。通用生成运行时继续使用 `HTMLToIOSGenerated`，便于识别所有权。
 - HTML 使用 `data-ios-module="home"` 声明业务模块；生成目录为 `Home/`。同模块的 `home`、`home-detail` 等页面进入同一模块目录。
-- Screen 文件使用 `<Name>Screen.swift` 或 `<Name>ViewController.swift`；可复用控件使用 `<Purpose>View.swift`、`<Purpose>Cell.swift` 或 `<Purpose>Control.swift`。
+- Screen 文件使用 `<Prefix><Name>Screen.swift` 或 `<Prefix><Name>ViewController.swift`；可复用控件使用 `<Prefix><Purpose>View.swift`、`<Prefix><Purpose>Cell.swift` 或 `<Prefix><Purpose>Control.swift`。
 - 禁止 `View1.swift`、`NewView.swift`、`Common.swift`、`Utils.swift`、`Temp.swift` 等无职责名称。
 - Asset 名使用 `html_<screen>_<role>`；同一资源复用同一 Asset 名，不按节点重复复制。
 - 一个 Swift 文件原则上只放一个主要 public/internal 类型；紧密私有辅助类型可与所有者同文件。
+- 生成前将计划类型与目标模块现有类型集合比较；发生同名冲突时停止并要求更换前缀或复用已有组件，不得自动追加随机数字。
 
 ## 归属规则
 

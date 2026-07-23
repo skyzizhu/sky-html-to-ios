@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Orchestrate workspace discovery, HTML/UI IR conversion, Xcode integration, and build."""
+"""Orchestrate project decisions, HTML/UI IR conversion, Xcode integration, and optional verification."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = "html-to-ios-orchestration-1.3"
+SCHEMA_VERSION = "html-to-ios-orchestration-1.4"
 PROJECT_MARKER_NAME = ".html-to-ios-created-project.json"
 SKIP_PARTS = {".git", ".build", "build", "DerivedData", "Pods", "Carthage", "node_modules", "xcuserdata"}
 
@@ -53,6 +53,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scheme")
     parser.add_argument("--source-root", type=Path)
     parser.add_argument("--ui-stack", choices=("swiftui", "uikit"))
+    parser.add_argument("--name-prefix", help="Generated page/type prefix; inferred for existing targets and defaults to Sky for new projects")
     parser.add_argument("--minimum-ios", default=None)
     parser.add_argument("--app-name")
     parser.add_argument("--bundle-id")
@@ -75,6 +76,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-create", action="store_true", help="Do not create an App when no Xcode project exists")
     parser.add_argument("--create-package-host-app", action="store_true", help="Allow creating an App beside a Swift Package")
     parser.add_argument("--skip-build", action="store_true")
+    parser.add_argument(
+        "--verification-mode",
+        choices=("auto", "ask", "build", "visual", "none"),
+        default="auto",
+        help="auto uses visual verification for a newly created project and asks before building an existing project",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Inspect and print decisions without modifying files")
     return parser.parse_args()
 
@@ -180,6 +187,8 @@ class Orchestrator:
                 "responsiveAnalysis": "pending" if args.html else "not-applicable-with-supplied-ir",
                 "scrollBehaviorAnalysis": "pending" if args.html else "not-applicable-with-supplied-ir",
                 "nativeArchitecturePlan": "pending",
+                "projectGenerationDecision": "pending",
+                "nativeNamingPlan": "pending",
                 "htmlVisualBaselines": "pending" if args.html and not args.skip_visual_baselines else "skipped",
                 "build": "pending",
                 "iosStateCapture": "pending-agent-runtime",
@@ -257,22 +266,6 @@ class Orchestrator:
             "sourceSignals": {"recommendedUIStack": "unknown-new-project-default-swiftui"},
             "deploymentTargets": [],
         }
-
-    def choose_ui_stack(self, inspection: dict[str, Any], creating: bool) -> str:
-        if self.args.ui_stack:
-            return self.args.ui_stack
-        if creating:
-            return "swiftui"
-        recommendation = str((inspection.get("sourceSignals") or {}).get("recommendedUIStack") or "")
-        if recommendation in {"swiftui", "uikit"}:
-            return recommendation
-        if recommendation == "unknown-new-project-default-swiftui":
-            return "swiftui"
-        raise OrchestrationError(
-            "select-ui-stack",
-            "The existing project is mixed or ambiguous; pass --ui-stack swiftui or --ui-stack uikit.",
-            "needs-input",
-        )
 
     def choose_minimum_ios(self, inspection: dict[str, Any]) -> str:
         if self.args.minimum_ios:
@@ -444,7 +437,74 @@ class Orchestrator:
             self.warnings.append("Multiple Xcode workspaces found beside the project; building the project directly. Pass --xcode-workspace if required.")
         return "project", project
 
-    def inspect_sdk_and_components(self, source_root: Path, minimum_ios: str) -> Path:
+    def build_project_generation_decision(
+        self,
+        project_state: str,
+        source_root: Path | None,
+        target: str | None,
+    ) -> dict[str, Any]:
+        verification_mode = "none" if self.args.skip_build else self.args.verification_mode
+        if self.args.dry_run:
+            creating = project_state in {"empty-no-ios-project", "swift-package-only"}
+            selected = self.args.ui_stack
+            recommendation = "unknown"
+            if source_root:
+                swiftui = 0
+                uikit = 0
+                for path in source_root.rglob("*.swift"):
+                    if is_skipped(path):
+                        continue
+                    text = path.read_text(encoding="utf-8", errors="ignore")[:300_000]
+                    swiftui += len(re.findall(r"(?m)^\s*import\s+SwiftUI\b", text))
+                    uikit += len(re.findall(r"(?m)^\s*import\s+UIKit\b", text))
+                if swiftui > uikit * 1.35:
+                    recommendation = "swiftui"
+                elif uikit > swiftui * 1.35:
+                    recommendation = "uikit"
+                if selected is None and recommendation in {"swiftui", "uikit"}:
+                    selected = recommendation
+            resolved_verification = ("visual" if creating else "ask") if verification_mode == "auto" else verification_mode
+            decision = {
+                "schemaVersion": "project-generation-decision-1.0",
+                "projectState": project_state,
+                "target": target,
+                "sourceRoot": str(source_root) if source_root else None,
+                "uiStack": {
+                    "selected": selected,
+                    "requiresUserSelection": selected is None,
+                    "source": "explicit-request" if self.args.ui_stack else "dry-run-module-detection" if selected else "user-selection-required",
+                },
+                "verification": {"requested": verification_mode, "resolved": resolved_verification},
+            }
+            self.report["projectGenerationDecision"] = decision
+            self.report["qualityGates"]["projectGenerationDecision"] = (
+                "needs-user-selection" if decision["uiStack"]["requiresUserSelection"] else "planned"
+            )
+            return decision
+
+        decision_path = self.report_dir / "project-generation-decision.json"
+        command: list[str | Path] = [
+            sys.executable, self.scripts / "build_project_generation_decision.py",
+            "--project-state", project_state,
+            "--verification-mode", verification_mode,
+            "--out", decision_path,
+        ]
+        if source_root:
+            command.extend(["--source-root", source_root])
+        if target:
+            command.extend(["--target", target])
+        if self.args.ui_stack:
+            command.extend(["--requested-ui-stack", self.args.ui_stack])
+        self.run_command("build-project-generation-decision", command)
+        decision = json.loads(decision_path.read_text(encoding="utf-8"))
+        self.artifacts["projectGenerationDecision"] = str(decision_path)
+        self.report["projectGenerationDecision"] = decision
+        self.report["qualityGates"]["projectGenerationDecision"] = (
+            "needs-user-selection" if (decision.get("uiStack") or {}).get("requiresUserSelection") else "passed"
+        )
+        return decision
+
+    def inspect_sdk_and_components(self, source_root: Path, minimum_ios: str) -> tuple[Path, Path]:
         component_report = self.report_dir / "ios-component-index.json"
         self.run_command(
             "discover-ios-components",
@@ -459,7 +519,32 @@ class Orchestrator:
         )
         self.artifacts["componentIndex"] = str(component_report)
         self.artifacts["sdkReport"] = str(sdk_report)
-        return sdk_report
+        return sdk_report, component_report
+
+    def build_native_naming_plan(
+        self,
+        project_state: str,
+        target: str,
+        component_report: Path,
+    ) -> Path:
+        plan = self.report_dir / "native-naming-plan.json"
+        previous_plan_exists = plan.is_file()
+        command: list[str | Path] = [
+            sys.executable, self.scripts / "build_native_naming_plan.py",
+            "--project-state", project_state,
+            "--target", target,
+            "--component-index", component_report,
+            "--out", plan,
+        ]
+        if self.args.name_prefix:
+            command.extend(["--name-prefix", self.args.name_prefix])
+        elif previous_plan_exists:
+            command.extend(["--previous-plan", plan])
+        self.run_command("build-native-naming-plan", command)
+        self.artifacts["nativeNamingPlan"] = str(plan)
+        self.report["nativeNamingPlan"] = json.loads(plan.read_text(encoding="utf-8"))
+        self.report["qualityGates"]["nativeNamingPlan"] = "passed"
+        return plan
 
     def unresolved_interactions(self, graph: dict[str, Any], overrides_path: Path | None) -> list[str]:
         resolved_ids: set[str] = set()
@@ -815,6 +900,7 @@ class Orchestrator:
         ui_stack: str,
         minimum_ios: str,
         architecture_plan: Path,
+        naming_plan: Path,
     ) -> Path:
         generated_dir = source_root / "Generated" / "HTMLToIOS"
         command: list[str | Path] = [sys.executable, self.scripts / "generate_ios_from_ir.py"]
@@ -825,6 +911,7 @@ class Orchestrator:
             "--ui-stack", ui_stack,
             "--module-name", target,
             "--architecture-plan", architecture_plan,
+            "--naming-plan", naming_plan,
         ])
         generation = self.run_command("generate-ios-code", command)
         self.run_command(
@@ -988,7 +1075,6 @@ struct ContentView: View {
         inspection = self.inspect_workspace()
         state = str(inspection.get("projectState") or "unknown")
         creating = state in {"empty-no-ios-project", "swift-package-only"} and not discover(self.workspace, "*.xcodeproj")
-        ui_stack = self.choose_ui_stack(inspection, creating)
         preliminary_minimum_ios = self.choose_minimum_ios(inspection)
         html_contracts = None
         ir_paths = None
@@ -1005,8 +1091,43 @@ struct ContentView: View {
             html_contracts = self.discover_html_contracts()
         else:
             ir_paths = self.validate_supplied_irs()
-        project, source_root = self.choose_project(inspection, ui_stack, preliminary_minimum_ios)
-        target, scheme = self.choose_target_and_scheme(project)
+
+        if state == "swift-package-only" and creating and not self.args.create_package_host_app:
+            raise OrchestrationError(
+                "create-project",
+                "A Swift Package exists without an App project. Pass --create-package-host-app after confirming an App host is required.",
+                "needs-input",
+            )
+
+        if creating:
+            provisional_target = safe_app_name(self.args.app_name or self.workspace.name)
+            decision = self.build_project_generation_decision(state, None, provisional_target)
+            selected_stack = (decision.get("uiStack") or {}).get("selected")
+            if not selected_stack:
+                raise OrchestrationError(
+                    "select-ui-stack",
+                    "A new App requires an explicit UI stack choice: pass --ui-stack swiftui or --ui-stack uikit.",
+                    "needs-input",
+                )
+            ui_stack = str(selected_stack)
+            project, source_root = self.choose_project(inspection, ui_stack, preliminary_minimum_ios)
+            target, scheme = self.choose_target_and_scheme(project)
+        else:
+            project, source_root = self.choose_project(inspection, self.args.ui_stack or "swiftui", preliminary_minimum_ios)
+            target, scheme = self.choose_target_and_scheme(project)
+            decision = self.build_project_generation_decision(state, source_root, target)
+            selected_stack = (decision.get("uiStack") or {}).get("selected")
+            if not selected_stack:
+                module = decision.get("moduleInspection") or {}
+                raise OrchestrationError(
+                    "select-ui-stack",
+                    "The target module is mixed or ambiguous; pass --ui-stack swiftui or --ui-stack uikit. "
+                    f"Detected SwiftUI score {module.get('swiftUIScore', 0)} and UIKit score {module.get('uiKitScore', 0)}.",
+                    "needs-input",
+                )
+            ui_stack = str(selected_stack)
+
+        verification_mode = str((decision.get("verification") or {}).get("resolved") or "ask")
         minimum_ios = self.target_minimum_ios(project, target, preliminary_minimum_ios)
         if ui_stack == "swiftui" and version_key(minimum_ios) < (16, 0):
             raise OrchestrationError(
@@ -1022,28 +1143,48 @@ struct ContentView: View {
             "scheme": scheme,
             "uiStack": ui_stack,
             "minimumIOS": minimum_ios,
+            "verificationMode": verification_mode,
         })
         if self.args.dry_run:
+            prefix = self.args.name_prefix or ("Sky" if creating else safe_app_name(target))
+            self.report["nativeNamingPlan"] = {
+                "schemaVersion": "native-naming-plan-1.0",
+                "prefix": prefix,
+                "source": "explicit-request" if self.args.name_prefix else "new-project-default" if creating else "target-name-fallback",
+            }
             self.report["status"] = "planned"
             return self.report
-        sdk_report = self.inspect_sdk_and_components(source_root, minimum_ios)
+        sdk_report, component_report = self.inspect_sdk_and_components(source_root, minimum_ios)
+        naming_plan = self.build_native_naming_plan(state, target, component_report)
         if html_contracts is not None:
             ir_paths = self.build_irs_from_html(ui_stack, minimum_ios, sdk_report, html_contracts)
         if ir_paths is None:
             raise OrchestrationError("prepare-ui-ir", "No UI IR inputs are available.")
         architecture_plan = self.build_native_architecture_plan(ir_paths, ui_stack, minimum_ios)
-        self.generate_and_integrate(ir_paths, project, target, source_root, ui_stack, minimum_ios, architecture_plan)
+        self.generate_and_integrate(ir_paths, project, target, source_root, ui_stack, minimum_ios, architecture_plan, naming_plan)
         self.wire_managed_entry(source_root, ui_stack)
         symbol = "HTMLToIOSGeneratedRootView" if ui_stack == "swiftui" else "HTMLToIOSGeneratedRootViewController"
         self.entry_wired = self.entry_wired or self.detect_existing_entry(source_root, symbol)
         self.report["entryWired"] = self.entry_wired
         if not self.entry_wired:
-            self.warnings.append(f"Generated code is compiled but {symbol} is not connected to the existing App flow.")
-        self.build(project, scheme)
+            self.warnings.append(f"Generated code is integrated into the target, but {symbol} is not connected to the existing App flow.")
+
+        if verification_mode in {"build", "visual"}:
+            self.build(project, scheme)
+        elif verification_mode == "ask":
+            self.report["qualityGates"]["build"] = "pending-user-confirmation"
+            self.report["qualityGates"]["iosStateCapture"] = "pending-user-confirmation"
+            self.report["qualityGates"]["visualDiff"] = "pending-user-confirmation"
+            self.report["nextActions"] = ["Confirm build-only or full visual verification."]
+        else:
+            self.report["qualityGates"]["build"] = "skipped"
+            self.report["qualityGates"]["iosStateCapture"] = "skipped"
+            self.report["qualityGates"]["visualDiff"] = "skipped"
+
         if self.args.html and not self.args.skip_visual_baselines:
-            if self.entry_wired and not self.args.skip_build:
+            if verification_mode == "visual" and self.entry_wired:
                 self.capture_and_review_visual_states(project, target, minimum_ios)
-            else:
+            elif verification_mode in {"build", "visual"}:
                 self.report["qualityGates"]["iosStateCapture"] = "required-pending"
                 self.report["qualityGates"]["visualDiff"] = "blocked-pending-ios-captures"
                 self.warnings.append(
@@ -1051,6 +1192,12 @@ struct ContentView: View {
                 )
         if not self.entry_wired:
             self.report["status"] = "generated-needs-entry-integration"
+        elif verification_mode == "ask":
+            self.report["status"] = "generated-awaiting-verification"
+        elif verification_mode == "none":
+            self.report["status"] = "generated-without-verification"
+        elif verification_mode == "build" and self.args.html and not self.args.skip_visual_baselines:
+            self.report["status"] = "built-awaiting-visual-verification"
         elif self.args.html and not self.args.skip_visual_baselines and self.report["qualityGates"]["visualDiff"] != "passed":
             self.report["status"] = "built-pending-visual-acceptance"
         else:

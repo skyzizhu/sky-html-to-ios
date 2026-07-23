@@ -28,10 +28,14 @@ python3 scripts/generate_ios_from_ir.py \
   --ir page2-ui-ir.json \
   --ir page3-ui-ir.json \
   --out-dir <source-root>/Generated/HTMLToIOS \
-  --ui-stack swiftui
+  --ui-stack swiftui \
+  --architecture-plan native-architecture-plan.json \
+  --naming-plan native-naming-plan.json
 ```
 
 UIKit 将 `--ui-stack` 改为 `uikit`。如果所有 IR 中的 `target.uiStack` 一致，可以省略该参数。
+
+正式总控生成必须提供命名计划。页面文件和主要页面类型使用计划前缀；新工程默认 `Sky`，已有项目由模块前缀或 target 名确定。直接调试生成器而省略计划时保留兼容前缀 `HTMLToIOS`，不能据此判断正式工作流的命名结果。
 
 默认产物按职责分层：
 

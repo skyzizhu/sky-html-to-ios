@@ -34,7 +34,7 @@ class RunHTMLToIOSTests(unittest.TestCase):
             workspace = Path(temporary)
             ir = workspace / "screen.json"
             ir.write_text("{}\n", encoding="utf-8")
-            result = self.invoke(workspace, ir, "--dry-run", "--app-name", "Sample App")
+            result = self.invoke(workspace, ir, "--dry-run", "--app-name", "Sample App", "--ui-stack", "swiftui")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             report = json.loads(result.stdout)
             self.assertEqual(report["status"], "planned")
@@ -51,10 +51,22 @@ class RunHTMLToIOSTests(unittest.TestCase):
             workspace = root / "new-workspace"
             ir = root / "screen.json"
             ir.write_text("{}\n", encoding="utf-8")
-            result = self.invoke(workspace, ir, "--dry-run", "--app-name", "Sample App")
+            result = self.invoke(workspace, ir, "--dry-run", "--app-name", "Sample App", "--ui-stack", "swiftui")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertTrue(workspace.is_dir())
             self.assertEqual(json.loads(result.stdout)["status"], "planned")
+
+    def test_new_project_requires_explicit_ui_stack_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            ir = workspace / "screen.json"
+            ir.write_text("{}\n", encoding="utf-8")
+            result = self.invoke(workspace, ir, "--dry-run", "--app-name", "Sample App")
+            self.assertEqual(result.returncode, 2)
+            report = json.loads(result.stdout)
+            self.assertEqual(report["status"], "needs-input")
+            self.assertEqual(report["failedStage"], "select-ui-stack")
+            self.assertIn("--ui-stack swiftui", report["message"])
 
     def test_multiple_projects_require_explicit_selection(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
