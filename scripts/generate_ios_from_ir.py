@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.10.1"
+GENERATOR_VERSION = "1.10.2"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -1016,6 +1016,11 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
         for target_id in target_ids:
             presentation_node = node_payload(context, target_id, presentation=True)
             if presentation_node:
+                # The native presentation lifecycle owns root visibility. HTML
+                # presentations are often opacity-zero in their resting DOM state;
+                # preserving that value would create a transparent native sheet,
+                # popover, or overlay. Descendant opacity remains unchanged.
+                presentation_node["style"]["opacity"] = 1
                 presentations.append({
                     "stateID": str(state.get("id")),
                     "kind": str(state.get("kind") or "sheet"),

@@ -570,6 +570,11 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "targetNodeIds": ["home.sheet"],
             }])
             root_node = payload["screens"][0]["nodes"][0]
+            sheet = next(item for item in payload["screens"][0]["nodes"] if item["id"] == "home.sheet")
+            sheet["style"]["opacity"] = "0"
+            sheet_child = node("home.sheet.child", sheet["id"], "text", "Child")
+            sheet_child["style"]["opacity"] = "0.4"
+            payload["screens"][0]["nodes"].append(sheet_child)
             top = node("home.top", root_node["id"], "navigation")
             top["layout"]["rect"].update({"y": 0, "height": 56})
             bottom = node("home.bottom", root_node["id"], "footer")
@@ -608,6 +613,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertEqual(screen["root"]["style"]["backgroundContentMode"], "cover")
             self.assertEqual(screen["presentations"][0]["detents"], ["medium", "large"])
             self.assertTrue(screen["presentations"][0]["interactiveDismissDisabled"])
+            self.assertEqual(screen["presentations"][0]["node"]["style"]["opacity"], 1)
+            self.assertEqual(screen["presentations"][0]["node"]["children"][0]["style"]["opacity"], 0.4)
             runtime = (out_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             root_source = (out_dir / NAVIGATION_FILE).read_text(encoding="utf-8")
             self.assertIn("safeAreaInset(edge: .top", runtime)
