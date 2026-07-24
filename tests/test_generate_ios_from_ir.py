@@ -912,10 +912,10 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             root_node = payload["screens"][0]["nodes"][0]
             row = node("home.suggestion", root_node["id"], "container")
             row["layout"]["mode"] = "flex-row"
-            arrow = node("home.arrow", row["id"], "text", "→")
+            arrow = node("home.prefix", row["id"], "text", "建议：")
             text_node = node("home.copy", row["id"], "text", "Suggested copy")
             row["content"]["runs"] = [
-                {"kind": "node", "text": "→", "nodeId": arrow["id"]},
+                {"kind": "node", "text": "建议：", "nodeId": arrow["id"]},
                 {"kind": "node", "text": "Suggested copy", "nodeId": text_node["id"]},
             ]
             payload["screens"][0]["nodes"].extend([row, arrow, text_node])
@@ -927,7 +927,101 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             generated_row = generated["screens"][0]["root"]["children"][0]
             self.assertEqual(generated_row["semantic"], "text")
             self.assertEqual(generated_row["children"], [])
-            self.assertEqual([run["text"] for run in generated_row["richTextRuns"]], ["→", "Suggested copy"])
+            self.assertEqual([run["text"] for run in generated_row["richTextRuns"]], ["建议：", "Suggested copy"])
+
+    def test_compound_control_content_follows_visual_order_without_flattening(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("home")
+            root_node = payload["screens"][0]["nodes"][0]
+
+            label = node("home.label", root_node["id"], "text", "待检测文案")
+            label["layout"].update({
+                "mode": "flex-row",
+                "rect": {"x": 20, "y": 40, "width": 130, "height": 24},
+            })
+            label["style"].update({"display": "flex", "flexDirection": "row", "gap": "8px"})
+            label["content"]["runs"] = [{
+                "kind": "text",
+                "text": "待检测文案",
+                "nodeId": None,
+                "domIndex": 1,
+                "rect": {"x": 52, "y": 42, "width": 88, "height": 20},
+            }]
+            icon = node("home.label-icon", label["id"], "icon")
+            icon["layout"]["rect"] = {"x": 20, "y": 40, "width": 24, "height": 24}
+
+            issue_head = node("home.issue-head", root_node["id"], "container")
+            issue_head["layout"].update({
+                "mode": "flex-row",
+                "rect": {"x": 20, "y": 90, "width": 353, "height": 28},
+            })
+            issue_head["style"].update({"display": "flex", "flexDirection": "row", "gap": "8px"})
+            tag = node("home.issue-tag", issue_head["id"], "text", "错别字")
+            tag["layout"]["rect"] = {"x": 20, "y": 90, "width": 72, "height": 24}
+            tag["style"].update({
+                "padding": ["3px", "8px", "3px", "8px"],
+                "cornerRadii": ["6px"] * 4,
+                "backgroundColor": "rgba(255, 107, 129, 0.12)",
+            })
+            # Empty styled spans are often classified as text by the extractor.
+            severity = node("home.severity", issue_head["id"], "text")
+            severity["layout"]["rect"] = {"x": 100, "y": 99, "width": 8, "height": 8}
+            severity["style"].update({
+                "backgroundColor": "rgb(255, 107, 129)",
+                "cornerRadii": ["50%"] * 4,
+            })
+            position = node("home.position", issue_head["id"], "text", "L1 · P3")
+            position["layout"]["rect"] = {"x": 320, "y": 96, "width": 53, "height": 16}
+            position["style"]["margin"] = ["0px", "0px", "0px", "204px"]
+            issue_head["content"]["runs"] = [
+                {"kind": "node", "text": "错别字", "nodeId": tag["id"], "domIndex": 0},
+                {"kind": "node", "text": "", "nodeId": severity["id"], "domIndex": 1},
+                {"kind": "node", "text": "L1 · P3", "nodeId": position["id"], "domIndex": 2},
+            ]
+
+            payload["screens"][0]["nodes"].extend([label, icon, issue_head, tag, severity, position])
+            path = root / "home.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            out_dir = root / "out"
+            self.run_generator([path], out_dir)
+            generated = json.loads((out_dir / PAYLOAD).read_text(encoding="utf-8"))
+            generated_root = generated["screens"][0]["root"]
+            generated_label = next(item for item in generated_root["children"] if item["id"] == label["id"])
+            generated_head = next(item for item in generated_root["children"] if item["id"] == issue_head["id"])
+
+            self.assertEqual(
+                [(item["kind"], item.get("childID"), item.get("text")) for item in generated_label["contentItems"]],
+                [
+                    ("child", icon["id"], None),
+                    ("text", None, "待检测文案"),
+                ],
+            )
+            self.assertEqual(generated_head["semantic"], "container")
+            self.assertEqual(
+                [item.get("childID") for item in generated_head["contentItems"]],
+                [tag["id"], severity["id"], position["id"]],
+            )
+            self.assertEqual([item["id"] for item in generated_head["children"]], [
+                tag["id"], severity["id"], position["id"],
+            ])
+            self.assertEqual(generated_head["richTextRuns"], [])
+            generated_tag = next(item for item in generated_head["children"] if item["id"] == tag["id"])
+            generated_severity = next(item for item in generated_head["children"] if item["id"] == severity["id"])
+            self.assertEqual(generated_tag["style"]["fixedWidth"], 72)
+            self.assertEqual(generated_tag["style"]["fixedHeight"], 24)
+            self.assertEqual(generated_severity["style"]["fixedWidth"], 8)
+            self.assertEqual(generated_severity["style"]["fixedHeight"], 8)
+
+            swiftui_runtime = (out_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn("let contentItems: [HTMLToIOSContentItemSpec]", (out_dir / MODELS_FILE).read_text(encoding="utf-8"))
+            self.assertIn("private var orderedContentItems: some View", swiftui_runtime)
+
+            uikit_dir = root / "uikit"
+            self.run_generator([path], uikit_dir, ui_stack="uikit")
+            uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn("spec.contentItems.forEach", uikit_runtime)
+            self.assertIn("contentItemText(item, spec: spec)", uikit_runtime)
 
     def test_computed_flex_direction_overrides_absolute_layout_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

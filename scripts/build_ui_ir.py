@@ -1438,6 +1438,15 @@ def build_ir(data: dict, args) -> dict:
                         "kind": item.get("kind"),
                         "text": item.get("text"),
                         "nodeId": id_map.get(item.get("runtimeId")) if item.get("runtimeId") else None,
+                        "domIndex": item.get("domIndex"),
+                        "rect": {
+                            key: float((item.get("rect") or {}).get(key) or 0) * scale
+                            for key in ("x", "y", "width", "height")
+                        } if item.get("rect") else None,
+                        "sourceRectCssPx": {
+                            key: (item.get("rect") or {}).get(key, 0)
+                            for key in ("x", "y", "width", "height")
+                        } if item.get("rect") else None,
                     }
                     for item in (node.get("contentRuns") or [])
                     if item.get("kind") == "text" or id_map.get(item.get("runtimeId"))

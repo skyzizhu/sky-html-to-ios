@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.13.0"
+GENERATOR_VERSION = "1.14.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -521,6 +521,171 @@ def rich_text_runs(
     return result
 
 
+def child_rect(context: ScreenBuildContext, child_id: str) -> dict[str, Any]:
+    layout = (context.nodes.get(child_id) or {}).get("layout") or {}
+    return layout.get("sourceRectCssPx") or layout.get("rect") or {}
+
+
+def sort_children_by_visual_geometry(
+    context: ScreenBuildContext,
+    payloads: list[dict[str, Any]],
+    axis: str,
+    flex_wrap: str,
+    flex_direction: str,
+) -> list[dict[str, Any]]:
+    if len(payloads) < 2:
+        return payloads
+    indexed = list(enumerate(payloads))
+
+    def key(entry: tuple[int, dict[str, Any]]) -> tuple[float, float, int]:
+        index, payload = entry
+        rect = child_rect(context, str(payload.get("id") or ""))
+        x = number(rect.get("x"))
+        y = number(rect.get("y"))
+        if axis == "horizontal" and flex_wrap == "nowrap":
+            return (x, y, index)
+        return (y, x, index)
+
+    sorted_payloads = [payload for _, payload in sorted(indexed, key=key)]
+    main_positions = [
+        number(child_rect(context, str(payload.get("id") or "")).get("x" if axis == "horizontal" else "y"))
+        for payload in payloads
+    ]
+    if flex_direction.endswith("reverse") and len(set(main_positions)) <= 1:
+        return list(reversed(sorted_payloads))
+    return sorted_payloads
+
+
+def plain_inline_text_child(payload: dict[str, Any]) -> bool:
+    style = payload.get("style") or {}
+    return bool(
+        payload.get("semantic") in {"text", "label"}
+        and payload.get("text")
+        and not payload.get("assetName")
+        and not style.get("gradientColors")
+        and number(style.get("cornerRadius")) == 0
+        and number(style.get("borderWidth")) == 0
+        and not style.get("shadowColor")
+        and all(abs(number(value)) < 0.01 for value in (style.get("padding") or []))
+        and all(abs(number(value)) < 0.01 for value in (style.get("margin") or []))
+    )
+
+
+def ordered_content_items(
+    context: ScreenBuildContext,
+    node: dict[str, Any],
+    child_payloads: list[dict[str, Any]],
+    axis: str,
+    text: str,
+) -> list[dict[str, Any]]:
+    content = node.get("content") or {}
+    payload_by_id = {str(item.get("id") or ""): item for item in child_payloads}
+    items: list[dict[str, Any]] = []
+    used_children: set[str] = set()
+    text_index = 0
+
+    for run_index, run in enumerate(content.get("runs") or []):
+        kind = str(run.get("kind") or "")
+        child_id = str(run.get("nodeId") or "")
+        rect = run.get("sourceRectCssPx") or run.get("rect")
+        dom_index = int(number(run.get("domIndex"), run_index))
+        if kind == "node" and child_id in payload_by_id:
+            if child_id not in used_children:
+                items.append({
+                    "id": child_id,
+                    "kind": "child",
+                    "childID": child_id,
+                    "_rect": rect or child_rect(context, child_id),
+                    "_domIndex": dom_index,
+                })
+                used_children.add(child_id)
+        elif kind == "text":
+            value = re.sub(r"\s+", " ", str(run.get("text") or "")).strip()
+            if value:
+                fallback_line_rects = content.get("lineRects") or []
+                used_fallback_rect = not rect and bool(fallback_line_rects)
+                items.append({
+                    "id": f"{node.get('id') or 'node'}.__text.{text_index}",
+                    "kind": "text",
+                    "text": value,
+                    "childID": None,
+                    "_rect": rect or (
+                        fallback_line_rects[min(text_index, len(fallback_line_rects) - 1)]
+                        if fallback_line_rects
+                        else None
+                    ),
+                    "_domIndex": dom_index,
+                    "_fallbackLineRect": used_fallback_rect,
+                })
+                text_index += 1
+
+    for child_index, payload in enumerate(child_payloads):
+        child_id = str(payload.get("id") or "")
+        if child_id and child_id not in used_children:
+            items.append({
+                "id": child_id,
+                "kind": "child",
+                "childID": child_id,
+                "_rect": child_rect(context, child_id),
+                "_domIndex": len(items) + child_index,
+            })
+
+    if text and not any(item["kind"] == "text" for item in items):
+        line_rects = content.get("lineRects") or []
+        items.append({
+            "id": f"{node.get('id') or 'node'}.__text.0",
+            "kind": "text",
+            "text": text,
+            "childID": None,
+            "_rect": line_rects[0] if line_rects else None,
+            "_domIndex": len(items),
+        })
+
+    if len(items) > 1 and axis in {"horizontal", "vertical", "grid"} and all(item.get("_rect") for item in items):
+        if axis == "horizontal":
+            for text_item in (item for item in items if item["kind"] == "text" and item.get("_fallbackLineRect")):
+                text_rect = text_item.get("_rect") or {}
+                for child_item in (item for item in items if item["kind"] == "child"):
+                    child_item_rect = child_item.get("_rect") or {}
+                    same_leading_edge = abs(number(text_rect.get("x")) - number(child_item_rect.get("x"))) <= 1
+                    contains_child = (
+                        number(text_rect.get("width")) > number(child_item_rect.get("width")) + 1
+                        and number(text_rect.get("height")) >= number(child_item_rect.get("height")) - 1
+                    )
+                    if same_leading_edge and contains_child:
+                        text_item["_rect"] = {
+                            **text_rect,
+                            "x": (
+                                number(child_item_rect.get("x"))
+                                + number(child_item_rect.get("width"))
+                                + scaled_css_value((node.get("style") or {}).get("gap"), context.design_scale)
+                            ),
+                        }
+                        break
+
+        def visual_key(item: dict[str, Any]) -> tuple[float, float, int]:
+            rect = item.get("_rect") or {}
+            x = number(rect.get("x"))
+            y = number(rect.get("y"))
+            if axis == "horizontal":
+                return (x, y, int(item.get("_domIndex") or 0))
+            return (y, x, int(item.get("_domIndex") or 0))
+
+        items.sort(key=visual_key)
+    else:
+        items.sort(key=lambda item: int(item.get("_domIndex") or 0))
+
+    return [
+        {
+            "id": item["id"],
+            "kind": item["kind"],
+            "text": item.get("text"),
+            "childID": item.get("childID"),
+        }
+        for item in items
+    ]
+
+
 def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool = False) -> dict[str, Any] | None:
     node = context.nodes.get(node_id)
     if not node or is_system_chrome(node):
@@ -603,23 +768,29 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         axis = "grid"
     else:
         axis = "vertical"
-    if display in {"flex", "inline-flex"} and flex_direction.endswith("reverse"):
-        child_payloads.reverse()
+    child_payloads = sort_children_by_visual_geometry(
+        context,
+        child_payloads,
+        axis,
+        str(style.get("flexWrap") or "nowrap").lower(),
+        flex_direction,
+    )
     inline_runs = rich_text_runs(context, node, allow_block_children=True)
     inline_text_container = bool(
         semantic == "container"
         and axis == "horizontal"
         and inline_runs
         and child_payloads
-        and all(
-            child.get("semantic") in {"text", "label", "icon"} and child.get("action") is None
-            for child in child_payloads
-        )
+        and str(style.get("justifyContent") or "normal") not in {"space-between", "space-around", "space-evenly"}
+        and all(child.get("action") is None and plain_inline_text_child(child) for child in child_payloads)
     )
     if inline_text_container:
         semantic = "text"
         text = "".join(str(run.get("text") or "") for run in inline_runs)
         child_payloads = []
+        content_items = []
+    else:
+        content_items = ordered_content_items(context, node, child_payloads, axis, text)
     padding = scaled_edges(style.get("padding"), context.design_scale)
     margin = scaled_edges(style.get("margin"), context.design_scale)
     border_widths = scaled_edges(style.get("borderWidths"), context.design_scale)
@@ -714,11 +885,22 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         and width <= context.root_width
         and height <= context.root_width * 2
         and width_fraction < 0.88
-        and semantic not in {"text", "label", "heading", "image", "icon"}
+        and semantic not in {"image", "icon"}
         and has_visual_style
         and not child_payloads
         and not text
         and not action
+    )
+    compact_styled_inline_geometry = bool(
+        width > 0
+        and height > 0
+        and width <= 120
+        and height <= 56
+        and width_fraction < 0.35
+        and semantic in {"text", "label", "container", "menu-item", "tab-item"}
+        and has_visual_style
+        and line_count <= 1
+        and (text or child_payloads)
     )
     horizontal_scroll_item = parent_scroll_axis == "horizontal" and width_fraction < 0.95
     compact_overlay_geometry = bool(
@@ -735,17 +917,20 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         or horizontal_scroll_item
         or compact_visual_container
         or measured_visual_leaf
+        or compact_styled_inline_geometry
         or compact_overlay_geometry
     )
     fixed_width = width if (
         compact_visual_container
         or measured_visual_leaf
+        or compact_styled_inline_geometry
         or compact_overlay_geometry
         or (horizontal_scroll_item and semantic not in {"image", "icon"})
     ) else None
     fixed_height = height if (
         compact_visual_container
         or measured_visual_leaf
+        or compact_styled_inline_geometry
         or compact_overlay_geometry
         or (semantic == "carousel" and scroll_axis == "horizontal")
     ) else None
@@ -793,6 +978,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         "axis": axis,
         "children": child_payloads,
         "overlayChildren": overlay_child_payloads,
+        "contentItems": content_items,
         "action": action,
         "style": {
             "fontSize": min(max(number(style.get("fontSize"), 16) * context.design_scale, 8), 72),
@@ -1136,6 +1322,7 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
         "axis": "vertical",
         "children": [],
         "overlayChildren": [],
+        "contentItems": [],
         "action": None,
         "style": {},
         "accessibilityLabel": None,
@@ -1346,6 +1533,7 @@ struct HTMLToIOSNodeSpec: Codable, Identifiable {{
     let axis: String
     let children: [HTMLToIOSNodeSpec]
     let overlayChildren: [HTMLToIOSNodeSpec]
+    let contentItems: [HTMLToIOSContentItemSpec]
     let action: HTMLToIOSActionSpec?
     let style: HTMLToIOSStyleSpec
     let systemImage: String?
@@ -1367,6 +1555,13 @@ struct HTMLToIOSNodeSpec: Codable, Identifiable {{
     let selectionCountTotal: Int?
     let richTextRuns: [HTMLToIOSRichTextRunSpec]?
     let motions: [HTMLToIOSMotionSpec]
+}}
+
+struct HTMLToIOSContentItemSpec: Codable, Identifiable {{
+    let id: String
+    let kind: String
+    let text: String?
+    let childID: String?
 }}
 
 struct HTMLToIOSMotionSpec: Codable, Identifiable {{
@@ -2041,7 +2236,7 @@ struct HTMLToIOSNativeNodeView: View {
             ProgressView(value: 0.55)
         case "carousel":
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: verticalAlignment, spacing: spec.style.spacing ?? 0) { children }
+                HStack(alignment: verticalAlignment, spacing: spec.style.spacing ?? 0) { orderedContentItems }
                     .fixedSize(horizontal: true, vertical: false)
             }
             .clipped()
@@ -2080,14 +2275,11 @@ struct HTMLToIOSNativeNodeView: View {
         case "text", "label", "heading":
             if let runs = spec.richTextRuns, !runs.isEmpty {
                 HTMLToIOSRichTextView(runs: runs, style: spec.style)
-            } else if spec.children.isEmpty {
+            } else if spec.contentItems.isEmpty {
                 styledText(displayValue)
             } else {
-                HStack(alignment: .firstTextBaseline, spacing: 0) {
-                    styledText(spec.text)
-                    ForEach(spec.children) { child in
-                        HTMLToIOSNativeNodeView(store: store, spec: child)
-                    }
+                HStack(alignment: verticalAlignment, spacing: spec.style.spacing ?? 0) {
+                    orderedContentItems
                 }
             }
         default:
@@ -2140,7 +2332,7 @@ struct HTMLToIOSNativeNodeView: View {
         switch spec.style.scrollAxis {
         case "horizontal":
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: verticalAlignment, spacing: spec.style.spacing ?? 0) { children }
+                HStack(alignment: verticalAlignment, spacing: spec.style.spacing ?? 0) { orderedContentItems }
                     .fixedSize(horizontal: true, vertical: false)
             }
             .clipped()
@@ -2159,18 +2351,12 @@ struct HTMLToIOSNativeNodeView: View {
 
     @ViewBuilder private var buttonContent: some View {
         if spec.axis == "grid" {
-            LazyVGrid(columns: gridColumns, spacing: spec.style.spacing ?? 0) { buttonChildren }
+            LazyVGrid(columns: gridColumns, spacing: spec.style.spacing ?? 0) { orderedContentItems }
         } else if spec.axis == "vertical" {
-            VStack(alignment: .center, spacing: spec.style.spacing ?? 8) { buttonChildren }
+            VStack(alignment: .center, spacing: spec.style.spacing ?? 8) { orderedContentItems }
         } else {
-            HStack(alignment: .center, spacing: spec.style.spacing ?? 8) { buttonChildren }
+            HStack(alignment: .center, spacing: spec.style.spacing ?? 8) { orderedContentItems }
         }
-    }
-
-    @ViewBuilder private var buttonChildren: some View {
-        ForEach(spec.children) { child in HTMLToIOSNativeNodeView(store: store, spec: child) }
-        let value = displayValue
-        if !value.isEmpty { Text(value) }
     }
 
     private var displayValue: String {
@@ -2184,15 +2370,17 @@ struct HTMLToIOSNativeNodeView: View {
 
     @ViewBuilder private var childContent: some View {
         if spec.axis == "horizontal" {
-            HStack(alignment: verticalAlignment, spacing: spec.style.spacing ?? 0) { distributedChildren }
+            HStack(alignment: verticalAlignment, spacing: spec.style.spacing ?? 0) { distributedContentItems }
                 .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: horizontalFrameAlignment)
         } else if spec.axis == "grid" {
-            LazyVGrid(columns: gridColumns, spacing: spec.style.spacing ?? 0) { children }
+            LazyVGrid(columns: gridColumns, spacing: spec.style.spacing ?? 0) { orderedContentItems }
         } else if spec.axis == "overlay" {
-            ZStack(alignment: .center) { children }
+            ZStack(alignment: .center) {
+                ForEach(spec.children) { child in HTMLToIOSNativeNodeView(store: store, spec: child) }
+            }
                 .frame(width: overlayWidth, height: overlayHeight)
         } else {
-            VStack(alignment: horizontalAlignment, spacing: spec.style.spacing ?? 0) { distributedChildren }
+            VStack(alignment: horizontalAlignment, spacing: spec.style.spacing ?? 0) { distributedContentItems }
                 .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: verticalFrameAlignment)
         }
     }
@@ -2236,17 +2424,33 @@ struct HTMLToIOSNativeNodeView: View {
         }
     }
 
-    @ViewBuilder private var distributedChildren: some View {
-        let indexed = Array(spec.children.enumerated())
-        ForEach(indexed, id: \.element.id) { index, child in
-            HTMLToIOSNativeNodeView(store: store, spec: child)
+    @ViewBuilder private var distributedContentItems: some View {
+        let indexed = Array(spec.contentItems.enumerated())
+        ForEach(indexed, id: \.element.id) { index, item in
+            contentItem(item)
             if distributesChildren && index < indexed.count - 1 { Spacer(minLength: spec.style.spacing ?? 0) }
         }
     }
 
-    @ViewBuilder private var children: some View {
-        if !spec.text.isEmpty && spec.children.isEmpty { Text(spec.text) }
-        ForEach(spec.children) { child in HTMLToIOSNativeNodeView(store: store, spec: child) }
+    @ViewBuilder private var orderedContentItems: some View {
+        ForEach(spec.contentItems) { item in contentItem(item) }
+    }
+
+    @ViewBuilder private func contentItem(_ item: HTMLToIOSContentItemSpec) -> some View {
+        if item.kind == "text" {
+            styledText(contentItemText(item))
+        } else if let childID = item.childID,
+                  let child = spec.children.first(where: { $0.id == childID }) {
+            HTMLToIOSNativeNodeView(store: store, spec: child)
+        }
+    }
+
+    private func contentItemText(_ item: HTMLToIOSContentItemSpec) -> String {
+        let textItemCount = spec.contentItems.filter { $0.kind == "text" }.count
+        if textItemCount == 1, (item.text ?? "") == spec.text {
+            return displayValue
+        }
+        return item.text ?? ""
     }
 }
 
@@ -2659,7 +2863,9 @@ final class HTMLToIOSNodeRenderer {
             divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
             view = divider
         case "text", "label", "heading":
-            view = makeLabel(flattenedText(spec), spec: spec)
+            view = spec.contentItems.contains(where: { $0.kind == "child" })
+                ? makeStack(spec)
+                : makeLabel(flattenedText(spec), spec: spec)
         default:
             let stack: UIView
             if spec.axis == "grid" {
@@ -2690,10 +2896,21 @@ final class HTMLToIOSNodeRenderer {
         stack.axis = spec.axis == "horizontal" ? .horizontal : .vertical
         stack.alignment = spec.axis == "horizontal" ? .center : .fill
         stack.spacing = spec.style.spacing ?? 8
-        if !stateText(spec).isEmpty && spec.children.isEmpty {
-            stack.addArrangedSubview(makeLabel(stateText(spec), spec: spec))
+        if spec.contentItems.isEmpty {
+            if !stateText(spec).isEmpty && spec.children.isEmpty {
+                stack.addArrangedSubview(makeLabel(stateText(spec), spec: spec))
+            }
+            spec.children.forEach { stack.addArrangedSubview(makeView($0)) }
+        } else {
+            spec.contentItems.forEach { item in
+                if item.kind == "text" {
+                    stack.addArrangedSubview(makeLabel(contentItemText(item, spec: spec), spec: spec))
+                } else if let childID = item.childID,
+                          let child = spec.children.first(where: { $0.id == childID }) {
+                    stack.addArrangedSubview(makeView(child))
+                }
+            }
         }
-        spec.children.forEach { stack.addArrangedSubview(makeView($0)) }
         return stack
     }
 
@@ -2794,7 +3011,23 @@ final class HTMLToIOSNodeRenderer {
     }
 
     private func flattenedText(_ spec: HTMLToIOSNodeSpec) -> String {
-        stateText(spec) + spec.children.map(flattenedText).joined()
+        if spec.contentItems.isEmpty {
+            return stateText(spec) + spec.children.map(flattenedText).joined()
+        }
+        return spec.contentItems.map { item in
+            if item.kind == "text" { return contentItemText(item, spec: spec) }
+            guard let childID = item.childID,
+                  let child = spec.children.first(where: { $0.id == childID }) else { return "" }
+            return flattenedText(child)
+        }.joined()
+    }
+
+    private func contentItemText(_ item: HTMLToIOSContentItemSpec, spec: HTMLToIOSNodeSpec) -> String {
+        let textItemCount = spec.contentItems.filter { $0.kind == "text" }.count
+        if textItemCount == 1, (item.text ?? "") == spec.text {
+            return stateText(spec)
+        }
+        return item.text ?? ""
     }
 
     private func stateText(_ spec: HTMLToIOSNodeSpec) -> String {

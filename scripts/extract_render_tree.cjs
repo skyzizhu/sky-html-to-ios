@@ -365,15 +365,37 @@ async function main() {
         usedIds.add(runtimeId);
         idByElement.set(element, runtimeId);
       });
-      const contentRuns = (element) => Array.from(element.childNodes).flatMap((child) => {
+      const rangeRect = (node) => {
+        const range = document.createRange();
+        try {
+          range.selectNodeContents(node);
+          const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0);
+          if (!rects.length) return null;
+          const left = Math.min(...rects.map((rect) => rect.left));
+          const top = Math.min(...rects.map((rect) => rect.top));
+          const right = Math.max(...rects.map((rect) => rect.right));
+          const bottom = Math.max(...rects.map((rect) => rect.bottom));
+          return { x: left, y: top, width: right - left, height: bottom - top };
+        } finally {
+          range.detach();
+        }
+      };
+      const contentRuns = (element) => Array.from(element.childNodes).flatMap((child, domIndex) => {
         if (child.nodeType === Node.TEXT_NODE) {
           const raw = child.textContent || "";
           const text = raw.replace(/\s+/g, " ");
-          return text.trim() ? [{ kind: "text", text }] : [];
+          return text.trim() ? [{ kind: "text", text, domIndex, rect: rangeRect(child) }] : [];
         }
         if (child.nodeType === Node.ELEMENT_NODE && idByElement.has(child)) {
           const text = (child.innerText || child.textContent || "").replace(/\s+/g, " ");
-          return text.trim() ? [{ kind: "node", runtimeId: idByElement.get(child), text }] : [];
+          const rect = child.getBoundingClientRect();
+          return [{
+            kind: "node",
+            runtimeId: idByElement.get(child),
+            text,
+            domIndex,
+            rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+          }];
         }
         return [];
       });
@@ -402,9 +424,12 @@ async function main() {
         flexGrow: style.flexGrow,
         flexShrink: style.flexShrink,
         flexBasis: style.flexBasis,
+        order: style.order,
         justifyContent: style.justifyContent,
         alignItems: style.alignItems,
         alignSelf: style.alignSelf,
+        direction: style.direction,
+        writingMode: style.writingMode,
         gridTemplateColumns: style.gridTemplateColumns,
         gridTemplateRows: style.gridTemplateRows,
         color: style.color,

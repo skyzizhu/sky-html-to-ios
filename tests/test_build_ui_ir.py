@@ -121,6 +121,12 @@ class BuildUIIRTests(unittest.TestCase):
             })
             nodes[3]["text"] = "Single line"
             nodes[3]["style"]["whiteSpace"] = "nowrap"
+            nodes[3]["contentRuns"] = [{
+                "kind": "text",
+                "text": "Single line",
+                "domIndex": 0,
+                "rect": {"x": 36, "y": 98, "width": 64, "height": 20},
+            }]
             data = {
                 "schemaVersion": "render-tree-1.2",
                 "source": {"kind": "html-file", "entry": "/tmp/example.html"},
@@ -149,6 +155,11 @@ class BuildUIIRTests(unittest.TestCase):
             self.assertEqual(by_runtime_id["rail"]["layout"]["scrollAxis"], "horizontal")
             self.assertEqual(by_runtime_id["label"]["content"]["lines"], 1)
             self.assertEqual(len(by_runtime_id["label"]["content"]["lineRects"]), 1)
+            self.assertEqual(by_runtime_id["label"]["content"]["runs"][0]["domIndex"], 0)
+            self.assertEqual(
+                by_runtime_id["label"]["content"]["runs"][0]["sourceRectCssPx"],
+                {"x": 36, "y": 98, "width": 64, "height": 20},
+            )
 
     def test_explicit_native_navigation_and_tab_contracts_enter_ir(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
