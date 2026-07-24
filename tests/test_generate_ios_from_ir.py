@@ -737,6 +737,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "flexDirection": "column",
                 "overflowX": "hidden",
                 "overflowY": "hidden",
+                "margin": ["0px", "24px", "0px", "24px"],
                 "backgroundColor": "rgb(30, 32, 48)",
             })
             mixed_label = node("home.mixed-label", mixed_card["id"], "text", "Flow content")
@@ -840,6 +841,10 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("ForEach(spec.overlayChildren)", swiftui_runtime)
             self.assertIn("private struct HTMLToIOSOverlayClipModifier: ViewModifier", swiftui_runtime)
             self.assertIn("if style.clipsContent == true", swiftui_runtime)
+            self.assertIn("private struct HTMLToIOSMarginModifier: ViewModifier", swiftui_runtime)
+            self.assertIn(".modifier(HTMLToIOSMarginModifier(style: spec.style))", swiftui_runtime)
+            self.assertIn("endRadius: radialEndRadius(proxy.size)", swiftui_runtime)
+            self.assertIn("sqrt(size.width * size.width + size.height * size.height) / 2", swiftui_runtime)
             self.assertIn(".offset(x: style.offsetX ?? 0, y: style.offsetY ?? 0)", swiftui_runtime)
             self.assertIn("private struct HTMLToIOSMotionModifier: ViewModifier", swiftui_runtime)
             self.assertIn("HTMLToIOSLaunchConfiguration.motionProgress", swiftui_runtime)
@@ -853,6 +858,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("private func makeOverlay(_ spec: HTMLToIOSNodeSpec) -> UIView", uikit_runtime)
             self.assertIn("private func attachOverlayChildren(_ spec: HTMLToIOSNodeSpec, to parent: UIView)", uikit_runtime)
             self.assertIn("childSpec.style.offsetX ?? 0", uikit_runtime)
+            self.assertIn("let renderedView = wrapInMargins(view, spec: spec)", uikit_runtime)
+            self.assertIn("private func wrapInMargins(_ view: UIView, spec: HTMLToIOSNodeSpec) -> UIView", uikit_runtime)
             self.assertIn("private func applyMotion(_ spec: HTMLToIOSNodeSpec, to view: UIView)", uikit_runtime)
             self.assertIn('CABasicAnimation(keyPath: "transform.rotation")', uikit_runtime)
 
@@ -1076,9 +1083,11 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             suggestion["style"]["lineHeight"] = "21px"
             suggestion["content"].update({
                 "lines": 3,
+                "lineTexts": ["建议改为 「耳戴式」", "保持表达自然", "保持表达自然"],
                 "runs": [
                     {"kind": "text", "text": "建议改为 ", "domIndex": 0},
                     {"kind": "node", "text": "「耳戴式」", "nodeId": "home.emphasis", "domIndex": 1},
+                    {"kind": "text", "text": " 保持表达自然 保持表达自然", "domIndex": 2},
                 ],
             })
             emphasis = node("home.emphasis", suggestion["id"], "text", "「耳戴式」", display="inline")
@@ -1106,12 +1115,20 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertEqual(generated_description["contentItems"][1]["gapBefore"], 4)
             self.assertEqual(generated_suggestion["style"]["textMeasureWidth"], 258)
             self.assertEqual(generated_suggestion["style"]["expectedTextLines"], 3)
-            self.assertEqual([run["fontWeight"] for run in generated_suggestion["richTextRuns"]], ["400", "700"])
+            self.assertEqual([run["fontWeight"] for run in generated_suggestion["richTextRuns"]], ["400", "700", "400"])
+            self.assertEqual(
+                "".join(run["text"] for run in generated_suggestion["richTextRuns"]),
+                "建议改为 「耳戴式」\n保持表达自然\n保持表达自然",
+            )
 
             runtime = (out_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn("let measuredTextWidth = style.textMeasureWidth.map", runtime)
             self.assertIn("private var isMeasuredText: Bool", runtime)
             self.assertIn('} else if spec.axis == "vertical" {', runtime)
+            uikit_dir = root / "uikit"
+            self.run_generator([path], uikit_dir, ui_stack="uikit")
+            uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn("return runs.map(\\.text).joined()", uikit_runtime)
 
     def test_overlapping_inline_range_rects_are_one_visual_text_line(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1123,6 +1140,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             score["style"].update({"fontSize": "26px", "fontWeight": "800"})
             score["content"].update({
                 "lines": 2,
+                "lineTexts": ["82", "分"],
                 "lineRects": [
                     {"x": 44, "y": 100, "width": 32, "height": 30},
                     {"x": 77, "y": 112, "width": 13, "height": 15},
@@ -1151,8 +1169,10 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertEqual(generated_score["axis"], "horizontal")
             self.assertIsNone(generated_score["style"]["textMeasureWidth"])
             self.assertEqual([run["text"] for run in generated_score["richTextRuns"]], ["82", "分"])
+            self.assertNotIn("\n", "".join(run["text"] for run in generated_score["richTextRuns"]))
             runtime = (out_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn("HStack(alignment: .firstTextBaseline, spacing: 0)", runtime)
+
 
     def test_computed_flex_direction_overrides_absolute_layout_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

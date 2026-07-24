@@ -108,6 +108,7 @@ class BuildUIIRTests(unittest.TestCase):
                     text_metrics={
                         "lineCount": 1,
                         "lineRects": [{"x": 36, "y": 98, "width": 64, "height": 20}],
+                        "lineTexts": ["Single line"],
                         "clippedHorizontally": False,
                         "clippedVertically": False,
                     },
@@ -155,6 +156,7 @@ class BuildUIIRTests(unittest.TestCase):
             self.assertEqual(by_runtime_id["rail"]["layout"]["scrollAxis"], "horizontal")
             self.assertEqual(by_runtime_id["label"]["content"]["lines"], 1)
             self.assertEqual(len(by_runtime_id["label"]["content"]["lineRects"]), 1)
+            self.assertEqual(by_runtime_id["label"]["content"]["lineTexts"], ["Single line"])
             self.assertEqual(by_runtime_id["label"]["content"]["runs"][0]["domIndex"], 0)
             self.assertEqual(
                 by_runtime_id["label"]["content"]["runs"][0]["sourceRectCssPx"],

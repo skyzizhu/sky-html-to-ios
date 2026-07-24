@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.15.0"
+GENERATOR_VERSION = "1.16.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -521,6 +521,66 @@ def rich_text_runs(
     return result
 
 
+def rich_text_runs_with_browser_line_breaks(
+    runs: list[dict[str, Any]],
+    line_texts: list[Any],
+) -> list[dict[str, Any]]:
+    normalized_lines = [
+        re.sub(r"\s+", " ", str(value or "")).strip()
+        for value in line_texts
+        if str(value or "").strip()
+    ]
+    if len(runs) < 1 or len(normalized_lines) < 2:
+        return runs
+
+    styled_characters: list[tuple[str, int]] = []
+    for run_index, run in enumerate(runs):
+        for character in re.sub(r"\s+", " ", str(run.get("text") or "")):
+            if character == " " and (not styled_characters or styled_characters[-1][0] == " "):
+                continue
+            styled_characters.append((character, run_index))
+    while styled_characters and styled_characters[0][0] == " ":
+        styled_characters.pop(0)
+    while styled_characters and styled_characters[-1][0] == " ":
+        styled_characters.pop()
+    full_text = "".join(character for character, _ in styled_characters)
+    if not full_text:
+        return runs
+
+    boundaries: set[int] = set()
+    skipped_spaces: set[int] = set()
+    cursor = 0
+    for line_index, line in enumerate(normalized_lines):
+        index = full_text.find(line, cursor)
+        if index < 0 or full_text[cursor:index].strip():
+            return runs
+        end = index + len(line)
+        cursor = end
+        if line_index < len(normalized_lines) - 1:
+            boundaries.add(end)
+            while cursor < len(full_text) and full_text[cursor] == " ":
+                skipped_spaces.add(cursor)
+                cursor += 1
+    if full_text[cursor:].strip() or len(boundaries) != len(normalized_lines) - 1:
+        return runs
+
+    result: list[dict[str, Any]] = []
+    for character_index, (character, run_index) in enumerate(styled_characters):
+        if character_index in boundaries and result:
+            result[-1]["text"] += "\n"
+        if character_index in skipped_spaces:
+            continue
+        source = runs[run_index]
+        if result and result[-1].get("_sourceRunIndex") == run_index:
+            result[-1]["text"] += character
+        else:
+            result.append({**source, "text": character, "_sourceRunIndex": run_index})
+    return [
+        {key: value for key, value in run.items() if key != "_sourceRunIndex"}
+        for run in result
+    ]
+
+
 def child_rect(context: ScreenBuildContext, child_id: str) -> dict[str, Any]:
     layout = (context.nodes.get(child_id) or {}).get("layout") or {}
     return layout.get("sourceRectCssPx") or layout.get("rect") or {}
@@ -1018,6 +1078,13 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     parent_scroll_axis = str(parent_layout.get("scrollAxis") or "none")
     line_count = visual_text_line_count(content)
     node_rich_text_runs = inline_runs if inline_text_container else rich_text_runs(context, node)
+    browser_line_texts = content.get("lineTexts") or []
+    node_rich_text_runs = rich_text_runs_with_browser_line_breaks(
+        node_rich_text_runs,
+        browser_line_texts
+        if len(browser_line_texts) == visual_text_line_count(content)
+        else [],
+    )
     explicit_line_clamp = int(number(style.get("webkitLineClamp"), 0))
     explicit_no_wrap = str(style.get("whiteSpace") or "").lower() == "nowrap"
     rich_text_visual_single_line = bool(
@@ -2065,7 +2132,14 @@ private struct HTMLToIOSBackgroundModifier: ViewModifier {
             .background {
                 if colors.count >= 2 {
                     if style.gradientKind == "radial" {
-                        RadialGradient(gradient: Gradient(stops: stops), center: .center, startRadius: 0, endRadius: 240)
+                        GeometryReader { proxy in
+                            RadialGradient(
+                                gradient: Gradient(stops: stops),
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: radialEndRadius(proxy.size)
+                            )
+                        }
                     } else {
                         LinearGradient(gradient: Gradient(stops: stops), startPoint: gradientStart, endPoint: gradientEnd)
                     }
@@ -2090,6 +2164,10 @@ private struct HTMLToIOSBackgroundModifier: ViewModifier {
 
     private func evenlySpacedLocation(_ index: Int, count: Int) -> CGFloat {
         count <= 1 ? 0 : CGFloat(index) / CGFloat(count - 1)
+    }
+
+    private func radialEndRadius(_ size: CGSize) -> CGFloat {
+        max(sqrt(size.width * size.width + size.height * size.height) / 2, 1)
     }
 
     private var gradientVector: (CGFloat, CGFloat) {
@@ -2136,6 +2214,19 @@ private struct HTMLToIOSOverlayClipModifier: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+private struct HTMLToIOSMarginModifier: ViewModifier {
+    let style: HTMLToIOSStyleSpec
+
+    func body(content: Content) -> some View {
+        let margin = style.margin ?? [0, 0, 0, 0]
+        return content
+            .padding(.top, margin.indices.contains(0) ? margin[0] : 0)
+            .padding(.trailing, margin.indices.contains(1) ? margin[1] : 0)
+            .padding(.bottom, margin.indices.contains(2) ? margin[2] : 0)
+            .padding(.leading, margin.indices.contains(3) ? margin[3] : 0)
     }
 }
 
@@ -2272,7 +2363,6 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         let padding = style.padding ?? [0, 0, 0, 0]
-        let margin = style.margin ?? [0, 0, 0, 0]
         let foregroundValue = foregroundOverride ?? style.foreground
         let foreground = foregroundValue == nil ? Color.primary : Color(htmlToIOS: foregroundValue)
         let alignment: TextAlignment = style.textAlignment == "center" ? .center : (style.textAlignment == "end" ? .trailing : .leading)
@@ -2324,10 +2414,6 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
             .opacity(style.opacity ?? 1)
             .offset(x: style.offsetX ?? 0, y: style.offsetY ?? 0)
             .zIndex(style.zIndex ?? 0)
-            .padding(.top, margin.indices.contains(0) ? margin[0] : 0)
-            .padding(.trailing, margin.indices.contains(1) ? margin[1] : 0)
-            .padding(.bottom, margin.indices.contains(2) ? margin[2] : 0)
-            .padding(.leading, margin.indices.contains(3) ? margin[3] : 0)
     }
 
     private func fontWeight(_ raw: String?) -> Font.Weight {
@@ -2394,6 +2480,7 @@ struct HTMLToIOSNativeNodeView: View {
         }
         .modifier(HTMLToIOSOverlayClipModifier(style: spec.style))
         .modifier(HTMLToIOSMotionModifier(motions: spec.motions))
+        .modifier(HTMLToIOSMarginModifier(style: spec.style))
     }
 
     private var selectionForeground: String? {
@@ -3129,11 +3216,28 @@ final class HTMLToIOSNodeRenderer {
         applyStyle(spec, to: view)
         attachOverlayChildren(spec, to: view)
         applyMotion(spec, to: view)
-        view.isHidden = state.hiddenNodeIDs.contains(spec.id)
+        let renderedView = wrapInMargins(view, spec: spec)
+        renderedView.isHidden = state.hiddenNodeIDs.contains(spec.id)
             || (spec.visibleWhenStateID != nil && !state.flags.contains(spec.visibleWhenStateID!))
-        view.accessibilityIdentifier = spec.id
-        view.accessibilityLabel = spec.accessibilityLabel ?? (spec.text.isEmpty ? nil : spec.text)
-        return view
+        renderedView.accessibilityIdentifier = spec.id
+        renderedView.accessibilityLabel = spec.accessibilityLabel ?? (spec.text.isEmpty ? nil : spec.text)
+        return renderedView
+    }
+
+    private func wrapInMargins(_ view: UIView, spec: HTMLToIOSNodeSpec) -> UIView {
+        let margin = spec.style.margin ?? [0, 0, 0, 0]
+        guard margin.count == 4, margin.contains(where: { abs($0) > 0.01 }) else { return view }
+        let wrapper = UIView()
+        wrapper.translatesAutoresizingMaskIntoConstraints = false
+        wrapper.backgroundColor = .clear
+        wrapper.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: wrapper.topAnchor, constant: margin[0]),
+            view.trailingAnchor.constraint(equalTo: wrapper.trailingAnchor, constant: -margin[1]),
+            view.bottomAnchor.constraint(equalTo: wrapper.bottomAnchor, constant: -margin[2]),
+            view.leadingAnchor.constraint(equalTo: wrapper.leadingAnchor, constant: margin[3]),
+        ])
+        return wrapper
     }
 
     private func makeStack(_ spec: HTMLToIOSNodeSpec) -> UIStackView {
@@ -3293,6 +3397,9 @@ final class HTMLToIOSNodeRenderer {
     }
 
     private func flattenedText(_ spec: HTMLToIOSNodeSpec) -> String {
+        if let runs = spec.richTextRuns, !runs.isEmpty {
+            return runs.map(\.text).joined()
+        }
         if spec.contentItems.isEmpty {
             return stateText(spec) + spec.children.map(flattenedText).joined()
         }

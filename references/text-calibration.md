@@ -35,6 +35,8 @@ SwiftUI `lineSpacing` 不是 CSS `line-height`；UIKit 使用 `NSParagraphStyle.
 
 `Range.getClientRects()` 的矩形数量不等于视觉行数；数字、单位、上下标等不同字号 run 可能在同一行产生多个不同高度的矩形。应按垂直重叠和中心线距离合并视觉行，单行多字号内容在 SwiftUI 使用 `firstTextBaseline`、在 UIKit 使用 first-baseline 约束，不能因 DOM 容器是 `display:block` 就改成纵向堆叠。
 
+浏览器逐字符 Range 可以进一步形成 `lineTexts`，用于保留真实换行位置，但它不是无条件的硬换行来源。只有字符归属能够与完整渲染文本校验一致，并且 `lineTexts` 数量与合并后的视觉行数一致时，生成器才可在富文本 run 中插入换行；否则必须保留 run 顺序并交给原生排版。这样可以防止数字和较小单位因 baseline 不同被误拆为两行，同时保留中文长句在浏览器中的真实断行。
+
 ## 对比
 
 生成页面时为文字节点保留 UI IR node ID/accessibility identifier，并让 UI Test 或 Debug-only 测量器导出：`nodeId`、frame、lineCount、firstBaseline、lastBaseline、truncated。运行：

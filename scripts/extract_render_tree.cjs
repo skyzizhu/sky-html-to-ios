@@ -502,6 +502,65 @@ async function main() {
           line.width = line.right - line.left;
           line.height = line.bottom - line.top;
         }
+        const lineTextParts = lines.map(() => []);
+        if (lines.length > 1) {
+          const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+          const segmenter = typeof Intl.Segmenter === "function"
+            ? new Intl.Segmenter(document.documentElement.lang || undefined, { granularity: "grapheme" })
+            : null;
+          let textNode = walker.nextNode();
+          while (textNode) {
+            const raw = textNode.textContent || "";
+            const segments = segmenter
+              ? Array.from(segmenter.segment(raw), (item) => ({ text: item.segment, index: item.index }))
+              : Array.from(raw).reduce((items, text) => {
+                const index = items.length ? items[items.length - 1].index + items[items.length - 1].text.length : 0;
+                items.push({ text, index });
+                return items;
+              }, []);
+            const characterRange = document.createRange();
+            for (const segment of segments) {
+              characterRange.setStart(textNode, segment.index);
+              characterRange.setEnd(textNode, segment.index + segment.text.length);
+              const characterRects = Array.from(characterRange.getClientRects())
+                .filter((rect) => rect.width > 0 && rect.height > 0);
+              if (!characterRects.length) continue;
+              const top = Math.min(...characterRects.map((rect) => rect.top));
+              const bottom = Math.max(...characterRects.map((rect) => rect.bottom));
+              const center = (top + bottom) / 2;
+              let bestIndex = -1;
+              let bestScore = -Infinity;
+              lines.forEach((line, index) => {
+                const overlap = Math.max(Math.min(bottom, line.bottom) - Math.max(top, line.top), 0);
+                const overlapRatio = overlap / Math.max(Math.min(bottom - top, line.height), 1);
+                const lineCenter = (line.top + line.bottom) / 2;
+                const score = overlapRatio * 10 - Math.abs(center - lineCenter);
+                if (score > bestScore) {
+                  bestScore = score;
+                  bestIndex = index;
+                }
+              });
+              if (bestIndex >= 0 && bestScore > -2) lineTextParts[bestIndex].push(segment.text);
+            }
+            characterRange.detach();
+            textNode = walker.nextNode();
+          }
+        }
+        const candidateLineTexts = lineTextParts.map((parts) => parts.join("").replace(/\s+/g, " ").trim());
+        const normalizedRenderedText = renderedText.replace(/\s+/g, " ").trim();
+        const joinedWithSpaces = candidateLineTexts.join(" ").replace(/\s+/g, " ").trim();
+        const joinedDirectly = candidateLineTexts.join("").replace(/\s+/g, " ").trim();
+        const joinedWithoutWhitespace = candidateLineTexts.join("").replace(/\s+/g, "");
+        const renderedWithoutWhitespace = normalizedRenderedText.replace(/\s+/g, "");
+        const lineTexts = (
+          candidateLineTexts.length === lines.length
+          && candidateLineTexts.every(Boolean)
+          && (
+            joinedWithSpaces === normalizedRenderedText
+            || joinedDirectly === normalizedRenderedText
+            || joinedWithoutWhitespace === renderedWithoutWhitespace
+          )
+        ) ? candidateLineTexts : [];
         let fontLoaded = null;
         try {
           fontLoaded = document.fonts ? document.fonts.check(`${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`) : null;
@@ -527,6 +586,7 @@ async function main() {
           directText: ownText,
           lineCount: lines.length,
           lineRects: lines,
+          lineTexts,
           fontLoaded,
           fontMetrics,
           firstBaselineY: lines.length ? lines[0].top + ascent : null,

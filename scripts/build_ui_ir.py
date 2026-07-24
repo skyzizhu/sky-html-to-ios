@@ -1456,6 +1456,7 @@ def build_ir(data: dict, args) -> dict:
                 "accessibilityLabel": attrs.get("aria-label"),
                 "lines": text_metrics.get("lineCount"),
                 "lineRects": text_metrics.get("lineRects") or [],
+                "lineTexts": text_metrics.get("lineTexts") or [],
                 "clippedHorizontally": bool(text_metrics.get("clippedHorizontally")),
                 "clippedVertically": bool(text_metrics.get("clippedVertically")),
                 "isDecorative": attrs.get("aria-hidden") == "true",

@@ -62,6 +62,8 @@ NODE_PATH=<playwright-node-modules> node scripts/analyze_responsive_layout.cjs \
 - 当容器全部可见子项均为 absolute/fixed 时，应生成 `ZStack`/自定义 overlay container。容器同时包含流式和 absolute/fixed 子项时，必须在生成模型中拆分为 `children` 与 `overlayChildren`：前者参与 VStack/HStack/UIStackView 的 intrinsic size 计算，后者使用相对父容器中心的定位叠加，不得撑大、压缩或重排父容器。
 - 宽度小于父容器约 75% 的紧凑混合叠层（圆环、仪表盘、头像角标、局部画布）应保留浏览器实测宽高，避免父容器退化为底图或文字的 intrinsic size。接近满宽的卡片和页面区块仍使用约束布局，不因存在角标或光晕而锁死整体尺寸。
 - 圆角只决定背景、边框和形状，不等于 `overflow: hidden`。叠层子项是否裁剪必须严格服从计算样式中的 `overflow: hidden/clip`；`overflow: visible` 的轨道圆点、角标、光晕和阴影允许越过圆角边界。
+- CSS margin 位于 border box 外部，不属于背景、边框、伪元素、渐变或 `overflow` 裁剪区域。SwiftUI 应先在内容 border box 上绘制和裁剪，再在最外层施加 margin；UIKit 应让真实内容 View 持有背景、圆角和 layer，再由透明 wrapper 表达 margin。禁止把 margin 伪装成内容 padding，否则叠层会扩张到外边距并产生矩形色块或错误裁剪。
+- 径向渐变的终止半径应由宿主 border box 与 CSS size 语义推导。默认 `farthest-corner` 至少覆盖宿主中心到最远角的距离，不能使用与节点大小无关的固定半径；伪元素渐变还必须以其定位宿主为坐标系，并按宿主真实 overflow 规则裁剪。
 - 复合控件内部顺序必须依据浏览器最终几何位置，而不是“父节点直接文本优先”或 DOM 顺序硬编码。图标、徽标、计数、标签文字和尾部元信息应作为有序 `contentItems` 保留，横向布局按最终 x 坐标、纵向布局按最终 y 坐标校准，并保留 CSS `order`/reverse 的视觉结果。
 - 带图标、背景、padding、圆角、固定尺寸、大 margin 或显著空白分组的 Flex 行不是普通富文本。不得把它压成单个 Text/UILabel；应保留子 View 和实测间距，使前导图标、计数徽标以及 `margin-left:auto` 形成的尾部信息保持原位。
 - `contentItems` 还必须保留每个文字片段的实测宽高、是否单行以及与前项的几何间距。普通 gap 生成固定 spacing；`space-between`、自动外边距或占据容器大部分剩余宽度的空白生成弹性 Spacer。已由父布局消费的 margin 不得再次作为子 View 外层 padding 重复占宽。
