@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.14.0"
+GENERATOR_VERSION = "1.15.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -526,6 +526,70 @@ def child_rect(context: ScreenBuildContext, child_id: str) -> dict[str, Any]:
     return layout.get("sourceRectCssPx") or layout.get("rect") or {}
 
 
+def visual_text_line_count(content: dict[str, Any]) -> int:
+    reported_count = int(number(content.get("lines"), 0))
+    if len(content.get("runs") or []) <= 1:
+        return reported_count
+
+    def measured_rect(item: dict[str, Any]) -> dict[str, Any] | None:
+        nested = item.get("sourceRectCssPx") or item.get("rect")
+        if nested:
+            return nested
+        if any(key in item for key in ("x", "y", "width", "height")):
+            return item
+        return None
+
+    rects = [
+        rect
+        for rect in (
+            measured_rect(item)
+            for item in (content.get("lineRects") or [])
+        )
+        if rect and number(rect.get("height")) > 0
+    ]
+    if not rects:
+        rects = [
+            rect
+            for rect in (
+                measured_rect(item)
+                for item in (content.get("runs") or [])
+            )
+            if rect and number(rect.get("height")) > 0
+        ]
+    if not rects:
+        return reported_count
+
+    lines: list[dict[str, float]] = []
+    for rect in sorted(rects, key=lambda item: (number(item.get("y")), number(item.get("x")))):
+        top = number(rect.get("y"))
+        height = number(rect.get("height"))
+        bottom = top + height
+        center = top + height / 2
+        matched_line: dict[str, float] | None = None
+        for line in lines:
+            overlap = max(min(bottom, line["bottom"]) - max(top, line["top"]), 0)
+            overlap_ratio = overlap / max(min(height, line["maxHeight"]), 1)
+            center_tolerance = max(min(height, line["maxHeight"]) * 0.35, 2)
+            if overlap_ratio >= 0.45 or abs(center - line["center"]) <= center_tolerance:
+                matched_line = line
+                break
+        if matched_line is None:
+            lines.append({
+                "top": top,
+                "bottom": bottom,
+                "center": center,
+                "maxHeight": height,
+                "count": 1,
+            })
+        else:
+            matched_line["top"] = min(matched_line["top"], top)
+            matched_line["bottom"] = max(matched_line["bottom"], bottom)
+            matched_line["maxHeight"] = max(matched_line["maxHeight"], height)
+            matched_line["count"] += 1
+            matched_line["center"] += (center - matched_line["center"]) / matched_line["count"]
+    return len(lines) or reported_count
+
+
 def sort_children_by_visual_geometry(
     context: ScreenBuildContext,
     payloads: list[dict[str, Any]],
@@ -653,13 +717,16 @@ def ordered_content_items(
                         and number(text_rect.get("height")) >= number(child_item_rect.get("height")) - 1
                     )
                     if same_leading_edge and contains_child:
+                        next_x = (
+                            number(child_item_rect.get("x"))
+                            + number(child_item_rect.get("width"))
+                            + scaled_css_value((node.get("style") or {}).get("gap"), context.design_scale)
+                        )
+                        consumed_width = max(next_x - number(text_rect.get("x")), 0)
                         text_item["_rect"] = {
                             **text_rect,
-                            "x": (
-                                number(child_item_rect.get("x"))
-                                + number(child_item_rect.get("width"))
-                                + scaled_css_value((node.get("style") or {}).get("gap"), context.design_scale)
-                            ),
+                            "x": next_x,
+                            "width": max(number(text_rect.get("width")) - consumed_width, 0),
                         }
                         break
 
@@ -675,12 +742,87 @@ def ordered_content_items(
     else:
         items.sort(key=lambda item: int(item.get("_domIndex") or 0))
 
+    style = node.get("style") or {}
+    node_layout = node.get("layout") or {}
+    node_rect = node_layout.get("sourceRectCssPx") or node_layout.get("rect") or {}
+    default_gap = scaled_css_value(style.get("gap"), context.design_scale)
+    source_font_size = number(style.get("fontSize"), 16)
+    source_line_height = number(style.get("lineHeight")) or source_font_size * 1.2
+    measured_spacing_axis = axis == "horizontal" or (
+        axis == "vertical"
+        and len(items) > 1
+        and all(item.get("kind") == "text" for item in items)
+    )
+    if measured_spacing_axis:
+        main_origin = "x" if axis == "horizontal" else "y"
+        main_extent = "width" if axis == "horizontal" else "height"
+        item_span = 0.0
+        if items and all(item.get("_rect") for item in items):
+            first_rect = items[0]["_rect"]
+            last_rect = items[-1]["_rect"]
+            item_span = (
+                number(last_rect.get(main_origin))
+                + number(last_rect.get(main_extent))
+                - number(first_rect.get(main_origin))
+            )
+        parent_extent = number(node_rect.get(main_extent))
+        for index in range(1, len(items)):
+            previous_rect = items[index - 1].get("_rect") or {}
+            current_rect = items[index].get("_rect") or {}
+            source_measured_gap = max(
+                number(current_rect.get(main_origin))
+                - number(previous_rect.get(main_origin))
+                - number(previous_rect.get(main_extent)),
+                0,
+            )
+            measured_gap = source_measured_gap * context.design_scale
+            current_child = payload_by_id.get(str(items[index].get("childID") or "")) or {}
+            child_margin = (current_child.get("style") or {}).get("margin") or []
+            child_leading_margin = (
+                number(child_margin[3])
+                if axis == "horizontal" and len(child_margin) == 4
+                else number(child_margin[0]) if axis == "vertical" and len(child_margin) == 4 else 0
+            )
+            justify_content = str(style.get("justifyContent") or "").lower()
+            auto_margin_gap = bool(
+                axis == "horizontal"
+                and justify_content != "space-between"
+                and measured_gap >= max(default_gap * 3, 24)
+                and child_leading_margin >= measured_gap * 0.7
+                and parent_extent > 0
+                and item_span >= parent_extent * 0.75
+            )
+            if auto_margin_gap:
+                items[index]["_gapBefore"] = default_gap
+                items[index]["_flexibleGapBefore"] = True
+            elif justify_content != "space-between" and measured_gap <= max(default_gap * 2 + 2, 24):
+                items[index]["_gapBefore"] = measured_gap
+                items[index]["_flexibleGapBefore"] = False
+
     return [
         {
             "id": item["id"],
             "kind": item["kind"],
             "text": item.get("text"),
             "childID": item.get("childID"),
+            "preferredWidth": (
+                number((item.get("_rect") or {}).get("width")) * context.design_scale
+                if item.get("kind") == "text" and item.get("_rect")
+                else None
+            ),
+            "preferredHeight": (
+                number((item.get("_rect") or {}).get("height")) * context.design_scale
+                if item.get("kind") == "text" and item.get("_rect")
+                else None
+            ),
+            "singleLine": bool(
+                item.get("kind") == "text"
+                and item.get("_rect")
+                and number((item.get("_rect") or {}).get("height"))
+                <= max(source_line_height * 1.35, source_font_size * 1.8)
+            ),
+            "gapBefore": item.get("_gapBefore"),
+            "flexibleGapBefore": bool(item.get("_flexibleGapBefore")),
         }
         for item in items
     ]
@@ -768,6 +910,13 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         axis = "grid"
     else:
         axis = "vertical"
+    if (
+        axis == "vertical"
+        and semantic in {"text", "label", "heading"}
+        and len(content.get("runs") or []) > 1
+        and visual_text_line_count(content) == 1
+    ):
+        axis = "horizontal"
     child_payloads = sort_children_by_visual_geometry(
         context,
         child_payloads,
@@ -791,6 +940,16 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         content_items = []
     else:
         content_items = ordered_content_items(context, node, child_payloads, axis, text)
+        child_by_id = {str(child.get("id") or ""): child for child in child_payloads}
+        for item in content_items:
+            child = child_by_id.get(str(item.get("childID") or ""))
+            child_margin = ((child or {}).get("style") or {}).get("margin")
+            if not child or not isinstance(child_margin, list) or len(child_margin) != 4:
+                continue
+            if axis == "horizontal" and item.get("gapBefore") is not None:
+                child_margin[3] = 0
+            elif axis == "vertical" and item.get("gapBefore") is not None:
+                child_margin[0] = 0
     padding = scaled_edges(style.get("padding"), context.design_scale)
     margin = scaled_edges(style.get("margin"), context.design_scale)
     border_widths = scaled_edges(style.get("borderWidths"), context.design_scale)
@@ -857,16 +1016,24 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     )
     scroll_axis = str(layout.get("scrollAxis") or "none")
     parent_scroll_axis = str(parent_layout.get("scrollAxis") or "none")
-    line_count = int(number(content.get("lines"), 0))
+    line_count = visual_text_line_count(content)
+    node_rich_text_runs = inline_runs if inline_text_container else rich_text_runs(context, node)
     explicit_line_clamp = int(number(style.get("webkitLineClamp"), 0))
     explicit_no_wrap = str(style.get("whiteSpace") or "").lower() == "nowrap"
+    rich_text_visual_single_line = bool(
+        node_rich_text_runs
+        and line_count == 1
+        and not content.get("clippedHorizontally")
+    )
     inferred_compact_single_line = bool(
         parent_horizontal
         and line_count == 1
         and semantic in {"text", "label", "heading", "button", "link", "menu-item", "tab-item"}
         and not content.get("clippedHorizontally")
     )
-    text_line_limit = explicit_line_clamp if explicit_line_clamp > 0 else (1 if explicit_no_wrap or inferred_compact_single_line else None)
+    text_line_limit = explicit_line_clamp if explicit_line_clamp > 0 else (
+        1 if explicit_no_wrap or inferred_compact_single_line or rich_text_visual_single_line else None
+    )
     ratio = width / height if width > 0 and height > 0 else None
     compact_visual_container = bool(
         width > 0
@@ -1013,6 +1180,15 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "minHeight": min_height,
             "preferredWidth": min(max(width, 0), context.root_width),
             "preferredHeight": min(max(number(rect.get("height")), 0), max(context.root_width * 3, 1200)),
+            "textMeasureWidth": (
+                min(max(width, 0), context.root_width)
+                if semantic in {"text", "label", "heading"}
+                and node_rich_text_runs
+                and line_count > 1
+                and width > 0
+                else None
+            ),
+            "expectedTextLines": line_count if line_count > 0 else None,
             "resistsCompression": str(style.get("flexShrink") or "1") == "0",
             "preservesIntrinsicWidth": preserves_intrinsic_width,
             "fixedWidth": min(max(fixed_width, 0), context.root_width) if fixed_width is not None else None,
@@ -1048,7 +1224,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         "selectionCountStateID": selection_count.get("stateID"),
         "selectionCountInitial": selection_count.get("initial"),
         "selectionCountTotal": selection_count.get("total"),
-        "richTextRuns": inline_runs if inline_text_container else rich_text_runs(context, node),
+        "richTextRuns": node_rich_text_runs,
         "motions": context.motions.get(node_id) or [],
     }
     if expansion_content:
@@ -1562,6 +1738,11 @@ struct HTMLToIOSContentItemSpec: Codable, Identifiable {{
     let kind: String
     let text: String?
     let childID: String?
+    let preferredWidth: Double?
+    let preferredHeight: Double?
+    let singleLine: Bool?
+    let gapBefore: Double?
+    let flexibleGapBefore: Bool?
 }}
 
 struct HTMLToIOSMotionSpec: Codable, Identifiable {{
@@ -1618,6 +1799,8 @@ struct HTMLToIOSStyleSpec: Codable {{
     let minHeight: Double?
     let preferredWidth: Double?
     let preferredHeight: Double?
+    let textMeasureWidth: Double?
+    let expectedTextLines: Int?
     let resistsCompression: Bool?
     let preservesIntrinsicWidth: Bool?
     let fixedWidth: Double?
@@ -1821,25 +2004,37 @@ private struct HTMLToIOSRichTextView: View {
     let runs: [HTMLToIOSRichTextRunSpec]
     let style: HTMLToIOSStyleSpec
 
-    var body: some View {
-        Text(attributedText)
+    @ViewBuilder var body: some View {
+        if style.expectedTextLines == 1 {
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                ForEach(Array(runs.enumerated()), id: \.offset) { _, run in
+                    Text(attributedText(for: run))
+                }
+            }
+        } else {
+            Text(attributedText)
+        }
     }
 
     private var attributedText: AttributedString {
         var result = AttributedString()
         for run in runs {
-            var piece = AttributedString(run.text)
-            piece.font = .system(
-                size: run.fontSize ?? style.fontSize ?? 16,
-                weight: fontWeight(run.fontWeight ?? style.fontWeight)
-            )
-            piece.foregroundColor = Color(htmlToIOS: run.foreground ?? style.foreground)
-            if let background = run.background {
-                piece.backgroundColor = Color(htmlToIOS: background)
-            }
-            piece.kern = run.letterSpacing ?? style.letterSpacing ?? 0
-            result.append(piece)
+            result.append(attributedText(for: run))
         }
+        return result
+    }
+
+    private func attributedText(for run: HTMLToIOSRichTextRunSpec) -> AttributedString {
+        var result = AttributedString(run.text)
+        result.font = .system(
+            size: run.fontSize ?? style.fontSize ?? 16,
+            weight: fontWeight(run.fontWeight ?? style.fontWeight)
+        )
+        result.foregroundColor = Color(htmlToIOS: run.foreground ?? style.foreground)
+        if let background = run.background {
+            result.backgroundColor = Color(htmlToIOS: background)
+        }
+        result.kern = run.letterSpacing ?? style.letterSpacing ?? 0
         return result
     }
 
@@ -2082,7 +2277,9 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
         let foreground = foregroundValue == nil ? Color.primary : Color(htmlToIOS: foregroundValue)
         let alignment: TextAlignment = style.textAlignment == "center" ? .center : (style.textAlignment == "end" ? .trailing : .leading)
         let preferredWidth = constrainsPreferredWidth ? CGFloat(style.preferredWidth ?? 0) : 0
-        let maxWidth: CGFloat? = constrainsPreferredWidth && (style.widthFraction ?? 0) > 0.88 ? .infinity : nil
+        let measuredTextWidth = style.textMeasureWidth.map { CGFloat($0) }
+        let maxWidth: CGFloat? = measuredTextWidth
+            ?? (constrainsPreferredWidth && (style.widthFraction ?? 0) > 0.88 ? .infinity : nil)
         let idealWidth: CGFloat? = preferredWidth > 0 && maxWidth == nil ? preferredWidth : nil
         let minWidth: CGFloat? = (enforcesPreferredWidth || style.resistsCompression == true) && preferredWidth > 0 ? preferredWidth : nil
         let rawMinHeight = style.minHeight ?? 0
@@ -2185,7 +2382,7 @@ struct HTMLToIOSNativeNodeView: View {
             foregroundOverride: selectionForeground,
             backgroundOverride: selectionBackground,
             gradientOverride: selectionGradient,
-            constrainsPreferredWidth: spec.children.isEmpty || isNativeControl,
+            constrainsPreferredWidth: isMeasuredText || spec.children.isEmpty || isNativeControl,
             enforcesPreferredWidth: isNativeControl
         ))
         .overlay {
@@ -2214,6 +2411,9 @@ struct HTMLToIOSNativeNodeView: View {
     private var isNativeControl: Bool {
         ["button", "link", "menu-item", "tab-item", "toggle", "switch", "checkbox"].contains(spec.semantic)
     }
+    private var isMeasuredText: Bool {
+        ["text", "label", "heading"].contains(spec.semantic) && spec.style.textMeasureWidth != nil
+    }
 
     @ViewBuilder private var content: some View {
         switch spec.semantic {
@@ -2236,7 +2436,7 @@ struct HTMLToIOSNativeNodeView: View {
             ProgressView(value: 0.55)
         case "carousel":
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: verticalAlignment, spacing: spec.style.spacing ?? 0) { orderedContentItems }
+                HStack(alignment: verticalAlignment, spacing: contentSpacing) { orderedContentItems }
                     .fixedSize(horizontal: true, vertical: false)
             }
             .clipped()
@@ -2277,8 +2477,12 @@ struct HTMLToIOSNativeNodeView: View {
                 HTMLToIOSRichTextView(runs: runs, style: spec.style)
             } else if spec.contentItems.isEmpty {
                 styledText(displayValue)
+            } else if spec.axis == "vertical" {
+                VStack(alignment: horizontalAlignment, spacing: contentSpacing) {
+                    orderedContentItems
+                }
             } else {
-                HStack(alignment: verticalAlignment, spacing: spec.style.spacing ?? 0) {
+                HStack(alignment: verticalAlignment, spacing: contentSpacing) {
                     orderedContentItems
                 }
             }
@@ -2332,7 +2536,7 @@ struct HTMLToIOSNativeNodeView: View {
         switch spec.style.scrollAxis {
         case "horizontal":
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: verticalAlignment, spacing: spec.style.spacing ?? 0) { orderedContentItems }
+                HStack(alignment: verticalAlignment, spacing: contentSpacing) { orderedContentItems }
                     .fixedSize(horizontal: true, vertical: false)
             }
             .clipped()
@@ -2353,9 +2557,9 @@ struct HTMLToIOSNativeNodeView: View {
         if spec.axis == "grid" {
             LazyVGrid(columns: gridColumns, spacing: spec.style.spacing ?? 0) { orderedContentItems }
         } else if spec.axis == "vertical" {
-            VStack(alignment: .center, spacing: spec.style.spacing ?? 8) { orderedContentItems }
+            VStack(alignment: .center, spacing: contentSpacing) { orderedContentItems }
         } else {
-            HStack(alignment: .center, spacing: spec.style.spacing ?? 8) { orderedContentItems }
+            HStack(alignment: .center, spacing: contentSpacing) { orderedContentItems }
         }
     }
 
@@ -2370,7 +2574,7 @@ struct HTMLToIOSNativeNodeView: View {
 
     @ViewBuilder private var childContent: some View {
         if spec.axis == "horizontal" {
-            HStack(alignment: verticalAlignment, spacing: spec.style.spacing ?? 0) { distributedContentItems }
+            HStack(alignment: verticalAlignment, spacing: contentSpacing) { distributedContentItems }
                 .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: horizontalFrameAlignment)
         } else if spec.axis == "grid" {
             LazyVGrid(columns: gridColumns, spacing: spec.style.spacing ?? 0) { orderedContentItems }
@@ -2380,7 +2584,7 @@ struct HTMLToIOSNativeNodeView: View {
             }
                 .frame(width: overlayWidth, height: overlayHeight)
         } else {
-            VStack(alignment: horizontalAlignment, spacing: spec.style.spacing ?? 0) { distributedContentItems }
+            VStack(alignment: horizontalAlignment, spacing: contentSpacing) { distributedContentItems }
                 .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: verticalFrameAlignment)
         }
     }
@@ -2395,6 +2599,12 @@ struct HTMLToIOSNativeNodeView: View {
     private var overlayWidth: CGFloat? { spec.style.preferredWidth.map { CGFloat($0) } }
     private var overlayHeight: CGFloat? { spec.style.preferredHeight.map { CGFloat($0) } }
     private var distributesChildren: Bool { spec.style.justifyContent == "space-between" }
+    private var usesMeasuredContentSpacing: Bool {
+        spec.contentItems.dropFirst().contains { $0.gapBefore != nil || $0.flexibleGapBefore == true }
+    }
+    private var contentSpacing: Double {
+        usesMeasuredContentSpacing ? 0 : (spec.style.spacing ?? 0)
+    }
     private var horizontalAlignment: HorizontalAlignment {
         switch spec.style.alignItems {
         case "center": return .center
@@ -2427,21 +2637,56 @@ struct HTMLToIOSNativeNodeView: View {
     @ViewBuilder private var distributedContentItems: some View {
         let indexed = Array(spec.contentItems.enumerated())
         ForEach(indexed, id: \.element.id) { index, item in
+            contentItemGap(item)
             contentItem(item)
-            if distributesChildren && index < indexed.count - 1 { Spacer(minLength: spec.style.spacing ?? 0) }
+            if distributesChildren && !usesMeasuredContentSpacing && index < indexed.count - 1 {
+                Spacer(minLength: spec.style.spacing ?? 0)
+            }
         }
     }
 
     @ViewBuilder private var orderedContentItems: some View {
-        ForEach(spec.contentItems) { item in contentItem(item) }
+        ForEach(spec.contentItems) { item in
+            contentItemGap(item)
+            contentItem(item)
+        }
     }
 
     @ViewBuilder private func contentItem(_ item: HTMLToIOSContentItemSpec) -> some View {
         if item.kind == "text" {
-            styledText(contentItemText(item))
+            if item.singleLine == true, let width = item.preferredWidth, width > 0 {
+                styledText(contentItemText(item))
+                    .lineLimit(1)
+                    .allowsTightening(true)
+                    .minimumScaleFactor(0.7)
+                    .frame(width: width, alignment: textItemFrameAlignment)
+            } else {
+                styledText(contentItemText(item))
+            }
         } else if let childID = item.childID,
                   let child = spec.children.first(where: { $0.id == childID }) {
             HTMLToIOSNativeNodeView(store: store, spec: child)
+        }
+    }
+
+    @ViewBuilder private func contentItemGap(_ item: HTMLToIOSContentItemSpec) -> some View {
+        let gap = item.gapBefore ?? 0
+        if item.flexibleGapBefore == true {
+            Spacer(minLength: gap)
+        } else if gap > 0 {
+            if spec.axis == "vertical" {
+                Color.clear.frame(width: 0, height: gap)
+            } else {
+                Color.clear.frame(width: gap, height: 0)
+            }
+        }
+    }
+
+    private var textItemFrameAlignment: Alignment {
+        switch spec.style.textAlignment {
+        case "center": return .center
+        case "end", "right": return .trailing
+        default: return .leading
         }
     }
 
@@ -2895,7 +3140,10 @@ final class HTMLToIOSNodeRenderer {
         let stack = UIStackView()
         stack.axis = spec.axis == "horizontal" ? .horizontal : .vertical
         stack.alignment = spec.axis == "horizontal" ? .center : .fill
-        stack.spacing = spec.style.spacing ?? 8
+        let usesMeasuredSpacing = spec.contentItems.dropFirst().contains {
+            $0.gapBefore != nil || $0.flexibleGapBefore == true
+        }
+        stack.spacing = usesMeasuredSpacing ? 0 : (spec.style.spacing ?? 8)
         if spec.contentItems.isEmpty {
             if !stateText(spec).isEmpty && spec.children.isEmpty {
                 stack.addArrangedSubview(makeLabel(stateText(spec), spec: spec))
@@ -2903,8 +3151,9 @@ final class HTMLToIOSNodeRenderer {
             spec.children.forEach { stack.addArrangedSubview(makeView($0)) }
         } else {
             spec.contentItems.forEach { item in
+                addContentGap(item, to: stack, axis: spec.axis)
                 if item.kind == "text" {
-                    stack.addArrangedSubview(makeLabel(contentItemText(item, spec: spec), spec: spec))
+                    stack.addArrangedSubview(makeContentItemLabel(item, spec: spec))
                 } else if let childID = item.childID,
                           let child = spec.children.first(where: { $0.id == childID }) {
                     stack.addArrangedSubview(makeView(child))
@@ -2912,6 +3161,39 @@ final class HTMLToIOSNodeRenderer {
             }
         }
         return stack
+    }
+
+    private func addContentGap(_ item: HTMLToIOSContentItemSpec, to stack: UIStackView, axis: String) {
+        guard let gap = item.gapBefore, gap > 0 else { return }
+        let spacer = UIView()
+        spacer.isUserInteractionEnabled = false
+        if item.flexibleGapBefore == true {
+            spacer.setContentHuggingPriority(.defaultLow, for: axis == "vertical" ? .vertical : .horizontal)
+            if axis == "vertical" {
+                spacer.heightAnchor.constraint(greaterThanOrEqualToConstant: gap).isActive = true
+            } else {
+                spacer.widthAnchor.constraint(greaterThanOrEqualToConstant: gap).isActive = true
+            }
+        } else if axis == "vertical" {
+            spacer.heightAnchor.constraint(equalToConstant: gap).isActive = true
+        } else {
+            spacer.widthAnchor.constraint(equalToConstant: gap).isActive = true
+        }
+        stack.addArrangedSubview(spacer)
+    }
+
+    private func makeContentItemLabel(_ item: HTMLToIOSContentItemSpec, spec: HTMLToIOSNodeSpec) -> UILabel {
+        let label = makeLabel(contentItemText(item, spec: spec), spec: spec)
+        if item.singleLine == true {
+            label.numberOfLines = 1
+            label.adjustsFontSizeToFitWidth = true
+            label.minimumScaleFactor = 0.7
+            label.allowsDefaultTighteningForTruncation = true
+            if let width = item.preferredWidth, width > 0 {
+                label.widthAnchor.constraint(equalToConstant: width).isActive = true
+            }
+        }
+        return label
     }
 
     private func makeGrid(_ spec: HTMLToIOSNodeSpec) -> UIStackView {
@@ -3189,6 +3471,8 @@ final class HTMLToIOSNodeRenderer {
         view.clipsToBounds = needsClipping && spec.style.shadowColor == nil
         if let width = spec.style.fixedWidth, width > 0 {
             view.widthAnchor.constraint(equalToConstant: width).isActive = true
+        } else if let width = spec.style.textMeasureWidth, width > 0 {
+            view.widthAnchor.constraint(lessThanOrEqualToConstant: width).isActive = true
         }
         if let height = spec.style.fixedHeight, height > 0 {
             view.heightAnchor.constraint(equalToConstant: height).isActive = true

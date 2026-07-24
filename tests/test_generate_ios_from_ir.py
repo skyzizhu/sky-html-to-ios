@@ -130,7 +130,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("Text(attributedText)", runtime_text)
             self.assertIn("private struct HTMLToIOSFrameModifier: ViewModifier", runtime_text)
             self.assertIn("let preferredWidth = constrainsPreferredWidth ? CGFloat(style.preferredWidth ?? 0) : 0", runtime_text)
-            self.assertIn("constrainsPreferredWidth: spec.children.isEmpty || isNativeControl", runtime_text)
+            self.assertIn("constrainsPreferredWidth: isMeasuredText || spec.children.isEmpty || isNativeControl", runtime_text)
             self.assertIn("enforcesPreferredWidth: isNativeControl", runtime_text)
             self.assertIn("(enforcesPreferredWidth || style.resistsCompression == true)", runtime_text)
             self.assertIn("constrainsPreferredWidth && (style.widthFraction ?? 0) > 0.88 ? .infinity : nil", runtime_text)
@@ -997,6 +997,10 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                     ("text", None, "待检测文案"),
                 ],
             )
+            self.assertEqual(generated_label["contentItems"][1]["preferredWidth"], 88)
+            self.assertTrue(generated_label["contentItems"][1]["singleLine"])
+            self.assertEqual(generated_label["contentItems"][1]["gapBefore"], 8)
+            self.assertFalse(generated_label["contentItems"][1]["flexibleGapBefore"])
             self.assertEqual(generated_head["semantic"], "container")
             self.assertEqual(
                 [item.get("childID") for item in generated_head["contentItems"]],
@@ -1008,20 +1012,147 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertEqual(generated_head["richTextRuns"], [])
             generated_tag = next(item for item in generated_head["children"] if item["id"] == tag["id"])
             generated_severity = next(item for item in generated_head["children"] if item["id"] == severity["id"])
+            generated_position = next(item for item in generated_head["children"] if item["id"] == position["id"])
             self.assertEqual(generated_tag["style"]["fixedWidth"], 72)
             self.assertEqual(generated_tag["style"]["fixedHeight"], 24)
             self.assertEqual(generated_severity["style"]["fixedWidth"], 8)
             self.assertEqual(generated_severity["style"]["fixedHeight"], 8)
+            self.assertEqual(generated_position["style"]["margin"][3], 0)
+            self.assertEqual(generated_head["contentItems"][2]["gapBefore"], 8)
+            self.assertTrue(generated_head["contentItems"][2]["flexibleGapBefore"])
 
             swiftui_runtime = (out_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn("let contentItems: [HTMLToIOSContentItemSpec]", (out_dir / MODELS_FILE).read_text(encoding="utf-8"))
             self.assertIn("private var orderedContentItems: some View", swiftui_runtime)
+            self.assertIn("contentItemGap(item)", swiftui_runtime)
+            self.assertIn(".minimumScaleFactor(0.7)", swiftui_runtime)
+            self.assertIn(".allowsTightening(true)", swiftui_runtime)
+            self.assertIn("Color.clear.frame(width: gap, height: 0)", swiftui_runtime)
 
             uikit_dir = root / "uikit"
             self.run_generator([path], uikit_dir, ui_stack="uikit")
             uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn("spec.contentItems.forEach", uikit_runtime)
             self.assertIn("contentItemText(item, spec: spec)", uikit_runtime)
+            self.assertIn("addContentGap(item, to: stack, axis: spec.axis)", uikit_runtime)
+            self.assertIn("label.adjustsFontSizeToFitWidth = true", uikit_runtime)
+            self.assertIn("label.allowsDefaultTighteningForTruncation = true", uikit_runtime)
+
+    def test_explicit_text_lines_and_rich_text_keep_browser_measure_width(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("home")
+            root_node = payload["screens"][0]["nodes"][0]
+
+            description = node(
+                "home.description",
+                root_node["id"],
+                "text",
+                "正在逐句分析 8 个维度 识别错别字、语法、搭配与专名一致性",
+                display="block",
+            )
+            description["layout"]["rect"] = {"x": 64, "y": 100, "width": 264, "height": 44}
+            description["style"]["lineHeight"] = "20px"
+            description["content"].update({
+                "lines": 2,
+                "runs": [
+                    {
+                        "kind": "text",
+                        "text": "正在逐句分析 8 个维度",
+                        "domIndex": 0,
+                        "rect": {"x": 96, "y": 100, "width": 200, "height": 20},
+                    },
+                    {
+                        "kind": "text",
+                        "text": "识别错别字、语法、搭配与专名一致性",
+                        "domIndex": 1,
+                        "rect": {"x": 64, "y": 124, "width": 264, "height": 20},
+                    },
+                ],
+            })
+
+            suggestion = node("home.suggestion", root_node["id"], "text", "建议改为", display="block")
+            suggestion["layout"]["rect"] = {"x": 44, "y": 180, "width": 258, "height": 78}
+            suggestion["style"]["lineHeight"] = "21px"
+            suggestion["content"].update({
+                "lines": 3,
+                "runs": [
+                    {"kind": "text", "text": "建议改为 ", "domIndex": 0},
+                    {"kind": "node", "text": "「耳戴式」", "nodeId": "home.emphasis", "domIndex": 1},
+                ],
+            })
+            emphasis = node("home.emphasis", suggestion["id"], "text", "「耳戴式」", display="inline")
+            emphasis["layout"]["rect"] = {"x": 120, "y": 180, "width": 72, "height": 20}
+            emphasis["style"]["fontWeight"] = "700"
+
+            payload["screens"][0]["nodes"].extend([description, suggestion, emphasis])
+            path = root / "home.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            out_dir = root / "out"
+            self.run_generator([path], out_dir)
+            generated = json.loads((out_dir / PAYLOAD).read_text(encoding="utf-8"))
+            generated_root = generated["screens"][0]["root"]
+            generated_description = next(
+                item for item in generated_root["children"] if item["id"] == description["id"]
+            )
+            generated_suggestion = next(
+                item for item in generated_root["children"] if item["id"] == suggestion["id"]
+            )
+
+            self.assertIsNone(generated_description["style"]["textMeasureWidth"])
+            self.assertEqual(generated_description["style"]["expectedTextLines"], 2)
+            self.assertEqual([item["preferredWidth"] for item in generated_description["contentItems"]], [200, 264])
+            self.assertTrue(all(item["singleLine"] for item in generated_description["contentItems"]))
+            self.assertEqual(generated_description["contentItems"][1]["gapBefore"], 4)
+            self.assertEqual(generated_suggestion["style"]["textMeasureWidth"], 258)
+            self.assertEqual(generated_suggestion["style"]["expectedTextLines"], 3)
+            self.assertEqual([run["fontWeight"] for run in generated_suggestion["richTextRuns"]], ["400", "700"])
+
+            runtime = (out_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn("let measuredTextWidth = style.textMeasureWidth.map", runtime)
+            self.assertIn("private var isMeasuredText: Bool", runtime)
+            self.assertIn('} else if spec.axis == "vertical" {', runtime)
+
+    def test_overlapping_inline_range_rects_are_one_visual_text_line(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("home")
+            root_node = payload["screens"][0]["nodes"][0]
+            score = node("home.score", root_node["id"], "text", "82", display="block")
+            score["layout"]["rect"] = {"x": 44, "y": 100, "width": 46, "height": 30}
+            score["style"].update({"fontSize": "26px", "fontWeight": "800"})
+            score["content"].update({
+                "lines": 2,
+                "lineRects": [
+                    {"x": 44, "y": 100, "width": 32, "height": 30},
+                    {"x": 77, "y": 112, "width": 13, "height": 15},
+                ],
+                "runs": [
+                    {"kind": "text", "text": "82", "domIndex": 0},
+                    {"kind": "node", "text": "分", "nodeId": "home.unit", "domIndex": 1},
+                ],
+            })
+            unit = node("home.unit", score["id"], "text", "分", display="inline")
+            unit["layout"]["rect"] = {"x": 77, "y": 112, "width": 13, "height": 15}
+            unit["style"].update({"fontSize": "13px", "fontWeight": "600"})
+            payload["screens"][0]["nodes"].extend([score, unit])
+
+            path = root / "home.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            out_dir = root / "out"
+            self.run_generator([path], out_dir)
+            generated = json.loads((out_dir / PAYLOAD).read_text(encoding="utf-8"))
+            generated_score = next(
+                item for item in generated["screens"][0]["root"]["children"] if item["id"] == score["id"]
+            )
+
+            self.assertEqual(generated_score["style"]["expectedTextLines"], 1)
+            self.assertEqual(generated_score["style"]["textLineLimit"], 1)
+            self.assertEqual(generated_score["axis"], "horizontal")
+            self.assertIsNone(generated_score["style"]["textMeasureWidth"])
+            self.assertEqual([run["text"] for run in generated_score["richTextRuns"]], ["82", "分"])
+            runtime = (out_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn("HStack(alignment: .firstTextBaseline, spacing: 0)", runtime)
 
     def test_computed_flex_direction_overrides_absolute_layout_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
