@@ -134,6 +134,7 @@ def text_behavior(node: dict, semantic: str) -> dict | None:
     selectable = bool(first_known(selectable_hint, source_selectable or (is_input and readonly), False))
     scroll = scroll_contract(node)
     scrollable = bool(multiline and scroll["axis"] in {"vertical", "both"})
+    placeholder_style = node.get("placeholderStyle") or {}
 
     if control_hint in {"textfield", "text-field"}:
         native_control = "text-field"
@@ -164,6 +165,14 @@ def text_behavior(node: dict, semantic: str) -> dict | None:
         "autocapitalization": str(attrs.get("autocapitalize") or "").strip().lower() or None,
         "autocorrection": explicit_bool(attrs, "spellcheck"),
         "validation": str(attrs.get("data-ios-validation") or attrs.get("pattern") or "").strip() or None,
+        "placeholderStyle": {
+            "fontSize": placeholder_style.get("fontSize"),
+            "fontWeight": placeholder_style.get("fontWeight"),
+            "foreground": placeholder_style.get("color"),
+            "lineHeight": placeholder_style.get("lineHeight"),
+            "letterSpacing": placeholder_style.get("letterSpacing"),
+            "opacity": placeholder_style.get("opacity"),
+        } if placeholder_style else None,
     }
 
 
@@ -1552,14 +1561,6 @@ def build_ir(data: dict, args) -> dict:
                 "nodeId": native_node_id,
                 "message": f"Low-confidence native mapping for {node.get('selector')}",
                 "fallback": "Review control-mapping-matrix.md and confirm the semantic type.",
-            })
-        if binding_contract and binding_contract["requiresViewModel"]:
-            warnings.append({
-                "code": "EXTERNAL_DATA_SOURCE_REQUIRES_BINDING",
-                "severity": "warning",
-                "nodeId": native_node_id,
-                "message": f"External data source {binding_contract['sourceID']!r} requires project data-layer integration.",
-                "fallback": "Keep the HTML snapshot as a visual fixture; bind an existing ViewModel/provider without inventing an endpoint.",
             })
         nodes_out.append({
             "id": native_node_id,

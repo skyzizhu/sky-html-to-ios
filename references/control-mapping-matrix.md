@@ -162,6 +162,7 @@
 2. 去除与 HTML 不一致的默认皮肤。
 3. 按 computed style 重建背景、边框、圆角、字体和 pressed/disabled 状态。
 4. 不影响键盘、焦点、点击区域和系统辅助功能。
+5. 输入文字与 placeholder 共用来源 content inset；placeholder 使用浏览器 `::placeholder` 计算样式，不回退成统一系统灰色。
 
 SwiftUI 自定义按钮通常使用 `.buttonStyle(.plain)` 后重建样式；UIKit 使用 `UIButton.Configuration` 或 custom UIControl，但不要退化成只有 `onTapGesture`/`UITapGestureRecognizer` 的普通 View。
 

@@ -1491,7 +1491,13 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "fieldID": "profile.name", "autofocus": True, "returnKey": "next",
                 "autocapitalization": "words", "autocorrection": False,
                 "validation": "required",
+                "placeholderStyle": {
+                    "fontSize": "14px", "fontWeight": "500",
+                    "foreground": "rgba(80, 90, 110, 0.65)",
+                    "lineHeight": "20px", "letterSpacing": "0.2px", "opacity": "0.8",
+                },
             }
+            field["style"]["padding"] = ["10px", "14px", "10px", "14px"]
             field["dataBinding"] = {
                 "sourceID": "profile", "itemIDKey": "id", "stateRole": "content",
                 "pagination": "none", "ownership": "external",
@@ -1516,6 +1522,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("maxLength: spec.textBehavior?.maxLength", swiftui_runtime)
             self.assertIn(".scrollDismissesKeyboard(.interactively)", swiftui_runtime)
             self.assertIn("HTMLToIOSInputPolicyModifier", swiftui_runtime)
+            self.assertIn("prompt: inputPrompt", swiftui_runtime)
+            self.assertIn(".padding(.horizontal, -5)", swiftui_runtime)
 
             uikit_dir = root / "uikit"
             self.run_generator([path], uikit_dir, ui_stack="uikit")
@@ -1525,11 +1533,17 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("field.borderStyle = .none", uikit_runtime)
             self.assertIn("scroll.keyboardDismissMode = .interactive", uikit_runtime)
             self.assertIn("field.returnKeyType = returnKeyType", uikit_runtime)
+            self.assertIn("let field = HTMLToIOSInsetTextField()", uikit_runtime)
+            self.assertIn("field.attributedPlaceholder = attributedPlaceholder(spec)", uikit_runtime)
+            self.assertIn("field.contentInsets = contentInsets(spec)", uikit_runtime)
+            self.assertIn("field.markedTextRange == nil", uikit_runtime)
             generated = json.loads((uikit_dir / PAYLOAD).read_text(encoding="utf-8"))
             generated_field = generated["screens"][0]["root"]["children"][0]
             self.assertEqual(generated_field["textBehavior"]["initialValue"], "Sky")
             self.assertFalse(generated_field["textBehavior"]["editable"])
             self.assertEqual(generated_field["textBehavior"]["fieldID"], "profile.name")
+            self.assertEqual(generated_field["textBehavior"]["placeholderStyle"]["fontSize"], 14)
+            self.assertEqual(generated_field["textBehavior"]["placeholderStyle"]["fontWeight"], "500")
             self.assertEqual(generated_field["dataBinding"]["sourceID"], "profile")
             self.assertTrue(generated_field["dataBinding"]["requiresViewModel"])
 

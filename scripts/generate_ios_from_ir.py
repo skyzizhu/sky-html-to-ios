@@ -1301,6 +1301,16 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "contentType": node_state.get("contentType"),
             "submitLabel": node_state.get("submitLabel"),
         })
+        source_placeholder_style = text_behavior.get("placeholderStyle")
+        if isinstance(source_placeholder_style, dict):
+            text_behavior["placeholderStyle"] = {
+                "fontSize": scaled_css_value(source_placeholder_style.get("fontSize"), context.design_scale) or None,
+                "fontWeight": str(source_placeholder_style.get("fontWeight") or style.get("fontWeight") or "400"),
+                "foreground": color_string(source_placeholder_style.get("foreground")),
+                "lineHeight": scaled_css_value(source_placeholder_style.get("lineHeight"), context.design_scale) or None,
+                "letterSpacing": scaled_css_value(source_placeholder_style.get("letterSpacing"), context.design_scale),
+                "opacity": min(max(number(source_placeholder_style.get("opacity"), 1), 0), 1),
+            }
     payload = {
         "id": node_id,
         "semantic": semantic,
@@ -2045,6 +2055,16 @@ struct HTMLToIOSTextBehaviorSpec: Codable {{
     let autocapitalization: String?
     let autocorrection: Bool?
     let validation: String?
+    let placeholderStyle: HTMLToIOSPlaceholderStyleSpec?
+}}
+
+struct HTMLToIOSPlaceholderStyleSpec: Codable {{
+    let fontSize: Double?
+    let fontWeight: String?
+    let foreground: String?
+    let lineHeight: Double?
+    let letterSpacing: Double?
+    let opacity: Double?
 }}
 
 struct HTMLToIOSDataBindingSpec: Codable {{
@@ -2921,6 +2941,23 @@ struct HTMLToIOSNativeNodeView: View {
             && (!spec.text.isEmpty || !(spec.richTextRuns ?? []).isEmpty || spec.contentItems.contains { $0.kind == "text" })
     }
 
+    private var inputPrompt: Text {
+        let placeholder = spec.textBehavior?.placeholderStyle
+        return Text(spec.placeholder)
+            .font(htmlToIOSFont(
+                size: placeholder?.fontSize ?? spec.style.fontSize ?? 16,
+                weight: placeholder?.fontWeight ?? spec.style.fontWeight,
+                design: spec.style.fontDesign,
+                nativeName: spec.style.fontNativeName,
+                style: spec.style.fontStyle
+            ))
+            .foregroundColor(
+                Color(htmlToIOS: placeholder?.foreground ?? spec.style.foreground)
+                    .opacity(placeholder?.opacity ?? (placeholder?.foreground == nil ? 0.5 : 1))
+            )
+            .tracking(placeholder?.letterSpacing ?? spec.style.letterSpacing ?? 0)
+    }
+
     @ViewBuilder private var content: some View {
         if effectiveScrollAxis != "none" && spec.semantic != "carousel" && spec.semantic != "scroll" {
             scrollContainer
@@ -2935,12 +2972,13 @@ struct HTMLToIOSNativeNodeView: View {
             }
         case "text-field", "input", "search-field", "text-input", "search-input", "number-input":
             TextField(
-                spec.placeholder,
+                "",
                 text: store.binding(
                     for: spec.id,
                     initialValue: spec.textBehavior?.initialValue ?? spec.text,
                     maxLength: spec.textBehavior?.maxLength
-                )
+                ),
+                prompt: inputPrompt
             )
             .textFieldStyle(.plain)
             .keyboardType(htmlToIOSKeyboardType(spec.textBehavior?.keyboardType))
@@ -2955,12 +2993,13 @@ struct HTMLToIOSNativeNodeView: View {
             .disabled(spec.textBehavior?.editable == false || spec.textBehavior?.enabled == false)
         case "secure-field", "secure-input":
             SecureField(
-                spec.placeholder,
+                "",
                 text: store.binding(
                     for: spec.id,
                     initialValue: spec.textBehavior?.initialValue ?? "",
                     maxLength: spec.textBehavior?.maxLength
-                )
+                ),
+                prompt: inputPrompt
             )
             .textFieldStyle(.plain)
             .keyboardType(htmlToIOSKeyboardType(spec.textBehavior?.keyboardType))
@@ -2981,12 +3020,13 @@ struct HTMLToIOSNativeNodeView: View {
             )
             ZStack(alignment: .topLeading) {
                 if value.wrappedValue.isEmpty && !spec.placeholder.isEmpty {
-                    Text(spec.placeholder)
-                        .foregroundStyle(.secondary)
+                    inputPrompt
                         .allowsHitTesting(false)
                 }
                 TextEditor(text: value)
                     .scrollContentBackground(.hidden)
+                    .padding(.horizontal, -5)
+                    .padding(.vertical, -8)
                     .keyboardType(htmlToIOSKeyboardType(spec.textBehavior?.keyboardType))
                     .modifier(HTMLToIOSInputPolicyModifier(behavior: spec.textBehavior))
                     .focused($isInputFocused)
@@ -3653,32 +3693,68 @@ final class HTMLToIOSUIKitState {
     }
 }
 
+final class HTMLToIOSInsetTextField: UITextField {
+    var contentInsets = UIEdgeInsets.zero {
+        didSet { setNeedsLayout() }
+    }
+
+    override func textRect(forBounds bounds: CGRect) -> CGRect {
+        bounds.inset(by: contentInsets)
+    }
+
+    override func editingRect(forBounds bounds: CGRect) -> CGRect {
+        bounds.inset(by: contentInsets)
+    }
+
+    override func placeholderRect(forBounds bounds: CGRect) -> CGRect {
+        bounds.inset(by: contentInsets)
+    }
+}
+
 final class HTMLToIOSManagedTextView: UITextView, UITextViewDelegate {
     var maxLength: Int?
     var onValueChanged: ((String) -> Void)?
     private let placeholderLabel = UILabel()
+    private var placeholderTopConstraint: NSLayoutConstraint?
+    private var placeholderLeadingConstraint: NSLayoutConstraint?
+    private var placeholderTrailingConstraint: NSLayoutConstraint?
 
-    var placeholder: String = "" {
-        didSet { placeholderLabel.text = placeholder }
+    var placeholderAttributedText: NSAttributedString? {
+        didSet { placeholderLabel.attributedText = placeholderAttributedText }
+    }
+
+    var contentInsets = UIEdgeInsets.zero {
+        didSet {
+            textContainerInset = contentInsets
+            placeholderTopConstraint?.constant = contentInsets.top
+            placeholderLeadingConstraint?.constant = contentInsets.left + textContainer.lineFragmentPadding
+            placeholderTrailingConstraint?.constant = -(contentInsets.right + textContainer.lineFragmentPadding)
+        }
     }
 
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
-        delegate = self
-        placeholderLabel.textColor = .placeholderText
-        placeholderLabel.numberOfLines = 0
-        placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(placeholderLabel)
-        NSLayoutConstraint.activate([
-            placeholderLabel.topAnchor.constraint(equalTo: topAnchor),
-            placeholderLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
-            placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
-        ])
+        configurePlaceholder()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
+        configurePlaceholder()
+    }
+
+    private func configurePlaceholder() {
         delegate = self
+        placeholderLabel.numberOfLines = 0
+        placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(placeholderLabel)
+        placeholderTopConstraint = placeholderLabel.topAnchor.constraint(equalTo: topAnchor)
+        placeholderLeadingConstraint = placeholderLabel.leadingAnchor.constraint(equalTo: leadingAnchor)
+        placeholderTrailingConstraint = placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor)
+        NSLayoutConstraint.activate([
+            placeholderTopConstraint!,
+            placeholderLeadingConstraint!,
+            placeholderTrailingConstraint!,
+        ])
     }
 
     func refreshPlaceholder() {
@@ -3686,7 +3762,7 @@ final class HTMLToIOSManagedTextView: UITextView, UITextViewDelegate {
     }
 
     func textViewDidChange(_ textView: UITextView) {
-        if let maxLength, maxLength >= 0, text.count > maxLength {
+        if markedTextRange == nil, let maxLength, maxLength >= 0, text.count > maxLength {
             text = String(text.prefix(maxLength))
         }
         refreshPlaceholder()
@@ -3736,9 +3812,10 @@ final class HTMLToIOSNodeRenderer {
                 view = control
             }
         case "text-field", "input", "search-field", "secure-field", "text-input", "search-input", "number-input", "secure-input":
-            let field = UITextField()
+            let field = HTMLToIOSInsetTextField()
             field.borderStyle = .none
-            field.placeholder = spec.placeholder
+            field.attributedPlaceholder = attributedPlaceholder(spec)
+            field.contentInsets = contentInsets(spec)
             let initialValue = state.values[spec.id] ?? spec.textBehavior?.initialValue ?? spec.text
             field.attributedText = attributedText(initialValue, spec: spec)
             field.isSecureTextEntry = spec.semantic == "secure-field" || spec.semantic == "secure-input" || spec.textBehavior?.secure == true
@@ -3751,7 +3828,7 @@ final class HTMLToIOSNodeRenderer {
             field.autocorrectionType = autocorrectionType(spec.textBehavior?.autocorrection)
             field.addAction(UIAction { [weak field, state] _ in
                 guard let field else { return }
-                if let maxLength = spec.textBehavior?.maxLength, maxLength >= 0 {
+                if field.markedTextRange == nil, let maxLength = spec.textBehavior?.maxLength, maxLength >= 0 {
                     if field.text?.count ?? 0 > maxLength { field.text = String((field.text ?? "").prefix(maxLength)) }
                 }
                 state.values[spec.id] = field.text ?? ""
@@ -3767,8 +3844,8 @@ final class HTMLToIOSNodeRenderer {
             let textView = HTMLToIOSManagedTextView()
             let initialValue = state.values[spec.id] ?? spec.textBehavior?.initialValue ?? spec.text
             textView.attributedText = attributedText(initialValue, spec: spec)
-            textView.textContainerInset = .zero
             textView.textContainer.lineFragmentPadding = 0
+            textView.contentInsets = contentInsets(spec)
             textView.backgroundColor = .clear
             textView.isEditable = spec.textBehavior?.editable == true
             textView.isSelectable = spec.textBehavior?.selectable != false
@@ -3780,7 +3857,7 @@ final class HTMLToIOSNodeRenderer {
             textView.autocapitalizationType = autocapitalizationType(spec.textBehavior?.autocapitalization)
             textView.autocorrectionType = autocorrectionType(spec.textBehavior?.autocorrection)
             textView.maxLength = spec.textBehavior?.maxLength
-            textView.placeholder = spec.placeholder
+            textView.placeholderAttributedText = attributedPlaceholder(spec)
             textView.onValueChanged = { [state] value in state.values[spec.id] = value }
             textView.refreshPlaceholder()
             if spec.textBehavior?.autofocus == true {
@@ -4054,6 +4131,43 @@ final class HTMLToIOSNodeRenderer {
         let current = stateText(spec)
         if !current.isEmpty { return current }
         return spec.children.lazy.map(\.text).first { !$0.isEmpty } ?? "Action"
+    }
+
+    private func contentInsets(_ spec: HTMLToIOSNodeSpec) -> UIEdgeInsets {
+        let padding = spec.style.padding ?? [0, 0, 0, 0]
+        return UIEdgeInsets(
+            top: padding.indices.contains(0) ? padding[0] : 0,
+            left: padding.indices.contains(3) ? padding[3] : 0,
+            bottom: padding.indices.contains(2) ? padding[2] : 0,
+            right: padding.indices.contains(1) ? padding[1] : 0
+        )
+    }
+
+    private func attributedPlaceholder(_ spec: HTMLToIOSNodeSpec) -> NSAttributedString {
+        let placeholder = spec.textBehavior?.placeholderStyle
+        let font = nativeFont(
+            size: placeholder?.fontSize ?? spec.style.fontSize ?? 16,
+            weight: placeholder?.fontWeight ?? spec.style.fontWeight,
+            design: spec.style.fontDesign,
+            nativeName: spec.style.fontNativeName,
+            style: spec.style.fontStyle
+        )
+        let paragraph = NSMutableParagraphStyle()
+        if let lineHeight = placeholder?.lineHeight, lineHeight > 0 {
+            paragraph.minimumLineHeight = lineHeight
+            paragraph.maximumLineHeight = lineHeight
+        }
+        let baseColor = UIColor(htmlToIOS: placeholder?.foreground ?? spec.style.foreground) ?? .placeholderText
+        let opacity = placeholder?.opacity ?? (placeholder?.foreground == nil ? 0.5 : 1)
+        var attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: baseColor.withAlphaComponent(baseColor.cgColor.alpha * opacity),
+            .paragraphStyle: paragraph,
+        ]
+        if let spacing = placeholder?.letterSpacing ?? spec.style.letterSpacing {
+            attributes[.kern] = spacing
+        }
+        return NSAttributedString(string: spec.placeholder, attributes: attributes)
     }
 
     private func keyboardType(_ raw: String?) -> UIKeyboardType {

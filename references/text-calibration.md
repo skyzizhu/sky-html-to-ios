@@ -39,6 +39,8 @@ python3 scripts/build_text_calibration.py render-tree.json \
 - 普通展示文字属于 Label/Text，即使视觉上有背景和圆角也不因此升级为输入控件。
 - 只有选择、链接交互、独立文本滚动或显式原生提示成立时，展示文字才使用只读 TextView；必须关闭编辑能力，避免弹出键盘或改变内容。
 - `readonly`、`disabled`、`editable`、`selectable` 是不同状态，不得互相代替。验收必须覆盖聚焦、键盘、选择、滚动和提交行为，而不只比较静态截图。
+- placeholder 是输入控件的独立视觉态；提取 `::placeholder` 的字体、颜色、透明度、字距与行高，不能统一使用系统默认灰色。
+- 输入框来源 padding 必须成为原生文字和 placeholder 的 content inset。UIKit 使用 `textRect/editingRect/placeholderRect` 或 `textContainerInset`；SwiftUI `TextEditor` 抵消系统内部 inset，避免与来源 padding 重复。
 
 SwiftUI `lineSpacing` 不是 CSS `line-height`；UIKit 使用 `NSParagraphStyle.minimumLineHeight/maximumLineHeight` 时要同时处理 baseline offset。中英文混排、Emoji、JetBrains Mono 等等宽字体和不同 weight 必须分别验证。
 

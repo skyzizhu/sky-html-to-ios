@@ -26,15 +26,15 @@
 
 1. `static-fixture`：HTML 中的固定内容。可抽取复用 Cell/View，但不创建 ViewModel。
 2. `local-prototype-state`：JavaScript 行为会在本地改变筛选、展开、步骤或列表内容。生成本地状态模型。
-3. `external`：HTML 明示 `data-ios-data-source`，或已有工程存在可确认的数据模型/Provider。首帧是样例数据，必须接入 ViewModel 或项目数据层。
+3. `external`：HTML 明示 `data-ios-data-source`，或已有工程存在可确认的数据模型/Provider。默认仍只把首帧作为视觉样例，不生成业务接入代码。
 
 重复 DOM 本身不是接口证据。不得根据几条列表内容猜测网络请求、分页协议、字段名或缓存策略。
 
 ## 状态模型
 
-外部数据区域至少区分已声明的 `loading`、`content`、`empty`、`error` 角色；分页只使用 `none/page/cursor/infinite`。`data-ios-item-id` 用于 Diffable Data Source、`ForEach` 或项目列表组件的稳定身份。
+外部数据区域可用 `loading`、`content`、`empty`、`error` 标记视觉角色；分页字段只记录来源语义，不要求转换器实现分页业务。`data-ios-item-id` 仅保留为可复用条目的稳定身份证据。
 
-生成器可以创建协议、ViewModel 接入口和样例 fixture，但不得伪造 endpoint。已有工程优先复用其状态管理、依赖注入、错误模型、分页器和刷新控件。
+生成器只保留样例 fixture 和视觉状态，不创建协议、ViewModel、endpoint、缓存或分页实现。用户明确要求业务接入时，再复用已有工程的数据层和状态管理。
 
 ## 视觉验收
 

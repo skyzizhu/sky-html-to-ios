@@ -115,7 +115,7 @@
 
 动态数据是运行后会改变且不应被首帧永久写死的内容，例如接口列表、分页结果、搜索结果、用户输入、检测进度，以及 loading/content/empty/error 状态。
 
-- `data-ios-data-source="article-results"`：声明外部数据源的稳定 ID。它表示 HTML 当前内容是样例快照，生成页面需要接入 ViewModel/项目数据提供者；它不表示允许生成器猜测 URL、请求参数或模型字段。
+- `data-ios-data-source="article-results"`：可选的视觉 fixture 分组 ID。它用于关联同一组 loading/content/empty/error 画面，不要求基础转换接入 ViewModel，也不允许生成器猜测 URL、请求参数或模型字段。
 - `data-ios-item-id="id"`：重复条目的稳定标识字段。
 - `data-ios-state-role="loading|content|empty|error"`：同一数据源的视觉状态角色。
 - `data-ios-pagination="none|page|cursor|infinite"`：分页语义。

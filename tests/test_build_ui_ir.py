@@ -337,6 +337,10 @@ class BuildUIIRTests(unittest.TestCase):
                 "spellcheck": "false", "data-ios-validation": "required",
             }
             nodes[1]["properties"] = {"value": "Sky", "readOnly": True, "disabled": False}
+            nodes[1]["placeholderStyle"] = {
+                "fontSize": "14px", "fontWeight": "500", "color": "rgba(80, 90, 110, 0.65)",
+                "lineHeight": "20px", "letterSpacing": "0.2px", "opacity": "0.8",
+            }
             nodes[2]["attributes"] = {
                 "maxlength": "200", "placeholder": "Notes",
                 "data-ios-data-source": "profile-notes", "data-ios-item-id": "id",
@@ -374,6 +378,11 @@ class BuildUIIRTests(unittest.TestCase):
             self.assertEqual(by_runtime_id["name"]["textBehavior"]["autocapitalization"], "words")
             self.assertFalse(by_runtime_id["name"]["textBehavior"]["autocorrection"])
             self.assertEqual(by_runtime_id["name"]["textBehavior"]["validation"], "required")
+            self.assertEqual(by_runtime_id["name"]["textBehavior"]["placeholderStyle"]["fontSize"], "14px")
+            self.assertEqual(
+                by_runtime_id["name"]["textBehavior"]["placeholderStyle"]["foreground"],
+                "rgba(80, 90, 110, 0.65)",
+            )
             self.assertEqual(by_runtime_id["notes"]["semanticType"], "text-area")
             self.assertTrue(by_runtime_id["notes"]["textBehavior"]["multiline"])
             self.assertTrue(by_runtime_id["notes"]["textBehavior"]["scrollable"])
@@ -382,10 +391,6 @@ class BuildUIIRTests(unittest.TestCase):
             self.assertEqual(by_runtime_id["notes"]["dataBinding"]["pagination"], "cursor")
             self.assertTrue(by_runtime_id["notes"]["dataBinding"]["requiresViewModel"])
             self.assertTrue(by_runtime_id["notes"]["dataBinding"]["snapshotIsSampleData"])
-            self.assertIn(
-                "EXTERNAL_DATA_SOURCE_REQUIRES_BINDING",
-                {warning["code"] for warning in generated["warnings"]},
-            )
             self.assertEqual(by_runtime_id["article"]["textBehavior"]["nativeControl"], "text-view")
             self.assertFalse(by_runtime_id["article"]["textBehavior"]["editable"])
             self.assertTrue(by_runtime_id["article"]["textBehavior"]["selectable"])

@@ -689,6 +689,10 @@ async function main() {
         const treeRoot = element.getRootNode();
         const parent = element === root ? null : (element.parentElement || (treeRoot instanceof ShadowRoot ? treeRoot.host : null));
         const tag = element.tagName.toLowerCase();
+        const placeholderStyle = (
+          (tag === "input" || tag === "textarea")
+          && element.hasAttribute("placeholder")
+        ) ? styleObject(getComputedStyle(element, "::placeholder")) : null;
         const attributes = {};
         for (const name of [
           "role", "aria-label", "aria-hidden", "aria-checked", "aria-selected", "aria-expanded", "aria-multiline",
@@ -753,6 +757,7 @@ async function main() {
           scroll: { scrollWidth: element.scrollWidth, scrollHeight: element.scrollHeight, clientWidth: element.clientWidth, clientHeight: element.clientHeight },
           visible: effectivelyVisible && rect.width > 0 && rect.height > 0,
           style: styleObject(style),
+          placeholderStyle,
           pseudo: { before: pseudoObject(element, "::before"), after: pseudoObject(element, "::after") },
           asset: clean(asset),
           assetDetails: tag === "svg"

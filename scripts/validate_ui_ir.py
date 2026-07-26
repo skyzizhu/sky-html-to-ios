@@ -163,6 +163,9 @@ def validate(data):
                     for key in ("editable", "readOnly", "selectable", "multiline", "scrollable", "secure"):
                         if not isinstance(text_behavior.get(key), bool):
                             errors.append(f"{nwhere}.textBehavior.{key} must be a boolean")
+                    placeholder_style = text_behavior.get("placeholderStyle")
+                    if placeholder_style is not None and not isinstance(placeholder_style, dict):
+                        errors.append(f"{nwhere}.textBehavior.placeholderStyle must be an object")
             data_binding = node.get("dataBinding")
             if data_binding is not None:
                 if not isinstance(data_binding, dict):

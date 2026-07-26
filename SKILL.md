@@ -281,7 +281,7 @@ python3 scripts/generate_ios_from_ir.py \
 - 通用运行时只是原生基线；发现现有 Router、Design System、Cell 或控件时，按映射计划替换为项目组件。
 - 保持项目命名、目录、访问控制和状态管理风格。
 - 静态页面不强制创建 ViewModel。
-- 外部动态数据只有在显式 `data-ios-data-source`、已有工程模型或用户提供接口契约时才创建 ViewModel 接入口；重复列表本身不是接口证据，生成器不得猜测 endpoint。HTML 首帧作为 fixture 保留，loading/content/empty/error 和分页按 `dataBinding` 契约实现与验收。
+- 动态数据不是转换核心。HTML 当前可见内容只作为确定性视觉 fixture，用于还原列表、loading、empty、error 等画面；生成器不创建接口、请求层、分页器或业务 ViewModel，也不因重复列表猜测 endpoint。只有用户明确要求业务接入时，才把 `dataBinding` 交给项目数据层。
 - 输入控件必须保存编辑状态并遵循 maxlength、键盘类型、return key、自动大写、自动纠错和 autofocus。键盘与 Safe Area 只能有一个避让所有者；滚动容器保持父级完整 bounds，不得预减键盘或安全区高度。
 - 仅在具有独立职责、重复使用或明显降低复杂度时拆组件。
 - 每个可交互节点使用 UI IR 中的稳定 ID 作为 `accessibilityIdentifier`。
