@@ -20,7 +20,7 @@ python3 scripts/run_html_to_ios.py \
 
 ## 总控顺序
 
-1. 检查输入文件和当前工作目录。
+1. 读取 `conversion-boundary-gates.md`，检查输入文件和当前工作目录；转换前阻断项在任何工程写入前停止。
 2. 扫描 `.xcodeproj`、`.xcworkspace` 与 `Package.swift`。
 3. 生成 `project-generation-decision.json`，确定语言边界、SwiftUI/UIKit、验证策略、App target、shared scheme 和 target deployment target。
 4. HTML 模式先发现 route/interaction，校验 overrides；未解决交互在创建工程前停止。
@@ -34,7 +34,7 @@ python3 scripts/run_html_to_ios.py \
 12. 新建工程自动接入根 View/根 ViewController；现有工程只检测入口，不覆盖启动架构。
 13. 根据 verification mode 决定停止、构建或启动：已有项目 `auto` 停止并等待确认，新建托管项目 `auto` 执行完整视觉验证。
 14. 用户选择 `visual` 且入口已接通时，创建隔离的 generator-owned UI Test target，逐 screen 执行状态动作、导出 xcresult 截图并归一化到目标逻辑 viewport。
-15. 对 required states 执行节点分区视觉门禁；任一状态缺失或超阈值时总控返回 `failed`，保留 review bundle 供 Agent 局部纠偏。
+15. 对 required states 执行节点分区视觉门禁，并执行转换后门禁；任一状态缺失、超阈值或存在交付阻断项时总控返回 `failed`，保留 review bundle 供 Agent 局部纠偏。
 
 ## 工程决策
 

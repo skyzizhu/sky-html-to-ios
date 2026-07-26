@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.25.0"
+GENERATOR_VERSION = "1.26.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -1044,6 +1044,8 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     semantic = str(node.get("semanticType") or "container")
     content = node.get("content") or {}
     text = compact_text(content.get("text"))
+    if semantic in {"button", "file-input"} and not text:
+        text = compact_text(content.get("value"), 240)
     if semantic in {"text", "label"} and text in SYMBOL_SYSTEM_IMAGES:
         semantic = "icon"
     placeholder = compact_text(content.get("placeholder"), 120)
@@ -1349,6 +1351,36 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
                 "letterSpacing": scaled_css_value(source_placeholder_style.get("letterSpacing"), context.design_scale),
                 "opacity": min(max(number(source_placeholder_style.get("opacity"), 1), 0), 1),
             }
+    control_options = []
+    for child in child_payloads:
+        title = compact_text(child.get("text"))
+        if not title:
+            title = next((
+                compact_text(grandchild.get("text"))
+                for grandchild in child.get("children") or []
+                if compact_text(grandchild.get("text"))
+            ), "")
+        if title:
+            control_options.append({
+                "id": str(child.get("id") or f"{node_id}.option-{len(control_options) + 1}"),
+                "title": title,
+                "selected": bool((context.nodes.get(str(child.get("id") or "")) or {}).get("state", {}).get("selected")),
+            })
+    control_config = None
+    if semantic in {
+        "slider", "stepper", "select", "multi-select", "segmented-control",
+        "date-input", "radio", "checkbox", "switch", "color-picker", "file-input",
+        "progress", "progress-view", "meter",
+    }:
+        control_config = {
+            "minimum": number(node_state.get("min"), 0),
+            "maximum": number(node_state.get("max"), 100),
+            "step": max(number(node_state.get("step"), 1), 0.0001),
+            "value": str(first_non_none(node_state.get("value"), content.get("value"), "") or ""),
+            "inputType": str(node_state.get("inputType") or ""),
+            "options": control_options,
+            "allowsMultipleSelection": semantic == "multi-select",
+        }
     payload = {
         "id": node_id,
         "semantic": semantic,
@@ -1368,6 +1400,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             )
             if value is not None
         },
+        "controlConfig": control_config,
         "axis": axis,
         "children": child_payloads,
         "overlayChildren": overlay_child_payloads,
@@ -2059,6 +2092,7 @@ struct HTMLToIOSNodeSpec: Codable, Identifiable {{
     let dataBinding: HTMLToIOSDataBindingSpec?
     let isEnabled: Bool
     let controlVisualStates: [String: HTMLToIOSControlVisualStateSpec]
+    let controlConfig: HTMLToIOSControlConfigSpec?
     let axis: String
     let children: [HTMLToIOSNodeSpec]
     let overlayChildren: [HTMLToIOSNodeSpec]
@@ -2142,6 +2176,22 @@ struct HTMLToIOSControlVisualStateSpec: Codable {{
     let shadowOffsetX: Double
     let shadowOffsetY: Double
     let shadowRadius: Double
+}}
+
+struct HTMLToIOSControlConfigSpec: Codable {{
+    let minimum: Double
+    let maximum: Double
+    let step: Double
+    let value: String
+    let inputType: String
+    let options: [HTMLToIOSControlOptionSpec]
+    let allowsMultipleSelection: Bool
+}}
+
+struct HTMLToIOSControlOptionSpec: Codable, Identifiable {{
+    let id: String
+    let title: String
+    let selected: Bool
 }}
 
 struct HTMLToIOSContentItemSpec: Codable, Identifiable {{
@@ -2393,6 +2443,9 @@ final class HTMLToIOSGeneratedStore: ObservableObject {
     @Published var tabScrollToTopID: String?
     @Published var tabScrollToTopNonce = 0
     @Published var values: [String: String] = [:]
+    @Published var numericValues: [String: Double] = [:]
+    @Published var dateValues: [String: Date] = [:]
+    @Published var colorValues: [String: Color] = [:]
     @Published var flags: Set<String> = []
     @Published var selectedByState: [String: String] = [:]
     @Published var selectionOverrides: [String: Bool] = [:]
@@ -2458,6 +2511,35 @@ final class HTMLToIOSGeneratedStore: ObservableObject {
         Binding(get: { self.flags.contains(nodeID) }, set: { enabled in
             if enabled { self.flags.insert(nodeID) } else { self.flags.remove(nodeID) }
         })
+    }
+
+    func numericBinding(for nodeID: String, initialValue: Double) -> Binding<Double> {
+        Binding(
+            get: { self.numericValues[nodeID] ?? initialValue },
+            set: { self.numericValues[nodeID] = $0 }
+        )
+    }
+
+    func selectionBinding(for nodeID: String, initialValue: String) -> Binding<String> {
+        Binding(
+            get: { self.values[nodeID] ?? initialValue },
+            set: { self.values[nodeID] = $0 }
+        )
+    }
+
+    func dateBinding(for nodeID: String, initialValue: String) -> Binding<Date> {
+        let fallback = HTMLToIOSDateParser.date(from: initialValue)
+        return Binding(
+            get: { self.dateValues[nodeID] ?? fallback },
+            set: { self.dateValues[nodeID] = $0 }
+        )
+    }
+
+    func colorBinding(for nodeID: String, initialValue: String?) -> Binding<Color> {
+        Binding(
+            get: { self.colorValues[nodeID] ?? Color(htmlToIOS: initialValue) },
+            set: { self.colorValues[nodeID] = $0 }
+        )
     }
 
     func isSelected(_ spec: HTMLToIOSNodeSpec) -> Bool {
@@ -2552,6 +2634,20 @@ private extension Color {
             self = Color(red: numbers[0] / 255, green: numbers[1] / 255, blue: numbers[2] / 255,
                          opacity: numbers.count > 3 ? numbers[3] : 1)
         } else { self = .clear }
+    }
+}
+
+private enum HTMLToIOSDateParser {
+    static func date(from value: String) -> Date {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let date = ISO8601DateFormatter().date(from: trimmed) { return date }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        for format in ["yyyy-MM-dd", "yyyy-MM-dd'T'HH:mm", "HH:mm"] {
+            formatter.dateFormat = format
+            if let date = formatter.date(from: trimmed) { return date }
+        }
+        return Date(timeIntervalSinceReferenceDate: 0)
     }
 }
 
@@ -2953,6 +3049,34 @@ private struct HTMLToIOSControlButtonStyle: ButtonStyle {
     }
 }
 
+private struct HTMLToIOSCheckboxToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Button {
+            configuration.isOn.toggle()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: configuration.isOn ? "checkmark.square.fill" : "square")
+                configuration.label
+            }
+        }
+        .buttonStyle(HTMLToIOSControlButtonStyle())
+    }
+}
+
+private struct HTMLToIOSRadioToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Button {
+            configuration.isOn = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: configuration.isOn ? "circle.inset.filled" : "circle")
+                configuration.label
+            }
+        }
+        .buttonStyle(HTMLToIOSControlButtonStyle())
+    }
+}
+
 struct HTMLToIOSNativeNodeView: View {
     @ObservedObject var store: HTMLToIOSGeneratedStore
     let spec: HTMLToIOSNodeSpec
@@ -2980,7 +3104,9 @@ struct HTMLToIOSNativeNodeView: View {
                 .disabled(!spec.isEnabled)
                 .modifier(HTMLToIOSAccessibilityModifier(spec: spec))
         } else {
-            styledContent.modifier(HTMLToIOSAccessibilityModifier(spec: spec))
+            styledContent
+                .disabled(isNativeControl && !spec.isEnabled)
+                .modifier(HTMLToIOSAccessibilityModifier(spec: spec))
         }
     }
 
@@ -3058,6 +3184,8 @@ struct HTMLToIOSNativeNodeView: View {
     }
     private var isNativeControl: Bool {
         ["button", "link", "menu-item", "tab-item", "toggle", "switch", "checkbox",
+         "radio", "slider", "stepper", "segmented-control", "select", "picker", "multi-select",
+         "date-input", "color-picker", "file-input", "progress", "progress-view", "meter",
          "text-input", "search-input", "number-input", "secure-input", "text-area"].contains(spec.semantic)
     }
     private var isMeasuredText: Bool {
@@ -3163,10 +3291,107 @@ struct HTMLToIOSNativeNodeView: View {
                     }
                     .disabled(!spec.isEnabled || spec.textBehavior?.editable == false || spec.textBehavior?.enabled == false)
             }
-        case "toggle", "switch", "checkbox":
+        case "switch", "toggle":
             Toggle(spec.text, isOn: store.flagBinding(for: spec.id))
-        case "progress", "progress-view":
-            ProgressView(value: 0.55)
+        case "checkbox":
+            Toggle(spec.text, isOn: store.flagBinding(for: spec.id))
+                .toggleStyle(HTMLToIOSCheckboxToggleStyle())
+        case "radio":
+            Toggle(spec.text, isOn: store.flagBinding(for: spec.id))
+                .toggleStyle(HTMLToIOSRadioToggleStyle())
+        case "slider":
+            let config = spec.controlConfig
+            Slider(
+                value: store.numericBinding(
+                    for: spec.id,
+                    initialValue: Double(config?.value ?? "") ?? config?.minimum ?? 0
+                ),
+                in: (config?.minimum ?? 0)...max(config?.maximum ?? 100, config?.minimum ?? 0),
+                step: config?.step ?? 1
+            )
+        case "stepper":
+            let config = spec.controlConfig
+            Stepper(
+                spec.text,
+                value: store.numericBinding(
+                    for: spec.id,
+                    initialValue: Double(config?.value ?? "") ?? config?.minimum ?? 0
+                ),
+                in: (config?.minimum ?? 0)...max(config?.maximum ?? 100, config?.minimum ?? 0),
+                step: config?.step ?? 1
+            )
+        case "segmented-control":
+            let options = spec.controlConfig?.options ?? []
+            let initial = options.first(where: \.selected)?.id ?? options.first?.id ?? ""
+            Picker(
+                spec.text,
+                selection: store.selectionBinding(for: spec.id, initialValue: initial)
+            ) {
+                ForEach(options) { option in Text(option.title).tag(option.id) }
+            }
+            .pickerStyle(.segmented)
+        case "select", "picker":
+            let options = spec.controlConfig?.options ?? []
+            let initial = options.first(where: \.selected)?.id ?? options.first?.id ?? ""
+            Picker(
+                spec.text,
+                selection: store.selectionBinding(for: spec.id, initialValue: initial)
+            ) {
+                ForEach(options) { option in Text(option.title).tag(option.id) }
+            }
+            .pickerStyle(.menu)
+        case "multi-select":
+            let options = spec.controlConfig?.options ?? []
+            Menu {
+                ForEach(options) { option in
+                    Button(option.title) {
+                        let key = spec.id + "|" + option.id
+                        if store.flags.contains(key) { store.flags.remove(key) } else { store.flags.insert(key) }
+                    }
+                }
+            } label: {
+                Text(spec.text.isEmpty ? (options.first?.title ?? "") : spec.text)
+            }
+        case "date-input":
+            let value = spec.controlConfig?.value ?? ""
+            let components: DatePickerComponents = {
+                switch spec.controlConfig?.inputType {
+                case "time": return [.hourAndMinute]
+                case "datetime-local": return [.date, .hourAndMinute]
+                default: return [.date]
+                }
+            }()
+            DatePicker(
+                spec.text,
+                selection: store.dateBinding(for: spec.id, initialValue: value),
+                displayedComponents: components
+            )
+            .labelsHidden()
+        case "color-picker":
+            ColorPicker(
+                spec.text,
+                selection: store.colorBinding(
+                    for: spec.id,
+                    initialValue: spec.controlConfig?.value.isEmpty == false
+                        ? spec.controlConfig?.value
+                        : spec.style.foreground
+                )
+            )
+        case "file-input":
+            Button(action: { store.perform(spec.action) }) {
+                buttonContent
+            }
+            .buttonStyle(HTMLToIOSControlButtonStyle())
+            .disabled(!spec.isEnabled)
+        case "progress", "progress-view", "meter":
+            let config = spec.controlConfig
+            let minimum = config?.minimum ?? 0
+            let maximum = config?.maximum ?? 1
+            let value = Double(config?.value ?? "") ?? minimum
+            ProgressView(
+                value: max(value - minimum, 0),
+                total: max(maximum - minimum, 0.0001)
+            )
         case "carousel":
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: verticalAlignment, spacing: contentSpacing) { dynamicOrOrderedContent }
@@ -3767,10 +3992,42 @@ import UIKit
 private extension UIColor {
     convenience init?(htmlToIOS value: String?) {
         guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("#") {
+            let hex = String(trimmed.dropFirst())
+            guard hex.count == 6 || hex.count == 8,
+                  let number = UInt64(hex, radix: 16) else { return nil }
+            let hasAlpha = hex.count == 8
+            let red = hasAlpha ? (number >> 24) & 0xFF : (number >> 16) & 0xFF
+            let green = hasAlpha ? (number >> 16) & 0xFF : (number >> 8) & 0xFF
+            let blue = hasAlpha ? (number >> 8) & 0xFF : number & 0xFF
+            let alpha = hasAlpha ? number & 0xFF : 0xFF
+            self.init(
+                red: CGFloat(red) / 255,
+                green: CGFloat(green) / 255,
+                blue: CGFloat(blue) / 255,
+                alpha: CGFloat(alpha) / 255
+            )
+            return
+        }
         let parts = value.split(whereSeparator: { !$0.isNumber && $0 != "." }).compactMap { Double($0) }
         guard parts.count >= 3 else { return nil }
         self.init(red: parts[0] / 255, green: parts[1] / 255, blue: parts[2] / 255,
                   alpha: parts.count > 3 ? parts[3] : 1)
+    }
+}
+
+private enum HTMLToIOSUIKitDateParser {
+    static func date(from value: String) -> Date {
+        if let date = ISO8601DateFormatter().date(from: value) { return date }
+        for format in ["yyyy-MM-dd", "yyyy-MM-dd'T'HH:mm", "HH:mm"] {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            formatter.dateFormat = format
+            if let date = formatter.date(from: value) { return date }
+        }
+        return Date(timeIntervalSinceReferenceDate: 0)
     }
 }
 
@@ -4039,19 +4296,128 @@ final class HTMLToIOSNodeRenderer {
                 DispatchQueue.main.async { [weak textView] in textView?.becomeFirstResponder() }
             }
             view = textView
-        case "toggle", "switch", "checkbox":
+        case "switch", "toggle":
             let row = UIStackView()
             row.axis = .horizontal; row.spacing = 8
             let label = makeLabel(spec.text, spec: spec)
             let toggle = UISwitch()
             toggle.isOn = spec.selectionStateID == nil ? (spec.isInitiallySelected ?? false) : state.isSelected(spec)
+            toggle.isEnabled = spec.isEnabled
             if spec.action != nil {
                 toggle.addAction(UIAction { [actionHandler] _ in actionHandler(spec.action) }, for: .valueChanged)
             }
             row.addArrangedSubview(label); row.addArrangedSubview(toggle)
             view = row
-        case "progress", "progress-view":
-            let progress = UIProgressView(progressViewStyle: .default); progress.progress = 0.55
+        case "checkbox", "radio":
+            let button = HTMLToIOSStatefulButton(type: .system)
+            let selected = spec.isInitiallySelected ?? false
+            button.isSelected = selected
+            button.isEnabled = spec.isEnabled
+            let offImage = spec.semantic == "radio" ? "circle" : "square"
+            let onImage = spec.semantic == "radio" ? "circle.inset.filled" : "checkmark.square.fill"
+            button.setImage(UIImage(systemName: offImage), for: .normal)
+            button.setImage(UIImage(systemName: onImage), for: .selected)
+            button.setTitle(spec.text, for: .normal)
+            button.contentHorizontalAlignment = .leading
+            button.addAction(UIAction { [weak button, actionHandler] _ in
+                guard let button else { return }
+                button.isSelected = spec.semantic == "radio" ? true : !button.isSelected
+                actionHandler(spec.action)
+            }, for: .touchUpInside)
+            view = button
+        case "slider":
+            let slider = UISlider()
+            let config = spec.controlConfig
+            slider.minimumValue = Float(config?.minimum ?? 0)
+            slider.maximumValue = Float(max(config?.maximum ?? 100, config?.minimum ?? 0))
+            slider.value = Float(Double(config?.value ?? "") ?? config?.minimum ?? 0)
+            slider.isEnabled = spec.isEnabled
+            slider.addAction(UIAction { [state, weak slider] _ in
+                state.values[spec.id] = String(slider?.value ?? 0)
+            }, for: .valueChanged)
+            view = slider
+        case "stepper":
+            let row = UIStackView()
+            row.axis = .horizontal; row.spacing = 8
+            if !spec.text.isEmpty { row.addArrangedSubview(makeLabel(spec.text, spec: spec)) }
+            let stepper = UIStepper()
+            let config = spec.controlConfig
+            stepper.minimumValue = config?.minimum ?? 0
+            stepper.maximumValue = max(config?.maximum ?? 100, config?.minimum ?? 0)
+            stepper.stepValue = config?.step ?? 1
+            stepper.value = Double(config?.value ?? "") ?? config?.minimum ?? 0
+            stepper.isEnabled = spec.isEnabled
+            stepper.addAction(UIAction { [state, weak stepper] _ in
+                state.values[spec.id] = String(stepper?.value ?? 0)
+            }, for: .valueChanged)
+            row.addArrangedSubview(stepper)
+            view = row
+        case "segmented-control":
+            let options = spec.controlConfig?.options ?? []
+            let segmented = UISegmentedControl(items: options.map(\.title))
+            segmented.selectedSegmentIndex = options.isEmpty
+                ? UISegmentedControl.noSegment
+                : (options.firstIndex(where: \.selected) ?? 0)
+            segmented.isEnabled = spec.isEnabled
+            segmented.addAction(UIAction { [state, weak segmented] _ in
+                guard let segmented, segmented.selectedSegmentIndex >= 0,
+                      segmented.selectedSegmentIndex < options.count else { return }
+                state.values[spec.id] = options[segmented.selectedSegmentIndex].id
+            }, for: .valueChanged)
+            view = segmented
+        case "select", "picker", "multi-select":
+            let options = spec.controlConfig?.options ?? []
+            let selected = options.first(where: \.selected) ?? options.first
+            let button = HTMLToIOSStatefulButton(type: .system)
+            button.setTitle(selected?.title ?? spec.text, for: .normal)
+            button.contentHorizontalAlignment = .leading
+            button.showsMenuAsPrimaryAction = true
+            button.menu = UIMenu(children: options.map { option in
+                UIAction(
+                    title: option.title,
+                    state: option.selected ? .on : .off
+                ) { [state, weak button] _ in
+                    state.values[spec.id] = option.id
+                    button?.setTitle(option.title, for: .normal)
+                }
+            })
+            button.isEnabled = spec.isEnabled
+            view = button
+        case "date-input":
+            let picker = UIDatePicker()
+            picker.preferredDatePickerStyle = .compact
+            switch spec.controlConfig?.inputType {
+            case "time": picker.datePickerMode = .time
+            case "datetime-local": picker.datePickerMode = .dateAndTime
+            default: picker.datePickerMode = .date
+            }
+            picker.date = HTMLToIOSUIKitDateParser.date(from: spec.controlConfig?.value ?? "")
+            picker.isEnabled = spec.isEnabled
+            picker.addAction(UIAction { [state, weak picker] _ in
+                guard let picker else { return }
+                state.values[spec.id] = ISO8601DateFormatter().string(from: picker.date)
+            }, for: .valueChanged)
+            view = picker
+        case "color-picker":
+            let colorWell = UIColorWell()
+            colorWell.selectedColor = UIColor(htmlToIOS: spec.controlConfig?.value) ?? UIColor(htmlToIOS: spec.style.foreground)
+            colorWell.isEnabled = spec.isEnabled
+            view = colorWell
+        case "file-input":
+            let button = HTMLToIOSStatefulButton(type: .system)
+            button.setTitle(displayText(spec), for: .normal)
+            button.contentHorizontalAlignment = .leading
+            button.isEnabled = spec.isEnabled
+            if spec.action != nil {
+                button.addAction(UIAction { [actionHandler] _ in actionHandler(spec.action) }, for: .touchUpInside)
+            }
+            view = button
+        case "progress", "progress-view", "meter":
+            let progress = UIProgressView(progressViewStyle: .default)
+            let minimum = spec.controlConfig?.minimum ?? 0
+            let maximum = spec.controlConfig?.maximum ?? 1
+            let value = Double(spec.controlConfig?.value ?? "") ?? minimum
+            progress.progress = Float(min(max((value - minimum) / max(maximum - minimum, 0.0001), 0), 1))
             view = progress
         case "carousel", "scroll":
             view = makeScrollContainer(spec)

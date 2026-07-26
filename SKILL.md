@@ -78,7 +78,7 @@ description: 将可运行的移动端 HTML 高保真原型转换为可编译、�
 
 ### 总控入口
 
-默认先读取 `references/orchestration.md`，从 Agent 当前工作目录运行：
+默认先读取 `references/orchestration.md` 和 `references/conversion-boundary-gates.md`，从 Agent 当前工作目录运行：
 
 ```bash
 python3 scripts/run_html_to_ios.py --html <prototype.html>
@@ -105,6 +105,8 @@ python3 scripts/run_html_to_ios.py --html <prototype.html>
 - 用户已经明确指定的技术栈、设备、最低 iOS 版本和资源要求
 
 只询问会实质改变结果且无法从文件推断的信息。路径不存在、HTML 无法运行或目标页面不明确时停止生成并说明问题。
+
+先执行 `references/conversion-boundary-gates.md` 的转换前门禁。阻断项返回 `needs-input` 或 `failed`；允许降级的事项必须进入后续报告，不能静默忽略。
 
 先读取 `references/html-authoring-contract.md`。总控在浏览器发现前运行 `scripts/validate_html_authoring_contract.py`，将输入分为 L0 推断、L1 结构化或 L2 确定性三个等级。普通 HTML 没有 `data-ios-*` 时允许以警告继续；重复稳定 ID、非法枚举、缺少或不存在的 action target 必须停止。有效显式契约优先于语义 HTML/ARIA 与运行时推断，但显式契约和实际行为冲突时必须产生待确认项，不能静默覆盖。
 
@@ -335,6 +337,8 @@ python3 scripts/generate_ios_from_ir.py \
 模型不支持图像时，仍须执行状态矩阵和确定性像素检查，并把多模态阶段标记为 `not-run`，不能假装完成视觉走查。
 
 ## 交付要求
+
+先执行 `references/conversion-boundary-gates.md` 的转换后门禁。只有构建、required states、滚动轴、系统区域和确定性视觉门禁均满足对应验证模式时，才可声称完成或高保真通过。
 
 最终报告必须包括：
 

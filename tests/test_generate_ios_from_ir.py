@@ -147,6 +147,98 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 )
                 self.assertEqual(completed.returncode, 0, f"{ui_stack}:\n{completed.stdout}{completed.stderr}")
 
+    def test_common_html_controls_emit_native_control_configuration(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("controls")
+            root_node = payload["screens"][0]["nodes"][0]
+
+            slider = node("controls.slider", root_node["id"], "slider")
+            slider["state"] = {"min": "1", "max": "9", "step": "2", "value": "5", "inputType": "range"}
+            stepper = node("controls.stepper", root_node["id"], "stepper", "Count")
+            stepper["state"] = {"min": "0", "max": "10", "step": "1", "value": "3", "inputType": "number"}
+            segmented = node("controls.segmented", root_node["id"], "segmented-control", "Mode")
+            select = node("controls.select", root_node["id"], "select", "Choice")
+            date_input = node("controls.date", root_node["id"], "date-input")
+            date_input["state"] = {"value": "2026-07-26T09:30", "inputType": "datetime-local"}
+            color_input = node("controls.color", root_node["id"], "color-picker")
+            color_input["state"] = {"value": "#12A36D", "inputType": "color"}
+            progress = node("controls.progress", root_node["id"], "progress")
+            progress["state"] = {"min": "0", "max": "8", "value": "6"}
+            checkbox = node("controls.checkbox", root_node["id"], "checkbox", "Remember")
+            radio = node("controls.radio", root_node["id"], "radio", "Primary")
+            file_input = node("controls.file", root_node["id"], "file-input", "Choose file")
+
+            option_nodes = []
+            for parent, prefix in ((segmented, "segment"), (select, "choice")):
+                for index, title in enumerate(("First", "Second")):
+                    option = node(
+                        f"controls.{prefix}-{index}",
+                        parent["id"],
+                        "option",
+                        title,
+                    )
+                    option["state"] = {"selected": index == 1}
+                    option_nodes.append(option)
+
+            payload["screens"][0]["nodes"].extend([
+                slider,
+                stepper,
+                segmented,
+                select,
+                date_input,
+                color_input,
+                progress,
+                checkbox,
+                radio,
+                file_input,
+                *option_nodes,
+            ])
+            path = root / "controls.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            swiftui_dir = root / "swiftui"
+            self.run_generator([path], swiftui_dir)
+            generated = json.loads((swiftui_dir / PAYLOAD).read_text(encoding="utf-8"))
+            generated_nodes = {
+                item["id"]: item
+                for item in generated["screens"][0]["root"]["children"]
+            }
+            self.assertEqual(generated_nodes[slider["id"]]["controlConfig"]["minimum"], 1)
+            self.assertEqual(generated_nodes[slider["id"]]["controlConfig"]["maximum"], 9)
+            self.assertEqual(
+                [item["title"] for item in generated_nodes[segmented["id"]]["controlConfig"]["options"]],
+                ["First", "Second"],
+            )
+            swiftui_runtime = (swiftui_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            for expected in (
+                "Slider(",
+                "Stepper(",
+                ".pickerStyle(.segmented)",
+                ".pickerStyle(.menu)",
+                "DatePicker(",
+                "ColorPicker(",
+                "ProgressView(",
+                "HTMLToIOSCheckboxToggleStyle",
+                "HTMLToIOSRadioToggleStyle",
+            ):
+                self.assertIn(expected, swiftui_runtime)
+
+            uikit_dir = root / "uikit"
+            self.run_generator([path], uikit_dir, ui_stack="uikit")
+            uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            for expected in (
+                "UISlider()",
+                "UIStepper()",
+                "UISegmentedControl(items:",
+                "UIDatePicker()",
+                "UIColorWell()",
+                "UIProgressView(progressViewStyle:",
+                "UIMenu(children:",
+                'spec.semantic == "radio" ? "circle" : "square"',
+            ):
+                self.assertIn(expected, uikit_runtime)
+
     def test_multi_page_payload_and_modified_file_ownership(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

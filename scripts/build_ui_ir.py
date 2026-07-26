@@ -1647,6 +1647,7 @@ def build_ir(data: dict, args) -> dict:
                 "step": attrs.get("step"),
                 "value": first_known(properties.get("value"), attrs.get("value")),
                 "groupName": attrs.get("name"),
+                "inputType": attrs.get("type"),
                 "keyboardType": keyboard_type,
                 "contentType": content_type,
                 "submitLabel": None,
