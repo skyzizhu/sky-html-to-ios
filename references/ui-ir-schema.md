@@ -146,6 +146,32 @@ UI IR 是浏览器渲染结果与原生代码之间的稳定中间层。不要�
     "expanded": null,
     "readonly": false
   },
+  "textBehavior": {
+    "role": "input",
+    "nativeControl": "text-field",
+    "editable": true,
+    "readOnly": false,
+    "selectable": true,
+    "multiline": false,
+    "scrollable": false,
+    "secure": false,
+    "maxLength": 80,
+    "fieldID": "search.query",
+    "autofocus": false,
+    "returnKey": "search",
+    "autocapitalization": "none",
+    "autocorrection": false,
+    "validation": "required"
+  },
+  "dataBinding": {
+    "sourceID": "search-results",
+    "itemIDKey": "id",
+    "stateRole": "content",
+    "pagination": "cursor",
+    "ownership": "external",
+    "requiresViewModel": true,
+    "snapshotIsSampleData": true
+  },
   "nativeMapping": {
     "swiftUI": "Button",
     "uiKit": "UIButton",
@@ -174,6 +200,8 @@ UI IR 是浏览器渲染结果与原生代码之间的稳定中间层。不要�
 - `layout.scrollAxis` 只能为 `none`、`horizontal`、`vertical` 或 `both`。它由 computed overflow、scroll/client 度量和行为 probe 综合决定，不能仅因子节点越界而扩大父容器滚动轴。
 - `layout.scrollMetrics` 保留允许方向、实际溢出和 scroll/client 尺寸。纵向页面与嵌套横向集合分别拥有各自轴向；无证据时使用 `none`，不使用 `both` 兜底。
 - `content.lines`、`lineRects`、`lineTexts`、`firstBaselineY`、`lastBaselineY` 与 `fontMetrics` 使用浏览器实际文字行框、字符归属和字体度量。`lineTexts` 只有在逐字符 Range 与完整渲染文本可校验一致时才写入；`whiteSpace`、`webkitLineClamp`、`textOverflow`、`flexShrink`、`flexWrap` 和宽高比继续保留在 computed `style` 中。
+- 文本节点和输入节点使用 `textBehavior` 固化行为判定。`role` 为 `input|display`，`nativeControl` 为 `label|text-field|text-view`；编辑、只读、选择、多行、内部滚动和 secure 分开表达。`readonly` 输入仍是输入控件，纯展示 TextView 必须 `editable=false`。
+- `dataBinding` 只在存在动态数据证据时生成。`ownership=external` 必须具有 `sourceID`，首帧内容仅作为视觉 fixture，代码接入项目 ViewModel 后仍须保持 loading/content/empty/error 的结构与尺寸契约；生成器不得猜测接口。
 - 横向 repeat item、紧凑图标容器和比例媒体的来源 rect 是生成 `fixed/min/intrinsic/aspectRatio` 策略的证据。生成器可派生运行时样式，但不得删除原始 rect 与 CSS 证据。
 - `support` 使用 `native`、`native-fallback`、`placeholder` 或 `unsupported`。
 - `source.synthetic` 记录 pseudo-element 等浏览器生成节点；`layout.estimated` 表示边界需要截图纠偏。

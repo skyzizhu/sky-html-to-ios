@@ -61,6 +61,19 @@ class HTMLAuthoringContractTests(unittest.TestCase):
         self.assertEqual(report["level"], "L0-inferred")
         self.assertEqual(report["summary"]["warnings"], 2)
 
+    def test_invalid_dynamic_data_contract_fails(self) -> None:
+        result, report = self.run_validator("""
+        <main data-ios-app-root>
+          <section data-ios-screen="home">
+            <div data-ios-data-source="" data-ios-state-role="busy" data-ios-pagination="offset"></div>
+          </section>
+        </main>
+        """)
+        self.assertEqual(result.returncode, 1)
+        codes = {item["code"] for item in report["issues"]}
+        self.assertIn("EMPTY_DATA_SOURCE", codes)
+        self.assertIn("INVALID_ENUM", codes)
+
 
 if __name__ == "__main__":
     unittest.main()

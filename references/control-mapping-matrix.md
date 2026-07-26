@@ -79,6 +79,17 @@
 
 输入控件保留 placeholder、value、required、readonly、disabled、autocomplete、maxlength、pattern、焦点顺序和提交行为。HTML 校验可以转成本地校验，服务端校验不能凭空补全。
 
+文本控件选择必须先判断行为，再匹配外观：
+
+- `input`、单行 `role=textbox` 使用 `TextField/UITextField`；不得因输入框高度较大就猜成多行。
+- `textarea`、`aria-multiline=true` 或明确的多行编辑区域使用 `TextEditor/UITextView`。
+- `readonly` 不会把输入控件降级成 Label。仍保留输入控件视觉和无障碍语义，同时关闭编辑；UIKit `UITextView.isEditable=false`，SwiftUI 对绑定控件禁用写入。
+- 普通静态文字默认使用 `Text/UILabel`。只有来源明确需要文字选择、文本容器内部独立滚动、交互式富文本，或 `data-ios-text-control=text-view` 时，才使用只读 `UITextView`/等价 SwiftUI 包装；只读 TextView 必须关闭编辑，并按来源决定 `isSelectable` 和 `isScrollEnabled`。
+- 输入框外观来自计算样式。生成器必须清除 `UITextField` roundedRect 和 SwiftUI roundedBorder 等来源中不存在的系统默认边框，再还原 HTML 的 padding、背景、边框和圆角。
+- 控件选择证据写入 `textBehavior`，不得在代码生成阶段仅凭高度、行数或控件名称重新猜测。
+
+无法可靠判断的自定义文本组件优先保持 `textBehavior.role`，再使用 `data-ios-text-control=label|text-field|text-view` 解决控件所有权；不要用截图相似度决定是否允许编辑。
+
 ## 5. 选择、数值与状态控件
 
 | HTML / 语义 | semanticType | SwiftUI | UIKit | 注意事项 |

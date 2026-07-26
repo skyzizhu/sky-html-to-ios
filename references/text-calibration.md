@@ -31,6 +31,15 @@ python3 scripts/build_text_calibration.py render-tree.json \
 
 不能为了让一段文字看起来对齐而任意修改父容器 padding。先判断差异属于字体度量还是容器约束。
 
+## 控件所有权
+
+文字度量与控件选择是两个阶段。先根据 DOM/ARIA、运行时属性和交互证据生成 `textBehavior`，再执行字体校准：
+
+- 单行可编辑内容属于 TextField，`textarea` 或明确多行编辑属于 TextView/TextEditor。
+- 普通展示文字属于 Label/Text，即使视觉上有背景和圆角也不因此升级为输入控件。
+- 只有选择、链接交互、独立文本滚动或显式原生提示成立时，展示文字才使用只读 TextView；必须关闭编辑能力，避免弹出键盘或改变内容。
+- `readonly`、`disabled`、`editable`、`selectable` 是不同状态，不得互相代替。验收必须覆盖聚焦、键盘、选择、滚动和提交行为，而不只比较静态截图。
+
 SwiftUI `lineSpacing` 不是 CSS `line-height`；UIKit 使用 `NSParagraphStyle.minimumLineHeight/maximumLineHeight` 时要同时处理 baseline offset。中英文混排、Emoji、JetBrains Mono 等等宽字体和不同 weight 必须分别验证。
 
 生成器必须保留字体候选、resolved family、resolution status、失败候选、generic family、style 和 100–900 weight，不能只留下字号。无法合法嵌入来源 Web Font 时，按最终可用语义选择原生 fallback：`monospace` → monospaced system design，`serif` → serif system design，普通 `sans-serif/system-ui` → default system design，并在报告中保留 fallback 风险。只有经过白名单核验的 iOS 内置字体才可写入 `fontNativeName`；未知宿主字体继续使用 system design。`800/900`、`100/200/300` 不得分别压成统一 bold 或 regular。

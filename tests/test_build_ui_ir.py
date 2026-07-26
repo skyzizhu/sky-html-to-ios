@@ -322,6 +322,74 @@ class BuildUIIRTests(unittest.TestCase):
             self.assertEqual(screen["regions"]["bottomBar"]["placement"], "viewport-overlay")
             self.assertEqual(screen["systemChrome"]["navigationBar"], "custom")
 
+    def test_text_controls_preserve_single_line_multiline_and_readonly_semantics(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            nodes = [
+                render_node("app", None, "main", {"x": 0, "y": 0, "width": 393, "height": 852}),
+                render_node("name", "app", "input", {"x": 20, "y": 40, "width": 353, "height": 44}),
+                render_node("notes", "app", "textarea", {"x": 20, "y": 100, "width": 353, "height": 120}),
+                render_node("article", "app", "p", {"x": 20, "y": 240, "width": 353, "height": 96}),
+            ]
+            nodes[1]["attributes"] = {
+                "type": "text", "readonly": "", "value": "Sky", "name": "display-name",
+                "autofocus": "", "enterkeyhint": "next", "autocapitalize": "words",
+                "spellcheck": "false", "data-ios-validation": "required",
+            }
+            nodes[1]["properties"] = {"value": "Sky", "readOnly": True, "disabled": False}
+            nodes[2]["attributes"] = {
+                "maxlength": "200", "placeholder": "Notes",
+                "data-ios-data-source": "profile-notes", "data-ios-item-id": "id",
+                "data-ios-state-role": "content", "data-ios-pagination": "cursor",
+            }
+            nodes[2]["properties"] = {"value": "Line one\nLine two", "readOnly": False, "disabled": False}
+            nodes[2]["style"].update({"overflowY": "auto", "overflowX": "hidden"})
+            nodes[2]["scroll"] = {"scrollWidth": 353, "scrollHeight": 180, "clientWidth": 353, "clientHeight": 120}
+            nodes[3]["text"] = "Selectable result"
+            nodes[3]["attributes"] = {"data-ios-text-control": "text-view", "data-ios-selectable": "true"}
+            data = {
+                "schemaVersion": "render-tree-1.2",
+                "source": {"kind": "html-file", "entry": "/tmp/example.html"},
+                "document": {"viewport": {"width": 393, "height": 852}},
+                "nodes": nodes,
+                "interactions": [],
+                "phoneCandidates": [],
+            }
+            source = root / "render-tree.json"
+            output = root / "ui-ir.json"
+            source.write_text(json.dumps(data), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), str(source), "--out", str(output),
+                "--root-runtime-id", "app", "--screen-id", "home",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            generated = json.loads(output.read_text(encoding="utf-8"))
+            by_runtime_id = {item["source"]["runtimeId"]: item for item in generated["screens"][0]["nodes"]}
+            self.assertEqual(by_runtime_id["name"]["semanticType"], "text-input")
+            self.assertEqual(by_runtime_id["name"]["textBehavior"]["nativeControl"], "text-field")
+            self.assertFalse(by_runtime_id["name"]["textBehavior"]["editable"])
+            self.assertEqual(by_runtime_id["name"]["textBehavior"]["fieldID"], "display-name")
+            self.assertTrue(by_runtime_id["name"]["textBehavior"]["autofocus"])
+            self.assertEqual(by_runtime_id["name"]["textBehavior"]["returnKey"], "next")
+            self.assertEqual(by_runtime_id["name"]["textBehavior"]["autocapitalization"], "words")
+            self.assertFalse(by_runtime_id["name"]["textBehavior"]["autocorrection"])
+            self.assertEqual(by_runtime_id["name"]["textBehavior"]["validation"], "required")
+            self.assertEqual(by_runtime_id["notes"]["semanticType"], "text-area")
+            self.assertTrue(by_runtime_id["notes"]["textBehavior"]["multiline"])
+            self.assertTrue(by_runtime_id["notes"]["textBehavior"]["scrollable"])
+            self.assertEqual(by_runtime_id["notes"]["dataBinding"]["sourceID"], "profile-notes")
+            self.assertEqual(by_runtime_id["notes"]["dataBinding"]["stateRole"], "content")
+            self.assertEqual(by_runtime_id["notes"]["dataBinding"]["pagination"], "cursor")
+            self.assertTrue(by_runtime_id["notes"]["dataBinding"]["requiresViewModel"])
+            self.assertTrue(by_runtime_id["notes"]["dataBinding"]["snapshotIsSampleData"])
+            self.assertIn(
+                "EXTERNAL_DATA_SOURCE_REQUIRES_BINDING",
+                {warning["code"] for warning in generated["warnings"]},
+            )
+            self.assertEqual(by_runtime_id["article"]["textBehavior"]["nativeControl"], "text-view")
+            self.assertFalse(by_runtime_id["article"]["textBehavior"]["editable"])
+            self.assertTrue(by_runtime_id["article"]["textBehavior"]["selectable"])
+
 
 if __name__ == "__main__":
     unittest.main()

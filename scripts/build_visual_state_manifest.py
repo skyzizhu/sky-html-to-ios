@@ -12,7 +12,7 @@ from pathlib import Path
 TEXT_SEMANTICS = {"button", "heading", "label", "link", "menu-item", "option", "tab-item", "text"}
 CONTROL_SEMANTICS = {
     "button", "checkbox", "date-input", "disclosure", "link", "number-input", "radio",
-    "search-input", "segmented-control", "select", "slider", "stepper", "switch", "text-area", "text-input",
+    "search-input", "secure-input", "segmented-control", "select", "slider", "stepper", "switch", "text-area", "text-input",
 }
 ASSET_SEMANTICS = {"icon", "image", "video"}
 
@@ -90,8 +90,9 @@ def build_validation_regions(screen: dict, target_viewport: dict) -> list[dict]:
             continue
         semantic = str(node.get("semanticType") or "")
         content = node.get("content") or {}
+        text_behavior = node.get("textBehavior") or {}
         has_text = bool(str(content.get("text") or content.get("placeholder") or "").strip())
-        if semantic in CONTROL_SEMANTICS:
+        if semantic in CONTROL_SEMANTICS or text_behavior.get("role") == "input":
             category, profile, criticality, expand = "control", "control", "high", 2
         elif semantic in ASSET_SEMANTICS or node.get("assetRef"):
             category, profile, criticality, expand = "asset", "asset", "medium", 1

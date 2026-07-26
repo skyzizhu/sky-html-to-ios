@@ -67,6 +67,7 @@ Review bundle 同时输出 `fidelityPercent`、`targetFidelityPercent=100` 和 `
 - 检查根页面是否出现意外横向位移、横向集合是否出现纵向位移，以及嵌套手势是否由正确容器接管。
 - 对每个横向 repeat region 比较 item rect、gap、首末项可达性、文字行数和截断；对紧凑 icon/status/thumbnail region 比较外框与内部资源的宽高比。
 - 每个重要 Tab、展开态、弹窗、sheet、错误态和空状态都应有对应基准。
+- 表单页面必须同时验证初始值、placeholder、聚焦/键盘类型、输入后状态、readonly/disabled 和多行内部滚动。纯展示 TextView 不得获得编辑焦点或弹出键盘。
 - 只有内容溢出超过 `max(24pt, viewportHeight * 5%)` 才自动增加滚动末端；内容超过 1.5 个 viewport 时再增加 middle，避免为几像素溢出制造伪必测状态。
 - 动画采样帧在没有原生确定性采样钩子时为 advisory；不能把未受控的原生帧设为 required。
 - 交互覆盖与视觉相似度分开报告。

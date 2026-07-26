@@ -452,6 +452,7 @@ async function main() {
         wordBreak: style.wordBreak,
         overflowWrap: style.overflowWrap,
         textOverflow: style.textOverflow,
+        userSelect: style.userSelect || style.webkitUserSelect,
         webkitLineClamp: style.webkitLineClamp,
         overflowX: style.overflowX,
         overflowY: style.overflowY,
@@ -690,11 +691,12 @@ async function main() {
         const tag = element.tagName.toLowerCase();
         const attributes = {};
         for (const name of [
-          "role", "aria-label", "aria-hidden", "aria-checked", "aria-selected", "aria-expanded",
+          "role", "aria-label", "aria-hidden", "aria-checked", "aria-selected", "aria-expanded", "aria-multiline",
           "aria-valuemin", "aria-valuemax", "aria-valuenow", "aria-controls", "aria-current", "aria-haspopup",
           "href", "target", "type", "name", "placeholder", "value", "disabled", "checked",
           "selected", "required", "readonly", "multiple", "min", "max", "step", "maxlength",
-          "pattern", "autocomplete", "inputmode", "contenteditable", "open", "tabindex", "autofocus",
+          "pattern", "autocomplete", "inputmode", "enterkeyhint", "autocapitalize", "spellcheck",
+          "contenteditable", "open", "tabindex", "autofocus",
           "for", "accept", "capture", "onclick", "action",
           "data-ios-node-id", "data-ios-action", "data-ios-target", "data-ios-component", "data-ios-project-component",
           "data-ios-presentation-style", "data-ios-detents", "data-ios-container",
@@ -709,6 +711,9 @@ async function main() {
           "data-ios-visual-state", "data-ios-required-state", "data-ios-scroll-root",
           "data-ios-animation", "data-ios-duration-ms", "data-ios-delay-ms", "data-ios-easing",
           "data-ios-repeat", "data-ios-reduced-motion",
+          "data-ios-text-control", "data-ios-editable", "data-ios-selectable", "data-ios-multiline",
+          "data-ios-field-id", "data-ios-validation", "data-ios-data-source", "data-ios-item-id",
+          "data-ios-state-role", "data-ios-pagination",
         ]) {
           if (element.hasAttribute(name)) attributes[name] = element.getAttribute(name);
         }

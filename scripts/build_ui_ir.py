@@ -51,6 +51,7 @@ EXPLICIT_COMPONENTS = {
     "text": ("text", "Text", "UILabel"),
     "text-editor": ("text-area", "TextEditor", "UITextView"),
     "text-field": ("text-input", "TextField", "UITextField"),
+    "text-view": ("text", "Text/UIViewRepresentable", "UITextView (read-only)"),
     "toolbar": ("toolbar", "toolbar", "UIToolbar"),
     "video": ("video", "VideoPlayer", "AVPlayerViewController"),
     "web-content": ("web-content", "UIViewRepresentable", "WKWebView"),
@@ -103,6 +104,88 @@ def keyboard_metadata(input_type: str) -> tuple[str | None, str | None]:
     }.get(input_type, (None, None))
 
 
+def explicit_bool(attributes: dict, name: str) -> bool | None:
+    if name not in attributes:
+        return None
+    return str(attributes.get(name) or "").strip().lower() not in {"false", "0", "no", "off"}
+
+
+def text_behavior(node: dict, semantic: str) -> dict | None:
+    """Resolve text ownership independently from its visual appearance."""
+    attrs = node.get("attributes") or {}
+    properties = node.get("properties") or {}
+    style = node.get("style") or {}
+    tag = str(node.get("tag") or "").lower()
+    role = str(attrs.get("role") or "").lower()
+    control_hint = str(attrs.get("data-ios-text-control") or "").strip().lower()
+    input_semantics = {"text-input", "secure-input", "search-input", "number-input", "text-area"}
+    is_input = semantic in input_semantics or tag in {"input", "textarea"} or role in {"textbox", "searchbox"}
+    if not is_input and semantic not in {"text", "label", "heading"} and not control_hint:
+        return None
+    multiline_hint = explicit_bool(attrs, "data-ios-multiline")
+    aria_multiline = explicit_bool(attrs, "aria-multiline")
+    multiline = first_known(multiline_hint, aria_multiline, tag == "textarea" or semantic == "text-area")
+    readonly = bool(first_known(properties.get("readOnly"), attr_present(attrs, "readonly"), False))
+    enabled = not bool(first_known(properties.get("disabled"), attr_present(attrs, "disabled"), False))
+    editable_hint = explicit_bool(attrs, "data-ios-editable")
+    editable = bool(first_known(editable_hint, is_input and not readonly and enabled, False))
+    selectable_hint = explicit_bool(attrs, "data-ios-selectable")
+    source_selectable = str(style.get("userSelect") or "auto").lower() in {"text", "all"}
+    selectable = bool(first_known(selectable_hint, source_selectable or (is_input and readonly), False))
+    scroll = scroll_contract(node)
+    scrollable = bool(multiline and scroll["axis"] in {"vertical", "both"})
+
+    if control_hint in {"textfield", "text-field"}:
+        native_control = "text-field"
+        multiline = False
+    elif control_hint in {"textview", "text-view", "text-editor"}:
+        native_control = "text-view"
+        multiline = True
+    elif is_input and not multiline:
+        native_control = "text-field"
+    elif is_input or (multiline and (selectable or scrollable)):
+        native_control = "text-view"
+    else:
+        native_control = "label"
+
+    return {
+        "role": "input" if is_input else "display",
+        "nativeControl": native_control,
+        "editable": editable,
+        "readOnly": readonly or not editable,
+        "selectable": selectable,
+        "multiline": bool(multiline),
+        "scrollable": scrollable,
+        "secure": semantic == "secure-input",
+        "maxLength": int(attrs["maxlength"]) if str(attrs.get("maxlength") or "").isdigit() else None,
+        "fieldID": str(attrs.get("data-ios-field-id") or attrs.get("name") or node.get("domId") or "").strip() or None,
+        "autofocus": attr_present(attrs, "autofocus"),
+        "returnKey": str(attrs.get("enterkeyhint") or "").strip().lower() or None,
+        "autocapitalization": str(attrs.get("autocapitalize") or "").strip().lower() or None,
+        "autocorrection": explicit_bool(attrs, "spellcheck"),
+        "validation": str(attrs.get("data-ios-validation") or attrs.get("pattern") or "").strip() or None,
+    }
+
+
+def data_binding(node: dict) -> dict | None:
+    attrs = node.get("attributes") or {}
+    source_id = str(attrs.get("data-ios-data-source") or "").strip()
+    state_role = str(attrs.get("data-ios-state-role") or "").strip().lower()
+    item_id = str(attrs.get("data-ios-item-id") or "").strip()
+    pagination = str(attrs.get("data-ios-pagination") or "").strip().lower()
+    if not any((source_id, state_role, item_id, pagination)):
+        return None
+    return {
+        "sourceID": source_id or None,
+        "itemIDKey": item_id or None,
+        "stateRole": state_role or None,
+        "pagination": pagination or "none",
+        "ownership": "external" if source_id else "local-prototype-state",
+        "requiresViewModel": bool(source_id),
+        "snapshotIsSampleData": bool(source_id),
+    }
+
+
 def semantic_mapping(node: dict, has_interaction: bool) -> dict:
     tag = str(node.get("tag") or "").lower()
     attrs = node.get("attributes") or {}
@@ -150,6 +233,11 @@ def semantic_mapping(node: dict, has_interaction: bool) -> dict:
         semantic, swiftui, uikit = EXPLICIT_COMPONENTS[explicit_component]
         return result(semantic, swiftui, uikit, 1.0)
 
+    if role == "textbox":
+        multiline = explicit_bool(attrs, "aria-multiline") is True or explicit_bool(attrs, "data-ios-multiline") is True
+        reasons.extend(["aria-role:textbox", f"multiline:{str(multiline).lower()}"])
+        return result("text-area" if multiline else "text-input", "TextEditor" if multiline else "TextField", "UITextView" if multiline else "UITextField", 0.98)
+
     role_map = {
         "button": ("button", "Button", "UIButton"),
         "link": ("link", "Button/Link", "UIButton/UIControl"),
@@ -159,7 +247,6 @@ def semantic_mapping(node: dict, has_interaction: bool) -> dict:
         "radiogroup": ("radio-group", "Picker/custom radio group", "Custom UIControl group"),
         "slider": ("slider", "Slider", "UISlider"),
         "spinbutton": ("number-input", "TextField/Stepper", "UITextField/UIStepper"),
-        "textbox": ("text-input", "TextField/TextEditor", "UITextField/UITextView"),
         "searchbox": ("search-input", "TextField/.searchable", "UISearchTextField/UISearchController"),
         "combobox": ("select", "Picker/Menu", "UIMenu/UIPickerView"),
         "listbox": ("select", "Picker/List", "UIPickerView/UITableView"),
@@ -1449,6 +1536,7 @@ def build_ir(data: dict, args) -> dict:
         confidence = mapping["nativeMapping"]["confidence"]
         text_metrics = node.get("textMetrics") or {}
         scroll = scroll_contract(node)
+        binding_contract = data_binding(node)
         if node.get("rectEstimated"):
             warnings.append({
                 "code": "SYNTHETIC_RECT_ESTIMATED",
@@ -1464,6 +1552,14 @@ def build_ir(data: dict, args) -> dict:
                 "nodeId": native_node_id,
                 "message": f"Low-confidence native mapping for {node.get('selector')}",
                 "fallback": "Review control-mapping-matrix.md and confirm the semantic type.",
+            })
+        if binding_contract and binding_contract["requiresViewModel"]:
+            warnings.append({
+                "code": "EXTERNAL_DATA_SOURCE_REQUIRES_BINDING",
+                "severity": "warning",
+                "nodeId": native_node_id,
+                "message": f"External data source {binding_contract['sourceID']!r} requires project data-layer integration.",
+                "fallback": "Keep the HTML snapshot as a visual fixture; bind an existing ViewModel/provider without inventing an endpoint.",
             })
         nodes_out.append({
             "id": native_node_id,
@@ -1554,6 +1650,8 @@ def build_ir(data: dict, args) -> dict:
                 "contentType": content_type,
                 "submitLabel": None,
             },
+            "textBehavior": text_behavior(node, mapping["semanticType"]),
+            "dataBinding": binding_contract,
             "nativeMapping": mapping["nativeMapping"],
             "iosHints": {
                 key.removeprefix("data-ios-"): value

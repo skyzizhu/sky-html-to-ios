@@ -45,9 +45,12 @@ BACK_BUTTONS = {"custom", "hidden", "system"}
 TAB_ROLES = {"normal", "search"}
 TAB_RESELECT = {"keep", "pop-to-root", "scroll-to-top"}
 TAB_VISIBILITY = {"always", "automatic", "hide-on-push"}
+DATA_STATE_ROLES = {"loading", "content", "empty", "error"}
+PAGINATION_MODES = {"none", "page", "cursor", "infinite"}
 BOOLEAN_ATTRIBUTES = {
     "data-ios-app-root", "data-ios-backdrop-dismiss", "data-ios-ignore", "data-ios-interactive-dismiss",
     "data-ios-required-state", "data-ios-screen-initial", "data-ios-scroll-root", "data-ios-shell",
+    "data-ios-editable", "data-ios-selectable", "data-ios-multiline",
 }
 INTERACTIVE_TAGS = {"a", "button", "input", "select", "summary", "textarea"}
 
@@ -143,6 +146,10 @@ def validate(path: Path) -> dict:
         enum_check(issues, attrs, line, "data-ios-tab-role", TAB_ROLES)
         enum_check(issues, attrs, line, "data-ios-reselect", TAB_RESELECT)
         enum_check(issues, attrs, line, "data-ios-tab-visibility", TAB_VISIBILITY)
+        enum_check(issues, attrs, line, "data-ios-state-role", DATA_STATE_ROLES)
+        enum_check(issues, attrs, line, "data-ios-pagination", PAGINATION_MODES)
+        if "data-ios-data-source" in attrs and not str(attrs.get("data-ios-data-source") or "").strip():
+            issues.append(issue("EMPTY_DATA_SOURCE", "error", "data-ios-data-source must be a stable non-empty identifier", line, "data-ios-data-source"))
         easing = str(attrs.get("data-ios-easing") or "").strip()
         if easing and easing not in EASINGS and not re.fullmatch(r"cubic-bezier\([^)]*\)", easing):
             issues.append(issue("INVALID_EASING", "error", f"Unsupported data-ios-easing={easing!r}", line, "data-ios-easing"))

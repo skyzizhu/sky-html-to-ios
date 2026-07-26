@@ -102,7 +102,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.fail(result.stderr or result.stdout)
         return result
 
-    def test_generated_uikit_sources_typecheck_when_xcode_is_available(self) -> None:
+    def test_generated_swiftui_and_uikit_sources_typecheck_when_xcode_is_available(self) -> None:
         if shutil.which("xcrun") is None:
             self.skipTest("xcrun is unavailable")
         sdk = subprocess.run(
@@ -115,19 +115,37 @@ class GenerateIOSFromIRTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             path = root / "home.json"
-            path.write_text(json.dumps(ir("home")), encoding="utf-8")
-            out_dir = root / "Generated" / "HTMLToIOS"
-            self.run_generator([path], out_dir, ui_stack="uikit")
-            sources = sorted(str(item) for item in out_dir.rglob("*.swift"))
-            completed = subprocess.run(
-                [
-                    "xcrun", "--sdk", "iphonesimulator", "swiftc",
-                    "-target", "arm64-apple-ios16.0-simulator", "-typecheck", *sources,
-                ],
-                text=True,
-                capture_output=True,
-            )
-            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            payload = ir("home")
+            root_node = payload["screens"][0]["nodes"][0]
+            field = node("home.query", root_node["id"], "text-input")
+            field["textBehavior"] = {
+                "role": "input", "nativeControl": "text-field", "editable": True,
+                "readOnly": False, "selectable": True, "multiline": False,
+                "scrollable": False, "secure": False, "maxLength": 40,
+                "autofocus": True, "returnKey": "search",
+                "autocapitalization": "none", "autocorrection": False,
+            }
+            notes = node("home.notes", root_node["id"], "text-area")
+            notes["textBehavior"] = {
+                "role": "input", "nativeControl": "text-view", "editable": True,
+                "readOnly": False, "selectable": True, "multiline": True,
+                "scrollable": True, "secure": False, "maxLength": 200,
+            }
+            payload["screens"][0]["nodes"].extend([field, notes])
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            for ui_stack in ("swiftui", "uikit"):
+                out_dir = root / ui_stack / "Generated" / "HTMLToIOS"
+                self.run_generator([path], out_dir, ui_stack=ui_stack)
+                sources = sorted(str(item) for item in out_dir.rglob("*.swift"))
+                completed = subprocess.run(
+                    [
+                        "xcrun", "--sdk", "iphonesimulator", "swiftc",
+                        "-target", "arm64-apple-ios16.0-simulator", "-typecheck", *sources,
+                    ],
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertEqual(completed.returncode, 0, f"{ui_stack}:\n{completed.stdout}{completed.stderr}")
 
     def test_multi_page_payload_and_modified_file_ownership(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1458,6 +1476,62 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("HTMLToIOSUIKitState", uikit_runtime)
             self.assertIn("toggle-selection", uikit_runtime)
             self.assertIn("scroll.backgroundColor = view.backgroundColor", uikit_runtime)
+
+    def test_text_behavior_generates_native_editable_and_readonly_controls(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("home")
+            root_node = payload["screens"][0]["nodes"][0]
+            field = node("home.name", root_node["id"], "text-input")
+            field["content"].update({"value": "Sky", "placeholder": "Name"})
+            field["textBehavior"] = {
+                "role": "input", "nativeControl": "text-field", "editable": False,
+                "readOnly": True, "selectable": True, "multiline": False,
+                "scrollable": False, "secure": False, "maxLength": 40,
+                "fieldID": "profile.name", "autofocus": True, "returnKey": "next",
+                "autocapitalization": "words", "autocorrection": False,
+                "validation": "required",
+            }
+            field["dataBinding"] = {
+                "sourceID": "profile", "itemIDKey": "id", "stateRole": "content",
+                "pagination": "none", "ownership": "external",
+                "requiresViewModel": True, "snapshotIsSampleData": True,
+            }
+            notes = node("home.notes", root_node["id"], "text-area", "Line one\nLine two")
+            notes["textBehavior"] = {
+                "role": "input", "nativeControl": "text-view", "editable": True,
+                "readOnly": False, "selectable": True, "multiline": True,
+                "scrollable": True, "secure": False, "maxLength": 200,
+            }
+            payload["screens"][0]["nodes"].extend([field, notes])
+            path = root / "text-controls.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            swiftui_dir = root / "swiftui"
+            self.run_generator([path], swiftui_dir)
+            swiftui_runtime = (swiftui_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn('case "text-field", "input", "search-field", "text-input", "search-input", "number-input":', swiftui_runtime)
+            self.assertIn("TextEditor(text:", swiftui_runtime)
+            self.assertIn(".textFieldStyle(.plain)", swiftui_runtime)
+            self.assertIn("maxLength: spec.textBehavior?.maxLength", swiftui_runtime)
+            self.assertIn(".scrollDismissesKeyboard(.interactively)", swiftui_runtime)
+            self.assertIn("HTMLToIOSInputPolicyModifier", swiftui_runtime)
+
+            uikit_dir = root / "uikit"
+            self.run_generator([path], uikit_dir, ui_stack="uikit")
+            uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn("let textView = HTMLToIOSManagedTextView()", uikit_runtime)
+            self.assertIn("textView.isEditable = spec.textBehavior?.editable == true", uikit_runtime)
+            self.assertIn("field.borderStyle = .none", uikit_runtime)
+            self.assertIn("scroll.keyboardDismissMode = .interactive", uikit_runtime)
+            self.assertIn("field.returnKeyType = returnKeyType", uikit_runtime)
+            generated = json.loads((uikit_dir / PAYLOAD).read_text(encoding="utf-8"))
+            generated_field = generated["screens"][0]["root"]["children"][0]
+            self.assertEqual(generated_field["textBehavior"]["initialValue"], "Sky")
+            self.assertFalse(generated_field["textBehavior"]["editable"])
+            self.assertEqual(generated_field["textBehavior"]["fieldID"], "profile.name")
+            self.assertEqual(generated_field["dataBinding"]["sourceID"], "profile")
+            self.assertTrue(generated_field["dataBinding"]["requiresViewModel"])
 
 
 if __name__ == "__main__":

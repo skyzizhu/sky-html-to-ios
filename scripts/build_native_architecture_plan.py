@@ -98,6 +98,11 @@ def screen_plan(ir: dict[str, Any], report: dict[str, Any] | None, ui_stack: str
     root_id = str(screen.get("rootNodeId") or "")
     if not scroll_roots and root_id:
         scroll_roots = [root_id]
+    input_node_ids = [
+        str(node.get("id") or "")
+        for node in screen.get("nodes") or []
+        if ((node.get("textBehavior") or {}).get("role") == "input")
+    ]
 
     actions = {str(item.get("action") or "") for item in ir.get("interactions") or []}
     navigation_mechanisms = sorted(actions & {"push", "pop", "pop-to-root", "replace-stack", "back"})
@@ -149,6 +154,15 @@ def screen_plan(ir: dict[str, Any], report: dict[str, Any] | None, ui_stack: str
             "contentAvoidsSystemChrome": not immersive,
             "subtractFromContainerDimensions": False,
         },
+        "keyboard": {
+            "present": bool(input_node_ids),
+            "fieldNodeIds": input_node_ids,
+            "avoidanceOwner": "system" if ui_stack == "swiftui" else "scroll-view-controller",
+            "scrollDismissMode": "interactive",
+            "bottomRegionPolicy": "system-keyboard-safe-area" if bottom else "none",
+            "subtractKeyboardFromContainerDimensions": False,
+            "nestedTextViewScrollOwnership": "text-view-when-source-scrollable",
+        },
         "presentations": presentation_mechanisms,
         "requiresResolution": False,
         "warnings": warnings,
@@ -180,6 +194,7 @@ def main() -> int:
             "safeAreaNeverSubtractedFromWidthOrHeight": True,
             "systemAndCustomNavigationBarsNeverRenderTogether": True,
             "onePresentationOwnerPerState": True,
+            "keyboardAndSafeAreaNeverDoubleCounted": True,
         },
         "screens": screens,
     }

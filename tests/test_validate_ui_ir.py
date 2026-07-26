@@ -85,6 +85,22 @@ class ValidateUIIRTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertTrue(any("measured horizontal overflow" in warning for warning in warnings))
 
+    def test_external_data_binding_requires_source_and_valid_state_contract(self) -> None:
+        payload = node("scroll", "vertical")
+        payload["dataBinding"] = {
+            "sourceID": None,
+            "itemIDKey": "id",
+            "stateRole": "busy",
+            "pagination": "offset",
+            "ownership": "external",
+            "requiresViewModel": True,
+            "snapshotIsSampleData": True,
+        }
+        errors, _ = MODULE.validate(ir(payload))
+        self.assertTrue(any("stateRole has invalid value" in error for error in errors))
+        self.assertTrue(any("pagination has invalid value" in error for error in errors))
+        self.assertTrue(any("sourceID is required" in error for error in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -37,6 +37,8 @@ ALLOWED_ACTIONS = {
 }
 ALLOWED_AVAILABILITY_STATUS = {"pending-verification", "available", "available-review-version", "requires-fallback", "deprecated", "unavailable", "review-required"}
 ALLOWED_SCROLL_AXES = {"none", "horizontal", "vertical", "both"}
+ALLOWED_DATA_STATE_ROLES = {"loading", "content", "empty", "error"}
+ALLOWED_PAGINATION = {"none", "page", "cursor", "infinite"}
 
 
 def validate_rect(rect, location, errors):
@@ -149,6 +151,35 @@ def validate(data):
                 errors.append(f"{nwhere}.content must be an object")
             if not isinstance(node.get("state"), dict):
                 errors.append(f"{nwhere}.state must be an object")
+            text_behavior = node.get("textBehavior")
+            if text_behavior is not None:
+                if not isinstance(text_behavior, dict):
+                    errors.append(f"{nwhere}.textBehavior must be an object")
+                else:
+                    if text_behavior.get("role") not in {"input", "display"}:
+                        errors.append(f"{nwhere}.textBehavior.role has invalid value")
+                    if text_behavior.get("nativeControl") not in {"label", "text-field", "text-view"}:
+                        errors.append(f"{nwhere}.textBehavior.nativeControl has invalid value")
+                    for key in ("editable", "readOnly", "selectable", "multiline", "scrollable", "secure"):
+                        if not isinstance(text_behavior.get(key), bool):
+                            errors.append(f"{nwhere}.textBehavior.{key} must be a boolean")
+            data_binding = node.get("dataBinding")
+            if data_binding is not None:
+                if not isinstance(data_binding, dict):
+                    errors.append(f"{nwhere}.dataBinding must be an object")
+                else:
+                    state_role = data_binding.get("stateRole")
+                    if state_role is not None and state_role not in ALLOWED_DATA_STATE_ROLES:
+                        errors.append(f"{nwhere}.dataBinding.stateRole has invalid value")
+                    if data_binding.get("pagination") not in ALLOWED_PAGINATION:
+                        errors.append(f"{nwhere}.dataBinding.pagination has invalid value")
+                    if data_binding.get("ownership") not in {"external", "local-prototype-state"}:
+                        errors.append(f"{nwhere}.dataBinding.ownership has invalid value")
+                    for key in ("requiresViewModel", "snapshotIsSampleData"):
+                        if not isinstance(data_binding.get(key), bool):
+                            errors.append(f"{nwhere}.dataBinding.{key} must be a boolean")
+                    if data_binding.get("ownership") == "external" and not data_binding.get("sourceID"):
+                        errors.append(f"{nwhere}.dataBinding.sourceID is required for external ownership")
             semantic_type = node.get("semanticType")
             if semantic_type not in ALLOWED_SEMANTIC_TYPES:
                 errors.append(f"{nwhere}.semanticType has invalid value: {semantic_type}")

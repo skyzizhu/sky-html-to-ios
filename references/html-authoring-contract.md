@@ -70,6 +70,17 @@
 
 优先使用 `button`、`input`、`select`、`textarea`、`details`、`dialog` 及正确 ARIA。自定义组件或 `div` 控件再用：
 
+文本组件在原生控件所有权无法从标准 HTML/ARIA 唯一确定时，可补充：
+
+- `data-ios-text-control="label|text-field|text-view"`
+- `data-ios-editable="true|false"`
+- `data-ios-selectable="true|false"`
+- `data-ios-multiline="true|false"`
+- `data-ios-field-id="profile.display-name"`：跨状态稳定的表单字段 ID。
+- `data-ios-validation="required|email|<project-rule-id>"`：验证规则标识，不在生成代码中凭空实现业务校验。
+
+优先使用标准 HTML 的 `name`、`autofocus`、`maxlength`、`enterkeyhint`、`autocapitalize`、`spellcheck`、`pattern`、`readonly` 和 `disabled`。这些字段只用于消除语义歧义，不能替代 `input`、`textarea` 或 ARIA。普通展示文字不需要标注。
+
 - `data-ios-node-id="screen.role.name"`：跨状态稳定的 accessibility/test ID。
 - `data-ios-component="..."`：原生语义提示，例如 `button`、`text-field`、`text-editor`、`switch`、`checkbox`、`segmented-control`、`picker`、`date-picker`、`slider`、`stepper`、`table`、`collection`、`navigation-bar`、`tab-bar`、`sheet`、`alert`。
 - `data-ios-project-component="Module.ComponentName"`：已确认应复用的现有 SwiftUI/UIKit 项目组件；只有组件发现报告中存在该类型时才直接采用。
@@ -99,6 +110,17 @@
 - `data-ios-duration-ms`、`data-ios-delay-ms`、`data-ios-easing`、`data-ios-repeat`、`data-ios-reduced-motion`。
 
 优先声明动画意图而不是强迫 iOS 逐帧复制 CSS。`custom` 动画必须保留关键帧采样和视觉验收；系统 Reduce Motion 开启时必须提供静态或弱化路径。
+
+## 动态数据
+
+动态数据是运行后会改变且不应被首帧永久写死的内容，例如接口列表、分页结果、搜索结果、用户输入、检测进度，以及 loading/content/empty/error 状态。
+
+- `data-ios-data-source="article-results"`：声明外部数据源的稳定 ID。它表示 HTML 当前内容是样例快照，生成页面需要接入 ViewModel/项目数据提供者；它不表示允许生成器猜测 URL、请求参数或模型字段。
+- `data-ios-item-id="id"`：重复条目的稳定标识字段。
+- `data-ios-state-role="loading|content|empty|error"`：同一数据源的视觉状态角色。
+- `data-ios-pagination="none|page|cursor|infinite"`：分页语义。
+
+没有 `data-ios-data-source` 时，重复静态内容仍可生成复用 Cell/View，但不得据此假定存在接口。只有 JavaScript 行为证明确实改变本地内容时，才建立本地原型状态；外部数据源必须由显式契约、已有工程模型或用户提供的接口证据确认。
 
 ## CSS、资源与确定性
 

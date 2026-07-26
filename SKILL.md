@@ -217,7 +217,7 @@ python3 scripts/build_ui_ir.py render-tree.json \
 
 运行 `scripts/validate_ui_ir.py`。自动映射置信度低于 `0.7` 的节点必须人工复核；IR 未通过校验时不得开始生成代码。
 
-随后读取 `references/text-calibration.md`、`references/responsive-auto-layout.md` 和 `references/page-regions-and-system-chrome.md`，运行 `scripts/build_text_calibration.py`、`scripts/analyze_responsive_layout.cjs` 和 `scripts/probe_scroll_region_behaviors.cjs`。固定缩小画板只允许将设计 token 一次性归一化到基准设备；原生页面始终使用 Auto Layout/SwiftUI layout，不能运行时整体缩放。文字行数、baseline、截断和富文本 range 进入专项验收。顶部栏、底部栏、浮动操作和 presentation 必须进入 screen regions；fixed、sticky、scroll-away、hide-on-scroll、collapse 和 appearance-change 必须用真实滚动采样判定，不得只靠 class 名或首帧位置猜测。
+随后读取 `references/text-calibration.md`、`references/form-and-dynamic-data.md`、`references/responsive-auto-layout.md` 和 `references/page-regions-and-system-chrome.md`，运行 `scripts/build_text_calibration.py`、`scripts/analyze_responsive_layout.cjs` 和 `scripts/probe_scroll_region_behaviors.cjs`。固定缩小画板只允许将设计 token 一次性归一化到基准设备；原生页面始终使用 Auto Layout/SwiftUI layout，不能运行时整体缩放。文字行数、baseline、截断和富文本 range 进入专项验收。文本控件必须先生成 `textBehavior`，区分 input/display、单行/多行、editable/readonly/selectable/scrollable，再选择 TextField、TextView 或 Label；纯展示 TextView 必须关闭编辑。顶部栏、底部栏、浮动操作和 presentation 必须进入 screen regions；fixed、sticky、scroll-away、hide-on-scroll、collapse 和 appearance-change 必须用真实滚动采样判定，不得只靠 class 名或首帧位置猜测。
 
 动态列表、筛选、分类或步骤切换改变内容高度时，交互快照必须记录目标容器前后 rect。生成器优先让原生集合按内容和约束计算尺寸；仅当 HTML 自身存在固定高度容器或 presentation 且浏览器证明确有尺寸变化时，才在共享状态中生成该节点的 `sizeOverrides`。SwiftUI 和 UIKit 消费同一状态；禁止为某个截图在 Controller/View 中追加孤立常量。
 
@@ -225,7 +225,7 @@ python3 scripts/build_ui_ir.py render-tree.json \
 
 ### 6. 规划原生结构
 
-读取 `references/common-mapping-rules.md`、`references/control-mapping-matrix.md`、`references/native-component-catalog.md`、`references/interaction-rules.md`、`references/navigation-presentation-containment.md`、`references/page-regions-and-system-chrome.md`、`references/custom-component-fallback.md`、`references/motion-and-effects.md`、`references/edge-case-policy.md`、`references/multi-page-routing.md`、`references/project-component-discovery.md`、`references/text-calibration.md` 和 `references/responsive-auto-layout.md`，再按技术栈读取：
+读取 `references/common-mapping-rules.md`、`references/control-mapping-matrix.md`、`references/native-component-catalog.md`、`references/interaction-rules.md`、`references/navigation-presentation-containment.md`、`references/page-regions-and-system-chrome.md`、`references/custom-component-fallback.md`、`references/motion-and-effects.md`、`references/edge-case-policy.md`、`references/multi-page-routing.md`、`references/project-component-discovery.md`、`references/text-calibration.md`、`references/form-and-dynamic-data.md` 和 `references/responsive-auto-layout.md`，再按技术栈读取：
 
 - SwiftUI：`references/swiftui-rules.md`
 - UIKit：`references/uikit-rules.md`
@@ -281,6 +281,8 @@ python3 scripts/generate_ios_from_ir.py \
 - 通用运行时只是原生基线；发现现有 Router、Design System、Cell 或控件时，按映射计划替换为项目组件。
 - 保持项目命名、目录、访问控制和状态管理风格。
 - 静态页面不强制创建 ViewModel。
+- 外部动态数据只有在显式 `data-ios-data-source`、已有工程模型或用户提供接口契约时才创建 ViewModel 接入口；重复列表本身不是接口证据，生成器不得猜测 endpoint。HTML 首帧作为 fixture 保留，loading/content/empty/error 和分页按 `dataBinding` 契约实现与验收。
+- 输入控件必须保存编辑状态并遵循 maxlength、键盘类型、return key、自动大写、自动纠错和 autofocus。键盘与 Safe Area 只能有一个避让所有者；滚动容器保持父级完整 bounds，不得预减键盘或安全区高度。
 - 仅在具有独立职责、重复使用或明显降低复杂度时拆组件。
 - 每个可交互节点使用 UI IR 中的稳定 ID 作为 `accessibilityIdentifier`。
 - 保持 source node → IR node → native view 的追溯关系。

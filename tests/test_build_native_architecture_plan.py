@@ -29,6 +29,7 @@ def make_ir(screen_id: str = "home") -> dict:
                 {"id": root_id, "semanticType": "scroll"},
                 {"id": f"{screen_id}.top", "semanticType": "navigation"},
                 {"id": f"{screen_id}.bottom", "semanticType": "footer"},
+                {"id": f"{screen_id}.query", "semanticType": "text-input", "textBehavior": {"role": "input"}},
             ],
         }],
         "interactions": [{"action": "push"}, {"action": "present-sheet"}],
@@ -68,6 +69,10 @@ class BuildNativeArchitecturePlanTests(unittest.TestCase):
             self.assertEqual(screen["scroll"]["contentInsetAdjustment"], "automatic")
             self.assertEqual(screen["controller"]["navigationContainer"], "UINavigationController")
             self.assertEqual(screen["presentations"], ["present-sheet"])
+            self.assertTrue(screen["keyboard"]["present"])
+            self.assertEqual(screen["keyboard"]["avoidanceOwner"], "scroll-view-controller")
+            self.assertEqual(screen["keyboard"]["scrollDismissMode"], "interactive")
+            self.assertFalse(screen["keyboard"]["subtractKeyboardFromContainerDimensions"])
 
     def test_immersive_page_owns_insets_without_dimension_subtraction(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
