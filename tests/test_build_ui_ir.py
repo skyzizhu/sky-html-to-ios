@@ -304,6 +304,7 @@ class BuildUIIRTests(unittest.TestCase):
             self.assertEqual(screen["regions"]["topBar"]["nodeId"], "home.top")
             self.assertEqual(screen["regions"]["bottomBar"]["nodeId"], "home.bottom")
             self.assertEqual(screen["regions"]["bottomBar"]["kind"], "bottom-action-bar")
+            self.assertEqual(screen["regions"]["bottomBar"]["placement"], "viewport-overlay")
             self.assertEqual(screen["systemChrome"]["navigationBar"], "custom")
 
 

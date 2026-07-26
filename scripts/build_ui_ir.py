@@ -1044,6 +1044,22 @@ def infer_screen_regions(
     floating = choose(floating_candidates)
     if bottom:
         bottom["kind"] = "bottom-action-bar"
+        bottom_runtime_id = next(
+            (runtime_id for runtime_id, node_id in id_map.items() if node_id == bottom.get("nodeId")),
+            None,
+        )
+        bottom_source = node_by_id.get(str(bottom_runtime_id or "")) or {}
+        bottom_style = bottom_source.get("style") or {}
+        bottom_rect = bottom_source.get("rect") or {}
+        bottom_gap = root_y + root_height - (
+            float(bottom_rect.get("y") or 0) + float(bottom_rect.get("height") or 0)
+        )
+        bottom["placement"] = (
+            "viewport-overlay"
+            if str(bottom_style.get("position") or "") in {"absolute", "fixed"}
+            and bottom_gap <= max(12, root_height * 0.035)
+            else "safe-area-inset"
+        )
     if top:
         top["kind"] = "custom-navigation-bar"
     if floating:
@@ -1125,6 +1141,11 @@ def build_bar_contracts(
     bottom_descendants = descendant_ids(bottom_id)
     bottom_node = node_by_id.get(bottom_id or "") or {}
     bottom_hints = bottom_node.get("iosHints") or {}
+    explicit_bottom_placement = str(
+        bottom_hints.get("bottom-placement") or bottom_hints.get("bar-placement") or ""
+    ).strip().lower()
+    if bottom and explicit_bottom_placement in {"safe-area-inset", "viewport-overlay"}:
+        bottom["placement"] = explicit_bottom_placement
     explicit_tab = bottom_node.get("semanticType") == "tab-bar" or bottom_hints.get("component") == "tab-bar" or bottom_hints.get("container") == "tab"
     tab_interactions = [
         interaction for interaction in interactions

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.16.0"
+GENERATOR_VERSION = "1.17.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -476,7 +476,7 @@ class ScreenBuildContext:
     selection_count_bindings: dict[str, dict[str, Any]]
     motions: dict[str, list[dict[str, Any]]]
     detached_root_ids: set[str]
-    has_bottom_bar: bool
+    bottom_bar_placement: str
 
 
 def rich_text_runs(
@@ -1020,7 +1020,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     border_style = str(border_styles[border_index] or "solid") if border_index < len(border_styles) else "solid"
     gradient = gradient_spec(style.get("backgroundImage"))
     shadow = shadow_spec(style.get("boxShadow"), context.design_scale)
-    if context.has_bottom_bar and semantic == "scroll":
+    if context.bottom_bar_placement == "safe-area-inset" and semantic == "scroll":
         padding[2] = 0
     radii = style.get("cornerRadii") or [0]
     radius_values = []
@@ -1528,6 +1528,11 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
         top_bar_id = None
     if tab_container:
         bottom_bar_id = None
+    bottom_bar_placement = (
+        str(((regions.get("bottomBar") or {}).get("placement")) or "safe-area-inset")
+        if bottom_bar_id
+        else "none"
+    )
     detached_root_ids = set(presentation_root_ids)
     if top_bar_id:
         detached_root_ids.add(top_bar_id)
@@ -1555,7 +1560,7 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
             for node_id in nodes
         },
         detached_root_ids=detached_root_ids,
-        has_bottom_bar=bottom_bar_id is not None,
+        bottom_bar_placement=bottom_bar_placement,
     )
     root = node_payload(context, root_id) or {
         "id": root_id,
@@ -1631,6 +1636,7 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
         "root": root,
         "topBar": top_bar,
         "bottomBar": bottom_bar,
+        "bottomBarPlacement": bottom_bar_placement,
         "presentations": presentations,
         "automaticActions": automatic_actions,
     }
@@ -1670,6 +1676,7 @@ struct HTMLToIOSScreenSpec: Codable, Identifiable {{
     let root: HTMLToIOSNodeSpec
     let topBar: HTMLToIOSNodeSpec?
     let bottomBar: HTMLToIOSNodeSpec?
+    let bottomBarPlacement: String
     let presentations: [HTMLToIOSPresentationSpec]
     let automaticActions: [HTMLToIOSActionSpec]
 }}
@@ -2890,9 +2897,21 @@ struct HTMLToIOSGeneratedScreenView: View {
 
     @ViewBuilder private var insetContent: some View {
         if screen.safeArea.owner == "system" {
-            chromeAlignedNavigationContent
-                .safeAreaInset(edge: .top, spacing: 0) { topBarContent }
-                .safeAreaInset(edge: .bottom, spacing: 0) { bottomBarContent }
+            if screen.bottomBarPlacement == "viewport-overlay" {
+                GeometryReader { proxy in
+                    chromeAlignedNavigationContent
+                        .safeAreaInset(edge: .top, spacing: 0) { topBarContent }
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                        .overlay(alignment: .bottom) {
+                            bottomBarContent
+                                .offset(y: proxy.safeAreaInsets.bottom)
+                        }
+                }
+            } else {
+                chromeAlignedNavigationContent
+                    .safeAreaInset(edge: .top, spacing: 0) { topBarContent }
+                    .safeAreaInset(edge: .bottom, spacing: 0) { bottomBarContent }
+            }
         } else {
             chromeAlignedNavigationContent
                 .ignoresSafeArea(.container)
@@ -3638,7 +3657,7 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
         let insets = UIEdgeInsets(
             top: generatedTopBar?.bounds.height ?? 0,
             left: 0,
-            bottom: generatedBottomBar?.bounds.height ?? 0,
+            bottom: screen.bottomBarPlacement == "safe-area-inset" ? (generatedBottomBar?.bounds.height ?? 0) : 0,
             right: 0
         )
         if scroll.contentInset != insets { scroll.contentInset = insets }
@@ -3710,7 +3729,11 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
             constraints.append(contentsOf: [
                 bottom.leadingAnchor.constraint(equalTo: view.leadingAnchor),
                 bottom.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-                bottom.bottomAnchor.constraint(equalTo: screen.safeArea.owner == "system" ? view.safeAreaLayoutGuide.bottomAnchor : view.bottomAnchor)
+                bottom.bottomAnchor.constraint(
+                    equalTo: screen.bottomBarPlacement == "viewport-overlay"
+                        ? view.bottomAnchor
+                        : (screen.safeArea.owner == "system" ? view.safeAreaLayoutGuide.bottomAnchor : view.bottomAnchor)
+                )
             ])
         }
         NSLayoutConstraint.activate(constraints)
@@ -3943,6 +3966,7 @@ final class HTMLToIOSGeneratedCoordinator: NSObject, UITabBarControllerDelegate 
                     root: presentation.node,
                     topBar: nil,
                     bottomBar: nil,
+                    bottomBarPlacement: "none",
                     presentations: [],
                     automaticActions: []
                 ),

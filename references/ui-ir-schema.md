@@ -68,7 +68,7 @@ UI IR 是浏览器渲染结果与原生代码之间的稳定中间层。不要�
   },
   "regions": {
     "topBar": {"nodeId": "home.top", "kind": "custom-navigation-bar", "confidence": 0.91, "evidence": []},
-    "bottomBar": {"nodeId": "home.actions", "kind": "bottom-action-bar", "confidence": 0.9, "evidence": []},
+    "bottomBar": {"nodeId": "home.actions", "kind": "bottom-action-bar", "placement": "viewport-overlay", "confidence": 0.9, "evidence": []},
     "floatingAction": null
   },
   "navigation": {
@@ -93,7 +93,7 @@ UI IR 是浏览器渲染结果与原生代码之间的稳定中间层。不要�
 
 `moduleId` 是稳定的 `lower-kebab-case` 业务模块 ID，用于生成 `<Module>/Screens|Controllers|Views`。它优先来自 `data-ios-module`；缺失时可由稳定 screen ID 前缀谨慎推断，不得从视觉相似度猜测业务边界。
 
-`regions` 保存持久页面区域的节点、类型、置信度和证据。区域识别依据几何、固定/吸顶行为、交互子项和语义综合判断；详见 `page-regions-and-system-chrome.md`。
+`regions` 保存持久页面区域的节点、类型、放置方式、置信度和证据。底栏 `placement` 只能是 `safe-area-inset` 或 `viewport-overlay`；区域识别依据几何、固定/吸顶行为、交互子项和语义综合判断，详见 `page-regions-and-system-chrome.md`。
 
 `navigation` 明确系统导航、自绘顶部栏、隐藏或沉浸式所有权；不得只用一个显示布尔值表达。`tabContainer` 仅用于 App 级主 Tab，每个 item 必须具有稳定 ID 和有效 `targetScreenId`。页面内筛选 Tab 继续使用 `tab-control` 或 segmented state，不生成 `UITabBarController`。
 

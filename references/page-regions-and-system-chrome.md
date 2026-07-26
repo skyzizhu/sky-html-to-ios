@@ -34,7 +34,12 @@
 - `bottom-toolbar`：多个对当前内容生效的工具命令。
 - 普通 footer：位于长页面文档末端并随内容滚动，不应吸底。
 
-生成时将持久底栏从滚动内容拆出，使用 `safeAreaInset` 或 Auto Layout 约束到 `safeAreaLayoutGuide.bottomAnchor`。底栏背景是否延伸到 Home Indicator 区域与按钮内容是否避让要分别处理，不能简单额外加一遍 34pt。
+生成时将持久底栏从滚动内容拆出，并在 IR 中明确 `placement`：
+
+- `safe-area-inset`：来源底栏表达安全区内的独立栏位，SwiftUI 使用 `safeAreaInset`，UIKit 约束到 `safeAreaLayoutGuide.bottomAnchor`，来源滚动区为底栏预留的重复 padding 可移除。
+- `viewport-overlay`：来源底栏以 `absolute/fixed + bottom: 0` 贴住应用根物理底边，SwiftUI 使用全屏底部 overlay，UIKit 约束到 `view.bottomAnchor`；必须保留来源滚动容器为覆盖栏预留的底部 padding，不能再按栏高增加第二份 content inset。
+
+底栏背景是否延伸到 Home Indicator 区域与按钮内容是否避让要分别处理，禁止无条件额外增加 34pt，也禁止把所有底栏统一顶到安全区上方。若来源使用 `env(safe-area-inset-bottom)`，以浏览器计算后的 padding 为准。
 
 ### TabBar 决策规则
 

@@ -608,7 +608,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             payload["screens"][0]["nodes"].extend([top, bottom])
             payload["screens"][0]["regions"] = {
                 "topBar": {"nodeId": top["id"], "kind": "custom-navigation-bar", "confidence": 0.9},
-                "bottomBar": {"nodeId": bottom["id"], "kind": "bottom-action-bar", "confidence": 0.9},
+                "bottomBar": {"nodeId": bottom["id"], "kind": "bottom-action-bar", "placement": "viewport-overlay", "confidence": 0.9},
             }
             payload["screens"][0]["systemChrome"] = {"navigationBar": "custom"}
 
@@ -634,6 +634,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             screen = generated["screens"][0]
             self.assertEqual(screen["topBar"]["id"], "home.top")
             self.assertEqual(screen["bottomBar"]["id"], "home.bottom")
+            self.assertEqual(screen["bottomBarPlacement"], "viewport-overlay")
             self.assertFalse(screen["showsNavigationBar"])
             self.assertEqual(screen["root"]["backgroundAssetName"], "html_home_background")
             self.assertEqual(screen["root"]["style"]["backgroundContentMode"], "cover")
@@ -644,7 +645,16 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             runtime = (out_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             root_source = (out_dir / NAVIGATION_FILE).read_text(encoding="utf-8")
             self.assertIn("safeAreaInset(edge: .top", runtime)
+            self.assertIn('screen.bottomBarPlacement == "viewport-overlay"', runtime)
+            self.assertIn("GeometryReader { proxy in", runtime)
+            self.assertIn(".offset(y: proxy.safeAreaInsets.bottom)", runtime)
             self.assertIn("presentationDetents", root_source)
+
+            uikit_dir = root / "uikit"
+            self.run_generator([path], uikit_dir, ui_stack="uikit")
+            uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn('screen.bottomBarPlacement == "safe-area-inset" ? (generatedBottomBar?.bounds.height ?? 0) : 0', uikit_runtime)
+            self.assertIn('screen.bottomBarPlacement == "viewport-overlay"\n                        ? view.bottomAnchor', uikit_runtime)
 
     def test_custom_popover_overlay_preserves_source_geometry_for_both_stacks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
