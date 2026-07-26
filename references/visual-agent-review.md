@@ -42,6 +42,8 @@ python3 scripts/build_visual_review_bundle.py <manifest> \
 
 自动生成最低集合：initial、长页面 top/middle/bottom、主 Tab/局部 Tab、sheet/full-screen/popover/alert/menu/overlay、主要 toggle state、原型存在的 empty/loading/error，以及动画 0%/50%/100% 采样帧。
 
+状态链中的后续操作必须等待前置状态稳定，并在同一 accessibility identifier 存在多个候选时优先选择 `exists && isHittable` 的元素。不得让 XCUITest 对屏幕外或已退出状态树的 `firstMatch` 自动执行 scroll-to-visible；这会误滚动页面、关闭 overlay，或把测试框架问题误判成原生页面差异。
+
 复杂交互链由 Agent 在 manifest 中补充安全动作。禁止在状态清单中执行任意 JavaScript；HTML 捕获工具只允许 click、fill、check、select、press、hover、scroll 和 wait。
 
 ## 结构化输出

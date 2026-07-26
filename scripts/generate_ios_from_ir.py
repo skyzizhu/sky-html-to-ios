@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.19.0"
+GENERATOR_VERSION = "1.20.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -1162,6 +1162,27 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     text_line_limit = explicit_line_clamp if explicit_line_clamp > 0 else (
         1 if explicit_no_wrap or inferred_compact_single_line or rich_text_visual_single_line else None
     )
+    child_by_id_for_baseline = {str(child.get("id") or ""): child for child in child_payloads}
+
+    def is_textual_content_item(item: dict[str, Any]) -> bool:
+        if item.get("kind") == "text":
+            return bool(compact_text(item.get("text")))
+        child = child_by_id_for_baseline.get(str(item.get("childID") or "")) or {}
+        return bool(
+            str(child.get("semantic") or "") in {"text", "label", "heading", "link"}
+            and compact_text(child.get("text"))
+        )
+
+    baseline_aligned = bool(
+        axis == "horizontal"
+        and line_count == 1
+        and len(content_items) > 1
+        and all(is_textual_content_item(item) for item in content_items)
+    )
+    source_rect = layout.get("sourceRectCssPx") or rect
+    first_baseline_y = number(content.get("firstBaselineY"), None)
+    last_baseline_y = number(content.get("lastBaselineY"), None)
+    source_top = number(source_rect.get("y"), 0)
     ratio = width / height if width > 0 and height > 0 else None
     compact_visual_container = bool(
         width > 0
@@ -1324,6 +1345,15 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
                 else None
             ),
             "expectedTextLines": line_count if line_count > 0 else None,
+            "firstBaselineOffset": (
+                max(first_baseline_y - source_top, 0) * context.design_scale
+                if first_baseline_y is not None else None
+            ),
+            "lastBaselineOffset": (
+                max(last_baseline_y - source_top, 0) * context.design_scale
+                if last_baseline_y is not None else None
+            ),
+            "baselineAligned": baseline_aligned,
             "resistsCompression": str(style.get("flexShrink") or "1") == "0",
             "preservesIntrinsicWidth": preserves_intrinsic_width,
             "fixedWidth": min(max(fixed_width, 0), context.root_width) if fixed_width is not None else None,
@@ -1659,8 +1689,8 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
                 presentation_node["style"]["opacity"] = 1
                 presentation_source_rect = ((nodes.get(target_id) or {}).get("layout") or {}).get("rect") or {}
                 source_rect = [
-                    number(presentation_source_rect.get("x")),
-                    number(presentation_source_rect.get("y")),
+                    number(presentation_source_rect.get("x")) - number(root_rect.get("x")),
+                    number(presentation_source_rect.get("y")) - number(root_rect.get("y")),
                     number(presentation_source_rect.get("width")),
                     number(presentation_source_rect.get("height")),
                 ]
@@ -1677,6 +1707,7 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
                     "grabberVisible": (presentation_by_state.get(str(state.get("id"))) or {}).get("grabberVisible"),
                     "interactiveDismissDisabled": bool((presentation_by_state.get(str(state.get("id"))) or {}).get("interactiveDismissDisabled", False)),
                     "usesCustomOverlay": uses_custom_overlay,
+                    "coordinateSpace": "app-root",
                     "sourceRect": source_rect,
                 })
                 break
@@ -1821,6 +1852,7 @@ struct HTMLToIOSPresentationSpec: Codable, Identifiable {{
     let grabberVisible: Bool?
     let interactiveDismissDisabled: Bool
     let usesCustomOverlay: Bool
+    let coordinateSpace: String
     let sourceRect: [Double]
 }}
 
@@ -1957,6 +1989,9 @@ struct HTMLToIOSStyleSpec: Codable {{
     let preferredHeight: Double?
     let textMeasureWidth: Double?
     let expectedTextLines: Int?
+    let firstBaselineOffset: Double?
+    let lastBaselineOffset: Double?
+    let baselineAligned: Bool?
     let resistsCompression: Bool?
     let preservesIntrinsicWidth: Bool?
     let fixedWidth: Double?
@@ -2846,6 +2881,7 @@ struct HTMLToIOSNativeNodeView: View {
         }
     }
     private var verticalAlignment: VerticalAlignment {
+        if spec.style.baselineAligned == true { return .firstTextBaseline }
         switch spec.style.alignItems {
         case "flex-start", "start": return .top
         case "flex-end", "end": return .bottom
@@ -3401,7 +3437,9 @@ final class HTMLToIOSNodeRenderer {
     private func makeStack(_ spec: HTMLToIOSNodeSpec) -> UIStackView {
         let stack = UIStackView()
         stack.axis = spec.axis == "horizontal" ? .horizontal : .vertical
-        stack.alignment = spec.axis == "horizontal" ? .center : .fill
+        stack.alignment = spec.axis == "horizontal"
+            ? (spec.style.baselineAligned == true ? .firstBaseline : .center)
+            : .fill
         let usesMeasuredSpacing = spec.contentItems.dropFirst().contains {
             $0.gapBefore != nil || $0.flexibleGapBefore == true
         }
@@ -4049,13 +4087,25 @@ final class HTMLToIOSGeneratedCustomOverlayController: UIViewController {
         panel.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(panel)
         let rect = presentation.sourceRect
+        let width = CGFloat(rect.indices.contains(2) ? rect[2] : 0)
+        let height = CGFloat(rect.indices.contains(3) ? rect[3] : 0)
+        let sourceLeading = panel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: CGFloat(rect.indices.contains(0) ? rect[0] : 0))
+        let sourceTop = panel.topAnchor.constraint(equalTo: view.topAnchor, constant: CGFloat(rect.indices.contains(1) ? rect[1] : 0))
+        sourceLeading.priority = .defaultHigh
+        sourceTop.priority = .defaultHigh
         NSLayoutConstraint.activate([
             backdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             backdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             backdrop.topAnchor.constraint(equalTo: view.topAnchor),
             backdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            panel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: CGFloat(rect.indices.contains(0) ? rect[0] : 0)),
-            panel.topAnchor.constraint(equalTo: view.topAnchor, constant: CGFloat(rect.indices.contains(1) ? rect[1] : 0)),
+            sourceLeading,
+            sourceTop,
+            panel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor),
+            panel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
+            panel.topAnchor.constraint(greaterThanOrEqualTo: view.topAnchor),
+            panel.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor),
+            panel.widthAnchor.constraint(equalToConstant: width),
+            panel.heightAnchor.constraint(equalToConstant: height),
         ])
     }
 }

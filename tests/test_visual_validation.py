@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_SCRIPT = ROOT / "scripts" / "build_visual_state_manifest.py"
 DIFF_SCRIPT = ROOT / "scripts" / "visual_diff.py"
 BUNDLE_SCRIPT = ROOT / "scripts" / "build_visual_review_bundle.py"
+PREPARE_IOS_TESTS_SCRIPT = ROOT / "scripts" / "prepare_visual_ui_tests.rb"
 
 
 def node(node_id: str, parent_id: str | None, semantic: str, rect: list[int], text: str = "") -> dict:
@@ -32,6 +33,14 @@ def node(node_id: str, parent_id: str | None, semantic: str, rect: list[int], te
 
 
 class VisualValidationTests(unittest.TestCase):
+    def test_ios_visual_taps_prefer_hittable_matches_after_state_changes(self) -> None:
+        source = PREPARE_IOS_TESTS_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("requireHittable: Bool = false", source)
+        self.assertIn("matches.allElementsBoundByIndex.first(where: { $0.exists && $0.isHittable })", source)
+        self.assertIn("requireHittable: true", source)
+        self.assertIn('domain: "HTMLToIOSVisualValidation"', source)
+        self.assertNotIn('XCTFail("Element exists but is not hittable', source)
+
     def test_manifest_asserts_local_state_ancestor_removal(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

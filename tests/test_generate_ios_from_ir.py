@@ -696,8 +696,9 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "kind": "popover-overlay",
                 "targetNodeIds": ["home.sheet"],
             }])
+            payload["screens"][0]["nodes"][0]["layout"]["rect"] = {"x": 100, "y": 200, "width": 393, "height": 852}
             popover = next(item for item in payload["screens"][0]["nodes"] if item["id"] == "home.sheet")
-            popover["layout"]["rect"] = {"x": 24, "y": 580, "width": 345, "height": 190}
+            popover["layout"]["rect"] = {"x": 124, "y": 780, "width": 345, "height": 190}
             popover["style"].update({
                 "opacity": "0",
                 "backgroundColor": "rgb(255, 255, 255)",
@@ -713,6 +714,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             generated = json.loads((swiftui_dir / PAYLOAD).read_text(encoding="utf-8"))
             presentation = generated["screens"][0]["presentations"][0]
             self.assertTrue(presentation["usesCustomOverlay"])
+            self.assertEqual(presentation["coordinateSpace"], "app-root")
             self.assertEqual(presentation["sourceRect"], [24, 580, 345, 190])
             self.assertEqual(presentation["node"]["style"]["opacity"], 1)
             self.assertEqual(presentation["node"]["style"]["fixedWidth"], 345)
@@ -727,9 +729,13 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             uikit_dir = root / "uikit"
             self.run_generator([path], uikit_dir, ui_stack="uikit")
             uikit_root = (uikit_dir / NAVIGATION_FILE).read_text(encoding="utf-8")
+            uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn("HTMLToIOSGeneratedCustomOverlayController", uikit_root)
             self.assertIn("presentation.usesCustomOverlay", uikit_root)
-            self.assertIn("panel.leadingAnchor.constraint", uikit_root)
+            self.assertIn("sourceLeading.priority = .defaultHigh", uikit_root)
+            self.assertIn("panel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor)", uikit_root)
+            self.assertIn("panel.heightAnchor.constraint(equalToConstant: height)", uikit_root)
+            self.assertIn("spec.style.baselineAligned == true ? .firstBaseline : .center", uikit_runtime)
 
     def test_large_overlay_height_and_actionable_grid_are_preserved_for_both_stacks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1191,6 +1197,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             })
             score["content"].update({
                 "lines": 2,
+                "firstBaselineY": 124,
+                "lastBaselineY": 124,
                 "lineTexts": ["82", "分"],
                 "lineRects": [
                     {"x": 44, "y": 100, "width": 32, "height": 30},
@@ -1225,8 +1233,12 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIsNone(generated_score["style"]["textMeasureWidth"])
             self.assertEqual([run["text"] for run in generated_score["richTextRuns"]], ["82", "分"])
             self.assertNotIn("\n", "".join(run["text"] for run in generated_score["richTextRuns"]))
+            self.assertTrue(generated_score["style"]["baselineAligned"])
+            self.assertEqual(generated_score["style"]["firstBaselineOffset"], 24)
+            self.assertEqual(generated_score["style"]["lastBaselineOffset"], 24)
             runtime = (out_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn("HStack(alignment: .firstTextBaseline, spacing: 0)", runtime)
+            self.assertIn("if spec.style.baselineAligned == true { return .firstTextBaseline }", runtime)
             self.assertIn('if value >= 800 { return .heavy }', runtime)
             self.assertIn('case "monospaced": return .monospaced', runtime)
 

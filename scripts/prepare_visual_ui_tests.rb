@@ -112,17 +112,30 @@ swift = <<~SWIFT
           return app
       }
 
-      private func element(identifier: String, in app: XCUIApplication) throws -> XCUIElement {
-          let candidate = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
-          guard candidate.waitForExistence(timeout: 5) else {
+      private func element(identifier: String, in app: XCUIApplication, requireHittable: Bool = false) throws -> XCUIElement {
+          let matches = app.descendants(matching: .any).matching(identifier: identifier)
+          guard matches.firstMatch.waitForExistence(timeout: 5) else {
               throw XCTSkip("Missing accessibility identifier: \\(identifier)")
           }
-          return candidate
+          guard requireHittable else { return matches.firstMatch }
+          let deadline = Date().addingTimeInterval(5)
+          repeat {
+              if let candidate = matches.allElementsBoundByIndex.first(where: { $0.exists && $0.isHittable }) {
+                  return candidate
+              }
+              RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+          } while Date() < deadline
+          throw NSError(
+              domain: "HTMLToIOSVisualValidation",
+              code: 1,
+              userInfo: [NSLocalizedDescriptionKey: "Element exists but is not hittable: \\(identifier)"]
+          )
       }
 
       private func tapElement(identifier: String, in app: XCUIApplication) throws {
-          let candidate = try element(identifier: identifier, in: app)
+          let candidate = try element(identifier: identifier, in: app, requireHittable: true)
           candidate.tap()
+          RunLoop.current.run(until: Date().addingTimeInterval(0.2))
       }
 
       private func assertElementAbsent(identifier: String, in app: XCUIApplication) throws {

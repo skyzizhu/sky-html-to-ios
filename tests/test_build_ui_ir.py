@@ -109,6 +109,9 @@ class BuildUIIRTests(unittest.TestCase):
                         "lineCount": 1,
                         "lineRects": [{"x": 36, "y": 98, "width": 64, "height": 20}],
                         "lineTexts": ["Single line"],
+                        "firstBaselineY": 113,
+                        "lastBaselineY": 113,
+                        "fontMetrics": {"ascent": 15, "descent": 5},
                         "fontResolution": {
                             "requestedFamilies": ["missing web font", "monospace"],
                             "resolvedFamily": "monospace",
@@ -164,6 +167,9 @@ class BuildUIIRTests(unittest.TestCase):
             self.assertEqual(by_runtime_id["label"]["content"]["lines"], 1)
             self.assertEqual(len(by_runtime_id["label"]["content"]["lineRects"]), 1)
             self.assertEqual(by_runtime_id["label"]["content"]["lineTexts"], ["Single line"])
+            self.assertEqual(by_runtime_id["label"]["content"]["firstBaselineY"], 113)
+            self.assertEqual(by_runtime_id["label"]["content"]["lastBaselineY"], 113)
+            self.assertEqual(by_runtime_id["label"]["content"]["fontMetrics"], {"ascent": 15, "descent": 5})
             self.assertEqual(by_runtime_id["label"]["content"]["fontResolution"]["resolvedFamily"], "monospace")
             self.assertEqual(by_runtime_id["label"]["content"]["fontResolution"]["status"], "generic-fallback")
             self.assertEqual(by_runtime_id["label"]["content"]["runs"][0]["domIndex"], 0)
