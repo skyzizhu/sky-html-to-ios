@@ -24,7 +24,7 @@ URL 输入改用 `--url`。仅当可信页面确实依赖跨源资源时使用 `
 发现器必须分开保存两类证据，不得互相冒充：
 
 1. AST evidence：使用内置 Acorn 解析 JavaScript，记录注册位置、调用链、目标 selector、变更类型、计时信息和源码片段。
-2. Runtime evidence：每个可安全点击的交互在全新浏览器页面中执行，记录动作前后可见 screen、目标 class/text 和 URL 变化。
+2. Runtime evidence：每个可安全点击的交互在全新浏览器页面中执行，记录动作前后可见 screen、目标 class/text、受限的直接子项结构和 URL 变化。直接子项快照至少保留顺序、文字叶子、尺寸、标签、class 与关键 computed style；不得只保存拼接后的 `textContent`。
 
 正则只能用于辅助命名和风险词判断，不能代替 JavaScript AST。某段脚本解析失败时写入 warning，并降低覆盖结论；不能声称已完整发现。内置解析器位于 `scripts/vendor/acorn`，保留其 MIT License 和版本信息。
 
@@ -48,6 +48,7 @@ URL 输入改用 `--url`。仅当可信页面确实依赖跨源资源时使用 `
 - 只执行本地、可逆、无明显副作用的 tap；文件选择、提交、支付、购买、删除、发送和外部跳转默认跳过。
 - 对折叠区、popover、sheet 和 overlay 内部控件，先执行已发现的 opener，再探测目标。
 - 重复 selector 优先探测可见且未激活项，避免点击默认选中项得到假阴性。
+- 会改变内容的重复 selector 在候选数不超过安全上限时逐项使用全新页面探测；证据按未选中项在前、当前选中项最后的稳定顺序保存，并映射回各自 source node。禁止拿一个候选的内容结果套给整组控件。
 - backdrop 点击使用空白边缘，不点击内容中心。
 - document/window 级监听记为 ambient event，默认不主动 probe。
 - 弹窗由隔离页面自动 dismiss，并在证据中记录。
@@ -97,6 +98,8 @@ python3 scripts/build_ui_ir.py render-tree.json \
 ```
 
 合并器必须：排除其他虚拟 screen 子树；保留当前 screen 外部但属于其流程的共享底栏/弹层；将一个 class selector 映射到全部重复 node；将容器内部动作补成 opener → action 的 prerequisite sequence；保留返回时重置其他 screen 状态等跨 screen 副作用。interaction graph 存在时，没有 href/form/data-ios/动态证据的普通 button 不应生成 `unknown` 业务动作。
+
+对于 `innerHTML`、列表筛选、分类切换和步骤切换产生的重复内容变化，合并器必须生成结构化 `contentVariants`：触发 source node、目标容器 node、替换模式以及按 DOM 顺序排列的 item 文字叶子。只有直接子项的数量、顺序或内容确实变化时才生成 `replace-children`；父标签自身的计数或文本变化继续使用普通 `update-value`，避免误删静态子结构。代码生成时复用目标容器现有的原生 item 模板和样式，只替换状态对应的数据；SwiftUI 与 UIKit 必须消费同一份变体 payload。
 
 ## 边界与降级
 

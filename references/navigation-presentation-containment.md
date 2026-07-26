@@ -38,7 +38,7 @@ Web 内部链接通常是 `push`，但单文档原型的 `switchTo(page)` 可能
 
 HTML 中已有明确绝对定位、无系统箭头、无模态背景且在手机宽度内浮于来源页面之上的 `popover-overlay`，属于自定义局部浮层，不得直接使用会在 compact width 自动适配为 sheet 的系统 `.popover`。IR 必须保存浮层相对应用根容器的实测 `sourceRect`；SwiftUI 使用同层 overlay，UIKit 使用 `.overFullScreen` 自定义容器，并按该矩形定位。真正具备系统 popover 语义、锚点和自适应要求的 `popover` 才映射系统 API。
 
-`sourceRect` 必须先减去所选应用根容器的原点，并显式标记为 `app-root` 坐标系。展示板、嵌套手机画板或 body 带偏移时，禁止直接使用文档绝对坐标。运行时应优先保持来源位置，同时用可视区域边界约束整块浮层；不得通过滚动根页面把浮层内部控件“滚到可见”。
+`sourceRect` 必须先减去所选应用根容器的原点，并显式标记为 `app-root` 坐标系。展示板、嵌套手机画板或 body 带偏移时，禁止直接使用文档绝对坐标。SwiftUI overlay 的 GeometryReader 可能从 Safe Area 内容原点开始，定位前必须用其 global frame 原点把 `app-root` 矩形转换为局部坐标，禁止再次叠加顶部或底部安全距离。运行时应优先保持来源位置，同时用可视区域边界约束整块浮层；不得通过滚动根页面把浮层内部控件“滚到可见”。
 
 ### Sheet
 

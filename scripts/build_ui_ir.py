@@ -616,6 +616,44 @@ def normalize_dynamic_contracts(
         node_ids = selector_to_node_ids.get(selector, []) if selector else []
         runtime_ids = selector_to_runtime_ids.get(selector, []) if selector else []
         action = primary.get("action") or "unknown"
+        runtime_evidence = source.get("runtimeEvidence") or {}
+        runtime_variants = runtime_evidence.get("contentVariants") or ([{
+            "sourceIndex": runtime_evidence.get("sourceIndex", 0),
+            "before": runtime_evidence.get("before"),
+            "after": runtime_evidence.get("after"),
+        }] if runtime_evidence.get("after") else [])
+        content_variants = []
+        update_transitions = [item for item in transitions if item.get("action") == "update-value"]
+        for variant_ordinal, runtime_variant in enumerate(runtime_variants):
+            if not isinstance(runtime_variant, dict):
+                continue
+            before_targets = ((runtime_variant.get("before") or {}).get("targets") or {})
+            after_targets = ((runtime_variant.get("after") or {}).get("targets") or {})
+            for update_transition in update_transitions:
+                target_state = state_by_id.get(update_transition.get("targetStateId")) or {}
+                target_selector = target_state.get("targetSelector")
+                before_target = before_targets.get(target_selector) if target_selector else None
+                after_target = after_targets.get(target_selector) if target_selector else None
+                before_items = (before_target or {}).get("directChildren") or []
+                after_items = (after_target or {}).get("directChildren") or []
+                if not target_selector or not after_items or before_items == after_items:
+                    continue
+                target_node_ids = selector_to_node_ids.get(target_selector, [])
+                content_variants.append({
+                    "sourceNodeId": node_ids[variant_ordinal] if variant_ordinal < len(node_ids) else (node_ids[0] if node_ids else None),
+                    "sourceIndex": runtime_variant.get("sourceIndex"),
+                    "targetStateId": update_transition.get("targetStateId"),
+                    "targetSelector": target_selector,
+                    "targetNodeId": target_node_ids[0] if target_node_ids else None,
+                    "mode": "replace-children",
+                    "items": [{
+                        "text": item.get("text") or "",
+                        "textLeaves": item.get("textLeaves") or ([item.get("text")] if item.get("text") else []),
+                        "sourceTag": item.get("tag"),
+                        "sourceClasses": item.get("classes") or [],
+                        "sourceRectCssPx": item.get("rect"),
+                    } for item in after_items if isinstance(item, dict)],
+                })
         interactions.append({
             "id": f"interaction.dynamic.{source.get('id')}",
             "sourceInteractionId": source.get("id"),
@@ -628,13 +666,13 @@ def normalize_dynamic_contracts(
             "trigger": source.get("trigger") or "tap",
             "action": action,
             "target": primary.get("target"),
-            "payload": {"transitions": transitions},
+            "payload": {"transitions": transitions, "contentVariants": content_variants},
             "confidence": source.get("confidence", 0.5),
             "presentation": presentation_for_action(action),
             "containment": None,
             "automatic": False,
             "requiresResolution": any(item.get("resolution", {}).get("status") == "recommended-unresolved" for item in transitions),
-            "evidence": {"ast": source.get("astEvidence"), "runtime": source.get("runtimeEvidence")},
+            "evidence": {"ast": source.get("astEvidence"), "runtime": runtime_evidence},
         })
         if not node_ids and not source.get("sourceScope"):
             warnings.append({

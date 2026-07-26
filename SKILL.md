@@ -200,6 +200,7 @@ python3 scripts/build_ui_ir.py render-tree.json \
 - 文字实测行数、`nowrap`/line clamp/ellipsis、横向裁剪状态和紧凑内容的 intrinsic-size 策略
 - 固定尺寸、最小/最大尺寸、宽高比、flex shrink/wrap 以及横向重复条目的实测 item 尺寸
 - 页面导航图和状态变化
+- 分类、筛选、分页或步骤切换引起的结构化内容变体；必须保留 source node → target container → 有序 item 文字叶子映射，不能把变化后的整段 `textContent` 当成一个标签
 - 支持级别、降级项和警告
 - 每个节点的 SwiftUI/UIKit 控件建议、样式策略、置信度和映射理由
 - 每个候选 API 的 SDK 核验状态、最低版本和降级路径

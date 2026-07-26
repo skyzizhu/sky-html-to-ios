@@ -182,6 +182,68 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 self.assertIn("// User edit", runtime.read_text(encoding="utf-8"))
             self.assertTrue((out_dir.with_name("HTMLToIOS.conflicts") / f"{RUNTIME_FILE}.generated").exists())
 
+    def test_dynamic_repeated_content_variants_preserve_native_item_templates(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("dynamic")
+            root_node = payload["screens"][0]["nodes"][0]
+            tab = node("dynamic.tab", root_node["id"], "button", "Category")
+            grid = node("dynamic.grid", root_node["id"], "container")
+            grid["layout"]["mode"] = "grid"
+            grid["style"]["gridTemplateColumns"] = "repeat(3, 1fr)"
+            template = node("dynamic.item", grid["id"], "text", "A")
+            payload["screens"][0]["nodes"].extend([tab, grid, template])
+            payload["states"] = [{
+                "id": "category-selection",
+                "kind": "selection",
+                "targetNodeIds": [tab["id"]],
+            }]
+            payload["interactions"] = [{
+                "id": "interaction.dynamic.category",
+                "sourceNodeId": tab["id"],
+                "sourceNodeIds": [tab["id"]],
+                "automatic": False,
+                "action": "toggle-state",
+                "target": "category-selection",
+                "payload": {
+                    "transitions": [{
+                        "action": "toggle-state",
+                        "target": "category-selection",
+                        "targetScreenId": None,
+                        "targetStateId": "category-selection",
+                        "schedule": None,
+                    }],
+                    "contentVariants": [{
+                        "sourceNodeId": tab["id"],
+                        "targetNodeId": grid["id"],
+                        "mode": "replace-children",
+                        "items": [
+                            {"text": "B", "textLeaves": ["B"]},
+                            {"text": "C", "textLeaves": ["C"]},
+                        ],
+                    }],
+                },
+            }]
+            path = root / "dynamic.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            swiftui_dir = root / "swiftui"
+            self.run_generator([path], swiftui_dir)
+            generated = json.loads((swiftui_dir / PAYLOAD).read_text(encoding="utf-8"))
+            generated_tab = generated["screens"][0]["root"]["children"][0]
+            variant = generated_tab["action"]["contentVariant"]
+            self.assertEqual(variant["targetNodeID"], grid["id"])
+            self.assertEqual([item["textValues"] for item in variant["items"]], [["B"], ["C"]])
+            swiftui_runtime = (swiftui_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn("contentOverrides[variant.targetNodeID] = variant.items", swiftui_runtime)
+            self.assertIn("dynamicContentItem", swiftui_runtime)
+
+            uikit_dir = root / "uikit"
+            self.run_generator([path], uikit_dir, ui_stack="uikit")
+            uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn("makeDynamicView", uikit_runtime)
+            self.assertIn("state.contentOverrides[spec.id]", uikit_runtime)
+
     def test_axis_isolation_intrinsic_item_width_and_compact_square_geometry(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -724,6 +786,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             root_source = (swiftui_dir / NAVIGATION_FILE).read_text(encoding="utf-8")
             self.assertIn("systemPopoverIsPresented", root_source)
             self.assertIn("customPopoverOverlay", root_source)
+            self.assertIn("let globalFrame = proxy.frame(in: .global)", root_source)
+            self.assertIn("- globalFrame.minY", root_source)
             self.assertIn(".position(x: centerX, y: centerY)", root_source)
 
             uikit_dir = root / "uikit"

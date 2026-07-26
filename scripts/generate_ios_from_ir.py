@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.20.0"
+GENERATOR_VERSION = "1.21.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -1406,6 +1406,38 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
     for node in nodes_list:
         children.setdefault(node.get("parentId"), []).append(str(node["id"]))
 
+    def text_leaf_ids(node_id: str) -> list[str]:
+        child_ids = children.get(node_id) or []
+        result = [leaf_id for child_id in child_ids for leaf_id in text_leaf_ids(child_id)]
+        if result:
+            return result
+        content = (nodes.get(node_id) or {}).get("content") or {}
+        return [node_id] if compact_text(content.get("text")) or content.get("runs") else []
+
+    def native_content_variant(raw: dict[str, Any]) -> dict[str, Any] | None:
+        target_node_id = str(raw.get("targetNodeId") or "")
+        template_ids = children.get(target_node_id) or []
+        if not target_node_id or not template_ids:
+            return None
+        items = []
+        for index, item in enumerate(raw.get("items") or []):
+            if not isinstance(item, dict):
+                continue
+            template_id = template_ids[index] if index < len(template_ids) else template_ids[0]
+            leaf_ids = text_leaf_ids(template_id)
+            values = [compact_text(value, 480) for value in (item.get("textLeaves") or []) if compact_text(value, 480)]
+            if not values and compact_text(item.get("text"), 480):
+                values = [compact_text(item.get("text"), 480)]
+            if not leaf_ids or not values:
+                continue
+            items.append({
+                "id": f"{target_node_id}.dynamic.{index}",
+                "templateNodeID": template_id,
+                "textByNodeID": {leaf_id: values[value_index] for value_index, leaf_id in enumerate(leaf_ids) if value_index < len(values)},
+                "textValues": values,
+            })
+        return {"targetNodeID": target_node_id, "items": items} if items else None
+
     states_by_id = {str(state.get("id")): state for state in ir.get("states") or []}
     actions: dict[str, dict[str, Any]] = {}
     automatic_actions = []
@@ -1432,11 +1464,19 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
         if interaction.get("automatic"):
             automatic_actions.append(action)
         source_ids = [str(item) for item in (interaction.get("sourceNodeIds") or [interaction.get("sourceNodeId")]) if item]
+        content_variants = {
+            str(item.get("sourceNodeId") or ""): item
+            for item in ((interaction.get("payload") or {}).get("contentVariants") or [])
+            if isinstance(item, dict)
+        }
         target_ids = [str(item) for item in target_state.get("targetNodeIds") or []]
         for index, source_id in enumerate(source_ids):
             if source_id:
                 node_action = dict(action)
                 node_action["sourceNodeID"] = source_id
+                content_variant = native_content_variant(content_variants.get(source_id) or {})
+                if content_variant:
+                    node_action["contentVariant"] = content_variant
                 if state_kind == "selection" and len(source_ids) == len(target_ids):
                     node_action["targetNodeID"] = target_ids[index]
                 elif state_kind == "local-state":
@@ -1873,6 +1913,19 @@ struct HTMLToIOSActionSpec: Codable {{
     let initiallySelected: Bool?
     let selectionCountInitial: Int?
     let selectionCountTotal: Int?
+    let contentVariant: HTMLToIOSContentVariantSpec?
+}}
+
+struct HTMLToIOSContentVariantSpec: Codable {{
+    let targetNodeID: String
+    let items: [HTMLToIOSDynamicContentItemSpec]
+}}
+
+struct HTMLToIOSDynamicContentItemSpec: Codable, Identifiable {{
+    let id: String
+    let templateNodeID: String
+    let textByNodeID: [String: String]
+    let textValues: [String]
 }}
 
 struct HTMLToIOSNodeSpec: Codable, Identifiable {{
@@ -2104,6 +2157,7 @@ final class HTMLToIOSGeneratedStore: ObservableObject {
     @Published var selectionCounts: [String: Int] = [:]
     @Published var hiddenNodeIDs: Set<String> = []
     @Published var feedbackText: [String: String] = [:]
+    @Published var contentOverrides: [String: [HTMLToIOSDynamicContentItemSpec]] = [:]
     @Published var sheet: PresentedState?
     @Published var fullScreen: PresentedState?
     @Published var popover: PresentedState?
@@ -2163,6 +2217,9 @@ final class HTMLToIOSGeneratedStore: ObservableObject {
 
     func perform(_ spec: HTMLToIOSActionSpec?) {
         guard let spec else { return }
+        if let variant = spec.contentVariant {
+            contentOverrides[variant.targetNodeID] = variant.items
+        }
         let routeID = spec.targetScreenID ?? spec.target
         let stateID = spec.targetStateID ?? spec.target
         switch spec.action {
@@ -2619,6 +2676,13 @@ private struct HTMLToIOSAccessibilityModifier: ViewModifier {
 struct HTMLToIOSNativeNodeView: View {
     @ObservedObject var store: HTMLToIOSGeneratedStore
     let spec: HTMLToIOSNodeSpec
+    let textOverrides: [String: String]
+
+    init(store: HTMLToIOSGeneratedStore, spec: HTMLToIOSNodeSpec, textOverrides: [String: String] = [:]) {
+        self.store = store
+        self.spec = spec
+        self.textOverrides = textOverrides
+    }
 
     @ViewBuilder var body: some View {
         if !store.hiddenNodeIDs.contains(spec.id) && (spec.visibleWhenStateID == nil || store.flags.contains(spec.visibleWhenStateID!)) {
@@ -2651,7 +2715,7 @@ struct HTMLToIOSNativeNodeView: View {
         .overlay {
             ZStack {
                 ForEach(spec.overlayChildren) { child in
-                    HTMLToIOSNativeNodeView(store: store, spec: child)
+                    HTMLToIOSNativeNodeView(store: store, spec: child, textOverrides: textOverrides)
                 }
             }
         }
@@ -2704,7 +2768,7 @@ struct HTMLToIOSNativeNodeView: View {
             ProgressView(value: 0.55)
         case "carousel":
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: verticalAlignment, spacing: contentSpacing) { orderedContentItems }
+                HStack(alignment: verticalAlignment, spacing: contentSpacing) { dynamicOrOrderedContent }
                     .fixedSize(horizontal: true, vertical: false)
             }
             .clipped()
@@ -2747,11 +2811,11 @@ struct HTMLToIOSNativeNodeView: View {
                 styledText(displayValue)
             } else if spec.axis == "vertical" {
                 VStack(alignment: horizontalAlignment, spacing: contentSpacing) {
-                    orderedContentItems
+                    dynamicOrOrderedContent
                 }
             } else {
                 HStack(alignment: verticalAlignment, spacing: contentSpacing) {
-                    orderedContentItems
+                    dynamicOrOrderedContent
                 }
             }
         default:
@@ -2804,7 +2868,7 @@ struct HTMLToIOSNativeNodeView: View {
         switch spec.style.scrollAxis {
         case "horizontal":
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: verticalAlignment, spacing: contentSpacing) { orderedContentItems }
+                HStack(alignment: verticalAlignment, spacing: contentSpacing) { dynamicOrOrderedContent }
                     .fixedSize(horizontal: true, vertical: false)
             }
             .clipped()
@@ -2823,15 +2887,16 @@ struct HTMLToIOSNativeNodeView: View {
 
     @ViewBuilder private var buttonContent: some View {
         if spec.axis == "grid" {
-            LazyVGrid(columns: gridColumns, spacing: spec.style.spacing ?? 0) { orderedContentItems }
+            LazyVGrid(columns: gridColumns, spacing: spec.style.spacing ?? 0) { dynamicOrOrderedContent }
         } else if spec.axis == "vertical" {
-            VStack(alignment: .center, spacing: contentSpacing) { orderedContentItems }
+            VStack(alignment: .center, spacing: contentSpacing) { dynamicOrOrderedContent }
         } else {
-            HStack(alignment: .center, spacing: contentSpacing) { orderedContentItems }
+            HStack(alignment: .center, spacing: contentSpacing) { dynamicOrOrderedContent }
         }
     }
 
     private var displayValue: String {
+        if let value = textOverrides[spec.id] { return value }
         if let stateID = spec.selectionCountStateID,
            let initial = spec.selectionCountInitial,
            let total = spec.selectionCountTotal {
@@ -2842,18 +2907,40 @@ struct HTMLToIOSNativeNodeView: View {
 
     @ViewBuilder private var childContent: some View {
         if spec.axis == "horizontal" {
-            HStack(alignment: verticalAlignment, spacing: contentSpacing) { distributedContentItems }
+            HStack(alignment: verticalAlignment, spacing: contentSpacing) { dynamicOrDistributedContent }
                 .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: horizontalFrameAlignment)
         } else if spec.axis == "grid" {
-            LazyVGrid(columns: gridColumns, spacing: spec.style.spacing ?? 0) { orderedContentItems }
+            LazyVGrid(columns: gridColumns, spacing: spec.style.spacing ?? 0) { dynamicOrOrderedContent }
         } else if spec.axis == "overlay" {
             ZStack(alignment: .center) {
-                ForEach(spec.children) { child in HTMLToIOSNativeNodeView(store: store, spec: child) }
+                ForEach(spec.children) { child in HTMLToIOSNativeNodeView(store: store, spec: child, textOverrides: textOverrides) }
             }
                 .frame(width: overlayWidth, height: overlayHeight)
         } else {
-            VStack(alignment: horizontalAlignment, spacing: contentSpacing) { distributedContentItems }
+            VStack(alignment: horizontalAlignment, spacing: contentSpacing) { dynamicOrDistributedContent }
                 .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: verticalFrameAlignment)
+        }
+    }
+
+    @ViewBuilder private var dynamicOrOrderedContent: some View {
+        if let items = store.contentOverrides[spec.id], !items.isEmpty {
+            ForEach(items) { item in dynamicContentItem(item) }
+        } else {
+            orderedContentItems
+        }
+    }
+
+    @ViewBuilder private var dynamicOrDistributedContent: some View {
+        if let items = store.contentOverrides[spec.id], !items.isEmpty {
+            ForEach(items) { item in dynamicContentItem(item) }
+        } else {
+            distributedContentItems
+        }
+    }
+
+    @ViewBuilder private func dynamicContentItem(_ item: HTMLToIOSDynamicContentItemSpec) -> some View {
+        if let template = spec.children.first(where: { $0.id == item.templateNodeID }) ?? spec.children.first {
+            HTMLToIOSNativeNodeView(store: store, spec: template, textOverrides: item.textByNodeID)
         }
     }
 
@@ -2934,7 +3021,7 @@ struct HTMLToIOSNativeNodeView: View {
             }
         } else if let childID = item.childID,
                   let child = spec.children.first(where: { $0.id == childID }) {
-            HTMLToIOSNativeNodeView(store: store, spec: child)
+            HTMLToIOSNativeNodeView(store: store, spec: child, textOverrides: textOverrides)
         }
     }
 
@@ -3222,10 +3309,13 @@ struct HTMLToIOSGeneratedRootView: View {
            presentation.usesCustomOverlay {
             GeometryReader { proxy in
                 let rect = presentation.sourceRect
+                let globalFrame = proxy.frame(in: .global)
                 let width = min(CGFloat(rect.indices.contains(2) ? rect[2] : 0), proxy.size.width)
                 let height = min(CGFloat(rect.indices.contains(3) ? rect[3] : 0), proxy.size.height)
-                let centerX = min(max(CGFloat(rect.indices.contains(0) ? rect[0] : 0) + width / 2, width / 2), proxy.size.width - width / 2)
-                let centerY = min(max(CGFloat(rect.indices.contains(1) ? rect[1] : 0) + height / 2, height / 2), proxy.size.height - height / 2)
+                let localX = CGFloat(rect.indices.contains(0) ? rect[0] : 0) - globalFrame.minX
+                let localY = CGFloat(rect.indices.contains(1) ? rect[1] : 0) - globalFrame.minY
+                let centerX = min(max(localX + width / 2, width / 2), proxy.size.width - width / 2)
+                let centerY = min(max(localY + height / 2, height / 2), proxy.size.height - height / 2)
                 ZStack(alignment: .topLeading) {
                     Color.clear
                         .contentShape(Rectangle())
@@ -3279,6 +3369,7 @@ final class HTMLToIOSUIKitState {
     var selectedByState: [String: String] = [:]
     var selectionOverrides: [String: Bool] = [:]
     var selectionCounts: [String: Int] = [:]
+    var contentOverrides: [String: [HTMLToIOSDynamicContentItemSpec]] = [:]
 
     func isSelected(_ spec: HTMLToIOSNodeSpec) -> Bool {
         guard let stateID = spec.selectionStateID else { return false }
@@ -3287,6 +3378,9 @@ final class HTMLToIOSUIKitState {
     }
 
     func perform(_ spec: HTMLToIOSActionSpec) {
+        if let variant = spec.contentVariant {
+            contentOverrides[variant.targetNodeID] = variant.items
+        }
         let stateID = spec.targetStateID ?? spec.target
         guard let stateID else { return }
         if spec.stateKind == "selection", let nodeID = spec.targetNodeID ?? spec.sourceNodeID {
@@ -3444,7 +3538,9 @@ final class HTMLToIOSNodeRenderer {
             $0.gapBefore != nil || $0.flexibleGapBefore == true
         }
         stack.spacing = usesMeasuredSpacing ? 0 : (spec.style.spacing ?? 8)
-        if spec.contentItems.isEmpty {
+        if let dynamicItems = state.contentOverrides[spec.id], !dynamicItems.isEmpty {
+            dynamicItems.forEach { stack.addArrangedSubview(makeDynamicView($0, in: spec)) }
+        } else if spec.contentItems.isEmpty {
             if !stateText(spec).isEmpty && spec.children.isEmpty {
                 stack.addArrangedSubview(makeLabel(stateText(spec), spec: spec))
             }
@@ -3502,15 +3598,21 @@ final class HTMLToIOSNodeRenderer {
         grid.alignment = .fill
         grid.spacing = spec.style.spacing ?? 0
         let columns = max(spec.style.gridColumnCount ?? 2, 1)
-        for start in stride(from: 0, to: spec.children.count, by: columns) {
+        let dynamicItems = state.contentOverrides[spec.id] ?? []
+        let itemCount = dynamicItems.isEmpty ? spec.children.count : dynamicItems.count
+        for start in stride(from: 0, to: itemCount, by: columns) {
             let row = UIStackView()
             row.axis = .horizontal
             row.alignment = .fill
             row.distribution = .fillEqually
             row.spacing = spec.style.spacing ?? 0
-            let end = min(start + columns, spec.children.count)
+            let end = min(start + columns, itemCount)
             for index in start..<end {
-                row.addArrangedSubview(makeView(spec.children[index]))
+                if dynamicItems.isEmpty {
+                    row.addArrangedSubview(makeView(spec.children[index]))
+                } else {
+                    row.addArrangedSubview(makeDynamicView(dynamicItems[index], in: spec))
+                }
             }
             if end - start < columns {
                 for _ in 0..<(columns - (end - start)) {
@@ -3522,6 +3624,23 @@ final class HTMLToIOSNodeRenderer {
             grid.addArrangedSubview(row)
         }
         return grid
+    }
+
+    private func makeDynamicView(_ item: HTMLToIOSDynamicContentItemSpec, in container: HTMLToIOSNodeSpec) -> UIView {
+        guard let template = container.children.first(where: { $0.id == item.templateNodeID }) ?? container.children.first else {
+            return UIView()
+        }
+        let view = makeView(template)
+        var labels: [UILabel] = []
+        func collectLabels(_ current: UIView) {
+            if let label = current as? UILabel { labels.append(label) }
+            current.subviews.forEach(collectLabels)
+        }
+        collectLabels(view)
+        for (label, value) in zip(labels, item.textValues) {
+            label.text = value
+        }
+        return view
     }
 
     private func makeOverlay(_ spec: HTMLToIOSNodeSpec) -> UIView {

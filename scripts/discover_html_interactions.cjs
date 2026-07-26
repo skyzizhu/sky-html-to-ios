@@ -612,11 +612,57 @@ async function main() {
         };
         const screenState = {};
         for (const screen of screens) screenState[screen.id] = visible(document.querySelector(screen.rootSelector));
+        const contentLeafValues = (root) => {
+          const values = [];
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+          while (walker.nextNode() && values.length < 24) {
+            const parent = walker.currentNode.parentElement;
+            const text = (walker.currentNode.textContent || "").replace(/\s+/g, " ").trim();
+            if (!text || !parent || !visible(parent) || ["SCRIPT", "STYLE", "NOSCRIPT"].includes(parent.tagName)) continue;
+            values.push(text.slice(0, 240));
+          }
+          return values;
+        };
+        const contentItem = (element, index, rootRect) => {
+          const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          return {
+            index,
+            tag: element.tagName.toLowerCase(),
+            classes: Array.from(element.classList).sort().slice(0, 12),
+            role: element.getAttribute("role"),
+            text: (element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 480),
+            textLeaves: contentLeafValues(element),
+            rect: {
+              x: Math.round((rect.x - rootRect.x) * 100) / 100,
+              y: Math.round((rect.y - rootRect.y) * 100) / 100,
+              width: Math.round(rect.width * 100) / 100,
+              height: Math.round(rect.height * 100) / 100,
+            },
+            style: {
+              display: style.display,
+              flexDirection: style.flexDirection,
+              whiteSpace: style.whiteSpace,
+              fontSize: style.fontSize,
+              fontWeight: style.fontWeight,
+              color: style.color,
+              backgroundColor: style.backgroundColor,
+              borderRadius: style.borderRadius,
+            },
+          };
+        };
         const targets = {};
         for (const selector of targetSelectors) {
           try {
             const element = document.querySelector(selector);
-            targets[selector] = element ? { visible: visible(element), classes: Array.from(element.classList).sort(), text: (element.textContent || "").trim().slice(0, 120) } : null;
+            if (!element) { targets[selector] = null; continue; }
+            const rootRect = element.getBoundingClientRect();
+            targets[selector] = {
+              visible: visible(element),
+              classes: Array.from(element.classList).sort(),
+              text: (element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 1000),
+              directChildren: Array.from(element.children).slice(0, 160).map((child, index) => contentItem(child, index, rootRect)),
+            };
           } catch (_) { targets[selector] = null; }
         }
         return { url: location.href, screens: screenState, targets };
@@ -642,19 +688,19 @@ async function main() {
         if (!meta) { interaction.safety = { runtimeProbe: "skipped", reason: "element-metadata-unavailable" }; continue; }
         const unsafe = meta.type === "file" || meta.type === "submit" || Boolean(meta.href && /^https?:/i.test(meta.href)) || /删除|支付|购买|提交|发送|注销|delete|pay|purchase|submit|send/i.test(meta.text || "");
         if (unsafe) { interaction.safety = { runtimeProbe: "skipped", reason: "potential-side-effect" }; continue; }
-        const probePage = await context.newPage();
         let dialogSeen = false;
-        probePage.on("dialog", async (dialog) => { dialogSeen = true; await dialog.dismiss(); });
-        try {
+        const sourceScreen = screens.find((screen) => screen.id === interaction.sourceScreenId);
+        const targetHint = sourceScreen?.virtualStateId || sourceScreen?.id;
+        const escapedHint = String(targetHint || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        const activationSelectors = targetHint ? [
+          `[data-page="${escapedHint}"]`, `[data-screen="${escapedHint}"]`, `[data-route="${escapedHint}"]`, `[aria-controls="${escapedHint}"]`,
+          ...(sourceScreen?.activation?.selectors || []),
+        ] : (sourceScreen?.activation?.selectors || []);
+        const preparePage = async () => {
+          const probePage = await context.newPage();
+          probePage.on("dialog", async (dialog) => { dialogSeen = true; await dialog.dismiss(); });
           await probePage.goto(entryURL, { waitUntil: "domcontentloaded", timeout: args.timeout });
           await probePage.evaluate(async () => { if (document.fonts?.ready) await document.fonts.ready; });
-          const sourceScreen = screens.find((screen) => screen.id === interaction.sourceScreenId);
-          const targetHint = sourceScreen?.virtualStateId || sourceScreen?.id;
-          const escapedHint = String(targetHint || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-          const activationSelectors = targetHint ? [
-            `[data-page="${escapedHint}"]`, `[data-screen="${escapedHint}"]`, `[data-route="${escapedHint}"]`, `[aria-controls="${escapedHint}"]`,
-            ...(sourceScreen?.activation?.selectors || []),
-          ] : (sourceScreen?.activation?.selectors || []);
           for (const activationSelector of activationSelectors) {
             const activation = probePage.locator(activationSelector).first();
             if (await activation.count() && await activation.isVisible()) { await activation.click(); break; }
@@ -669,37 +715,60 @@ async function main() {
               if (args.probeWaitMs) await probePage.waitForTimeout(Math.min(args.probeWaitMs, 120));
             }
           }
+          return probePage;
+        };
+        let probePage = null;
+        try {
+          probePage = await preparePage();
           const targetSelectors = Array.from(new Set(interaction.astEvidence.effects.map((effect) => effect.targetSelector).filter(Boolean)));
-          const before = await snapshot(probePage, targetSelectors);
           const candidates = probePage.locator(interaction.sourceSelector);
-          let locator = candidates.first();
           const candidateCount = await candidates.count();
-          if (candidateCount > 1) {
-            for (let index = 0; index < candidateCount; index += 1) {
-              const candidate = candidates.nth(index);
-              if (await candidate.isVisible() && !await candidate.evaluate((element) => element.classList.contains("active") || element.getAttribute("aria-selected") === "true")) {
-                locator = candidate;
-                break;
-              }
-            }
+          const candidateStates = [];
+          for (let index = 0; index < candidateCount; index += 1) {
+            const candidate = candidates.nth(index);
+            if (!await candidate.isVisible()) continue;
+            candidateStates.push({ index, selected: await candidate.evaluate((element) => element.classList.contains("active") || element.getAttribute("aria-selected") === "true") });
           }
-          if (!candidateCount || !await locator.isVisible()) {
+          candidateStates.sort((left, right) => Number(left.selected) - Number(right.selected) || left.index - right.index);
+          if (!candidateStates.length) {
             interaction.safety = { runtimeProbe: "skipped", reason: "source-not-visible-after-activation" };
             continue;
           }
           const backdropLike = /overlay|mask|backdrop/.test(`${meta.id || ""} ${meta.className || ""}`.toLowerCase());
           const probeMethod = backdropLike ? "synthetic-backdrop-click" : "playwright-click";
-          if (backdropLike) await locator.evaluate((element) => element.click());
-          else await locator.click({ timeout: Math.min(args.timeout, 5000) });
-          if (args.probeWaitMs) await probePage.waitForTimeout(args.probeWaitMs);
-          const after = await snapshot(probePage, targetSelectors);
-          interaction.runtimeEvidence = { status: "verified", changed: isVisibleSnapshotDifferent(before, after), probeMethod, before, after, dialogSeen };
+          const hasContentMutation = interaction.astEvidence.effects.some((effect) => effect.type === "content-mutation");
+          const statesToProbe = hasContentMutation && candidateStates.length <= 12 ? candidateStates : candidateStates.slice(0, 1);
+          const variants = [];
+          for (let ordinal = 0; ordinal < statesToProbe.length; ordinal += 1) {
+            if (ordinal > 0) probePage = await preparePage();
+            const sourceIndex = statesToProbe[ordinal].index;
+            const before = await snapshot(probePage, targetSelectors);
+            const locator = probePage.locator(interaction.sourceSelector).nth(sourceIndex);
+            if (backdropLike) await locator.evaluate((element) => element.click());
+            else await locator.click({ timeout: Math.min(args.timeout, 5000) });
+            if (args.probeWaitMs) await probePage.waitForTimeout(args.probeWaitMs);
+            const after = await snapshot(probePage, targetSelectors);
+            variants.push({ sourceIndex, before, after });
+            await probePage.close();
+            probePage = null;
+          }
+          const primary = variants[0];
+          interaction.runtimeEvidence = {
+            status: "verified",
+            changed: variants.some((variant) => isVisibleSnapshotDifferent(variant.before, variant.after)),
+            probeMethod,
+            sourceIndex: primary.sourceIndex,
+            before: primary.before,
+            after: primary.after,
+            contentVariants: variants,
+            dialogSeen,
+          };
           if (interaction.runtimeEvidence.changed) interaction.confidence = Math.min(1, interaction.confidence + 0.12);
           probed += 1;
         } catch (error) {
           interaction.runtimeEvidence = { status: "failed", error: error.message };
         } finally {
-          await probePage.close();
+          if (probePage) await probePage.close();
         }
       }
     }
