@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.24.0"
+GENERATOR_VERSION = "1.25.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -952,6 +952,44 @@ def ordered_content_items(
     ]
 
 
+def control_visual_state_payload(raw: Any, scale: float) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    gradient = gradient_spec(raw.get("backgroundImage"))
+    border_widths = [
+        scaled_css_value(raw.get(key), scale)
+        for key in ("borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth")
+    ]
+    border_colors = [
+        color_string(raw.get(key))
+        for key in ("borderTopColor", "borderRightColor", "borderBottomColor", "borderLeftColor")
+    ]
+    border_index = max(range(4), key=lambda index: border_widths[index])
+    transform = str(raw.get("transform") or "none")
+    state_scale = 1.0
+    matrix = re.search(r"matrix\(\s*([-+.\deE]+)\s*,\s*([-+.\deE]+)", transform)
+    explicit_scale = re.search(r"scale\(\s*([-+.\deE]+)", transform)
+    if matrix:
+        state_scale = max((float(matrix.group(1)) ** 2 + float(matrix.group(2)) ** 2) ** 0.5, 0)
+    elif explicit_scale:
+        state_scale = max(float(explicit_scale.group(1)), 0)
+    shadow = shadow_spec(raw.get("boxShadow"), scale)
+    return {
+        "foreground": color_string(raw.get("color")),
+        "background": color_string(raw.get("backgroundColor")),
+        "gradientColors": gradient["colors"],
+        "borderWidth": max(border_widths),
+        "borderColor": border_colors[border_index],
+        "cornerRadius": scaled_css_value(raw.get("borderRadius"), scale) or None,
+        "opacity": min(max(number(raw.get("opacity"), 1), 0), 1),
+        "scale": state_scale,
+        "shadowColor": shadow["color"],
+        "shadowOffsetX": shadow["x"],
+        "shadowOffsetY": shadow["y"],
+        "shadowRadius": shadow["radius"],
+    }
+
+
 def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool = False) -> dict[str, Any] | None:
     node = context.nodes.get(node_id)
     if not node or is_system_chrome(node):
@@ -1318,6 +1356,18 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         "placeholder": placeholder,
         "textBehavior": text_behavior,
         "dataBinding": node.get("dataBinding") if isinstance(node.get("dataBinding"), dict) else None,
+        "isEnabled": bool((node.get("state") or {}).get("enabled", True)),
+        "controlVisualStates": {
+            key: value
+            for key, value in (
+                (
+                    state_name,
+                    control_visual_state_payload(state_style, context.design_scale),
+                )
+                for state_name, state_style in (node.get("controlVisualStates") or {}).items()
+            )
+            if value is not None
+        },
         "axis": axis,
         "children": child_payloads,
         "overlayChildren": overlay_child_payloads,
@@ -2007,6 +2057,8 @@ struct HTMLToIOSNodeSpec: Codable, Identifiable {{
     let placeholder: String
     let textBehavior: HTMLToIOSTextBehaviorSpec?
     let dataBinding: HTMLToIOSDataBindingSpec?
+    let isEnabled: Bool
+    let controlVisualStates: [String: HTMLToIOSControlVisualStateSpec]
     let axis: String
     let children: [HTMLToIOSNodeSpec]
     let overlayChildren: [HTMLToIOSNodeSpec]
@@ -2075,6 +2127,21 @@ struct HTMLToIOSDataBindingSpec: Codable {{
     let ownership: String
     let requiresViewModel: Bool
     let snapshotIsSampleData: Bool
+}}
+
+struct HTMLToIOSControlVisualStateSpec: Codable {{
+    let foreground: String?
+    let background: String?
+    let gradientColors: [String]?
+    let borderWidth: Double?
+    let borderColor: String?
+    let cornerRadius: Double?
+    let opacity: Double
+    let scale: Double
+    let shadowColor: String?
+    let shadowOffsetX: Double
+    let shadowOffsetY: Double
+    let shadowRadius: Double
 }}
 
 struct HTMLToIOSContentItemSpec: Codable, Identifiable {{
@@ -2864,11 +2931,34 @@ private struct HTMLToIOSAccessibilityModifier: ViewModifier {
     }
 }
 
+private struct HTMLToIOSControlVisualStateKey: EnvironmentKey {
+    static let defaultValue = "normal"
+}
+
+private extension EnvironmentValues {
+    var htmlToIOSControlVisualState: String {
+        get { self[HTMLToIOSControlVisualStateKey.self] }
+        set { self[HTMLToIOSControlVisualStateKey.self] = newValue }
+    }
+}
+
+private struct HTMLToIOSControlButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.environment(
+            \.htmlToIOSControlVisualState,
+            !isEnabled ? "disabled" : (configuration.isPressed ? "pressed" : "normal")
+        )
+    }
+}
+
 struct HTMLToIOSNativeNodeView: View {
     @ObservedObject var store: HTMLToIOSGeneratedStore
     let spec: HTMLToIOSNodeSpec
     let textOverrides: [String: String]
     @FocusState private var isInputFocused: Bool
+    @Environment(\.htmlToIOSControlVisualState) private var inheritedControlVisualState
 
     init(store: HTMLToIOSGeneratedStore, spec: HTMLToIOSNodeSpec, textOverrides: [String: String] = [:]) {
         self.store = store
@@ -2886,7 +2976,8 @@ struct HTMLToIOSNativeNodeView: View {
     @ViewBuilder private var interactiveContent: some View {
         if spec.action != nil && !isNativeControl {
             Button(action: { store.perform(spec.action) }) { styledContent }
-                .buttonStyle(.plain)
+                .buttonStyle(HTMLToIOSControlButtonStyle())
+                .disabled(!spec.isEnabled)
                 .modifier(HTMLToIOSAccessibilityModifier(spec: spec))
         } else {
             styledContent.modifier(HTMLToIOSAccessibilityModifier(spec: spec))
@@ -2914,20 +3005,56 @@ struct HTMLToIOSNativeNodeView: View {
         }
         .modifier(HTMLToIOSOverlayClipModifier(style: spec.style))
         .modifier(HTMLToIOSMotionModifier(motions: spec.motions))
+        .overlay {
+            if let state = activeControlVisualStyle,
+               let borderColor = state.borderColor,
+               (state.borderWidth ?? 0) > 0 {
+                RoundedRectangle(cornerRadius: state.cornerRadius ?? spec.style.cornerRadius ?? 0)
+                    .stroke(Color(htmlToIOS: borderColor), lineWidth: state.borderWidth ?? 0)
+                    .allowsHitTesting(false)
+            }
+        }
+        .scaleEffect(activeControlVisualStyle?.scale ?? 1)
+        .opacity(activeControlVisualStyle?.opacity ?? 1)
+        .shadow(
+            color: Color(htmlToIOS: activeControlVisualStyle?.shadowColor)
+                .opacity(activeControlVisualStyle?.shadowColor == nil ? 0 : 1),
+            radius: activeControlVisualStyle?.shadowRadius ?? 0,
+            x: activeControlVisualStyle?.shadowOffsetX ?? 0,
+            y: activeControlVisualStyle?.shadowOffsetY ?? 0
+        )
         .modifier(HTMLToIOSMarginModifier(style: spec.style))
     }
 
     private var selectionForeground: String? {
+        if let value = activeControlVisualStyle?.foreground { return value }
         guard spec.selectionStateID != nil else { return nil }
         return store.isSelected(spec) ? spec.selectedForeground : spec.unselectedForeground
     }
     private var selectionBackground: String? {
+        if let value = activeControlVisualStyle?.background { return value }
         guard spec.selectionStateID != nil else { return nil }
         return store.isSelected(spec) ? spec.selectedBackground : spec.unselectedBackground
     }
     private var selectionGradient: [String]? {
+        if let value = activeControlVisualStyle?.gradientColors, !value.isEmpty { return value }
         guard spec.selectionStateID != nil else { return nil }
         return store.isSelected(spec) ? spec.selectedGradientColors : spec.unselectedGradientColors
+    }
+    private var activeControlVisualStyle: HTMLToIOSControlVisualStateSpec? {
+        let stateName: String
+        if !spec.isEnabled {
+            stateName = "disabled"
+        } else if isInputFocused {
+            stateName = "focused"
+        } else if inheritedControlVisualState != "normal" {
+            stateName = inheritedControlVisualState
+        } else if spec.selectionStateID != nil && store.isSelected(spec) {
+            stateName = "selected"
+        } else {
+            return nil
+        }
+        return spec.controlVisualStates[stateName]
     }
     private var isNativeControl: Bool {
         ["button", "link", "menu-item", "tab-item", "toggle", "switch", "checkbox",
@@ -2966,7 +3093,8 @@ struct HTMLToIOSNativeNodeView: View {
         case "button", "link", "menu-item", "tab-item":
             if spec.action != nil {
                 Button(action: { store.perform(spec.action) }) { buttonContent }
-                    .buttonStyle(.plain)
+                    .buttonStyle(HTMLToIOSControlButtonStyle())
+                    .disabled(!spec.isEnabled)
             } else {
                 buttonContent
             }
@@ -2990,7 +3118,7 @@ struct HTMLToIOSNativeNodeView: View {
             .onAppear {
                 if spec.textBehavior?.autofocus == true { isInputFocused = true }
             }
-            .disabled(spec.textBehavior?.editable == false || spec.textBehavior?.enabled == false)
+            .disabled(!spec.isEnabled || spec.textBehavior?.editable == false || spec.textBehavior?.enabled == false)
         case "secure-field", "secure-input":
             SecureField(
                 "",
@@ -3011,7 +3139,7 @@ struct HTMLToIOSNativeNodeView: View {
             .onAppear {
                 if spec.textBehavior?.autofocus == true { isInputFocused = true }
             }
-            .disabled(spec.textBehavior?.editable == false || spec.textBehavior?.enabled == false)
+            .disabled(!spec.isEnabled || spec.textBehavior?.editable == false || spec.textBehavior?.enabled == false)
         case "text-area":
             let value = store.binding(
                 for: spec.id,
@@ -3033,7 +3161,7 @@ struct HTMLToIOSNativeNodeView: View {
                     .onAppear {
                         if spec.textBehavior?.autofocus == true { isInputFocused = true }
                     }
-                    .disabled(spec.textBehavior?.editable == false || spec.textBehavior?.enabled == false)
+                    .disabled(!spec.isEnabled || spec.textBehavior?.editable == false || spec.textBehavior?.enabled == false)
             }
         case "toggle", "switch", "checkbox":
             Toggle(spec.text, isOn: store.flagBinding(for: spec.id))
@@ -3714,6 +3842,7 @@ final class HTMLToIOSInsetTextField: UITextField {
 final class HTMLToIOSManagedTextView: UITextView, UITextViewDelegate {
     var maxLength: Int?
     var onValueChanged: ((String) -> Void)?
+    var visualStateDidChange: ((String) -> Void)?
     private let placeholderLabel = UILabel()
     private var placeholderTopConstraint: NSLayoutConstraint?
     private var placeholderLeadingConstraint: NSLayoutConstraint?
@@ -3768,6 +3897,50 @@ final class HTMLToIOSManagedTextView: UITextView, UITextViewDelegate {
         refreshPlaceholder()
         onValueChanged?(text)
     }
+
+    func textViewDidBeginEditing(_ textView: UITextView) {
+        visualStateDidChange?("focused")
+    }
+
+    func textViewDidEndEditing(_ textView: UITextView) {
+        visualStateDidChange?("normal")
+    }
+}
+
+final class HTMLToIOSStatefulButton: UIButton {
+    var visualStateDidChange: ((String) -> Void)?
+
+    override var isHighlighted: Bool {
+        didSet { notifyVisualState() }
+    }
+    override var isSelected: Bool {
+        didSet { notifyVisualState() }
+    }
+    override var isEnabled: Bool {
+        didSet { notifyVisualState() }
+    }
+
+    private func notifyVisualState() {
+        visualStateDidChange?(!isEnabled ? "disabled" : (isHighlighted ? "pressed" : (isSelected ? "selected" : "normal")))
+    }
+}
+
+final class HTMLToIOSStatefulControl: UIControl {
+    var visualStateDidChange: ((String) -> Void)?
+
+    override var isHighlighted: Bool {
+        didSet { notifyVisualState() }
+    }
+    override var isSelected: Bool {
+        didSet { notifyVisualState() }
+    }
+    override var isEnabled: Bool {
+        didSet { notifyVisualState() }
+    }
+
+    private func notifyVisualState() {
+        visualStateDidChange?(!isEnabled ? "disabled" : (isHighlighted ? "pressed" : (isSelected ? "selected" : "normal")))
+    }
 }
 
 final class HTMLToIOSNodeRenderer {
@@ -3789,15 +3962,17 @@ final class HTMLToIOSNodeRenderer {
           switch spec.semantic {
         case "button", "link", "menu-item", "tab-item":
             if spec.children.isEmpty && spec.overlayChildren.isEmpty {
-                let button = UIButton(type: .system)
+                let button = HTMLToIOSStatefulButton(type: .system)
                 button.setAttributedTitle(attributedText(displayText(spec), spec: spec), for: .normal)
                 button.titleLabel?.numberOfLines = spec.style.textLineLimit ?? 0
                 button.titleLabel?.lineBreakMode = lineBreakMode(spec)
                 button.contentHorizontalAlignment = .leading
+                button.isEnabled = spec.isEnabled
                 button.addAction(UIAction { [actionHandler] _ in actionHandler(spec.action) }, for: .touchUpInside)
                 view = button
             } else {
-                let control = UIControl()
+                let control = HTMLToIOSStatefulControl()
+                control.isEnabled = spec.isEnabled
                 let content = spec.axis == "grid" ? makeGrid(spec) : makeStack(spec)
                 content.translatesAutoresizingMaskIntoConstraints = false
                 control.addSubview(content)
@@ -3819,7 +3994,7 @@ final class HTMLToIOSNodeRenderer {
             let initialValue = state.values[spec.id] ?? spec.textBehavior?.initialValue ?? spec.text
             field.attributedText = attributedText(initialValue, spec: spec)
             field.isSecureTextEntry = spec.semantic == "secure-field" || spec.semantic == "secure-input" || spec.textBehavior?.secure == true
-            field.isEnabled = spec.textBehavior?.enabled != false
+            field.isEnabled = spec.isEnabled && spec.textBehavior?.enabled != false
             field.isUserInteractionEnabled = spec.textBehavior?.editable != false
             field.keyboardType = keyboardType(spec.textBehavior?.keyboardType)
             field.textContentType = textContentType(spec.textBehavior?.contentType)
@@ -3850,7 +4025,7 @@ final class HTMLToIOSNodeRenderer {
             textView.isEditable = spec.textBehavior?.editable == true
             textView.isSelectable = spec.textBehavior?.selectable != false
             textView.isScrollEnabled = spec.textBehavior?.scrollable != false
-            textView.isUserInteractionEnabled = spec.textBehavior?.enabled != false
+            textView.isUserInteractionEnabled = spec.isEnabled && spec.textBehavior?.enabled != false
             textView.keyboardType = keyboardType(spec.textBehavior?.keyboardType)
             textView.textContentType = textContentType(spec.textBehavior?.contentType)
             textView.returnKeyType = returnKeyType(spec.textBehavior?.returnKey ?? spec.textBehavior?.submitLabel)
@@ -3923,6 +4098,7 @@ final class HTMLToIOSNodeRenderer {
           }
         }
         applyStyle(spec, to: view)
+        installControlVisualStates(spec, on: view)
         attachOverlayChildren(spec, to: view)
         applyMotion(spec, to: view)
         let renderedView = wrapInMargins(view, spec: spec)
@@ -4421,6 +4597,91 @@ final class HTMLToIOSNodeRenderer {
         }
     }
 
+    private func installControlVisualStates(_ spec: HTMLToIOSNodeSpec, on view: UIView) {
+        guard !spec.controlVisualStates.isEmpty else { return }
+        let update: (String) -> Void = { [weak self, weak view] stateName in
+            guard let self, let view else { return }
+            self.applyControlVisualState(stateName, spec: spec, to: view)
+        }
+        if let button = view as? HTMLToIOSStatefulButton {
+            button.visualStateDidChange = update
+        } else if let control = view as? HTMLToIOSStatefulControl {
+            control.visualStateDidChange = update
+        } else if let field = view as? UITextField {
+            field.addAction(UIAction { _ in update("focused") }, for: .editingDidBegin)
+            field.addAction(UIAction { _ in update("normal") }, for: .editingDidEnd)
+        } else if let textView = view as? HTMLToIOSManagedTextView {
+            textView.visualStateDidChange = update
+        }
+        update(spec.isEnabled ? (state.isSelected(spec) ? "selected" : "normal") : "disabled")
+    }
+
+    private func applyControlVisualState(_ stateName: String, spec: HTMLToIOSNodeSpec, to view: UIView) {
+        let visual = spec.controlVisualStates[stateName]
+        let selected = state.isSelected(spec)
+        let baseBackground = spec.selectionStateID == nil
+            ? spec.style.background
+            : (selected ? spec.selectedBackground : spec.unselectedBackground)
+        let baseForeground = spec.selectionStateID == nil
+            ? spec.style.foreground
+            : (selected ? spec.selectedForeground : spec.unselectedForeground)
+        let baseGradient = spec.selectionStateID == nil
+            ? spec.style.gradientColors
+            : (selected ? spec.selectedGradientColors : spec.unselectedGradientColors)
+        let background = visual?.background ?? baseBackground
+        let foreground = visual?.foreground ?? baseForeground
+        let gradients = (visual?.gradientColors?.isEmpty == false ? visual?.gradientColors : nil) ?? baseGradient
+
+        view.layer.sublayers?
+            .filter { $0.name == "html-to-ios-control-state-gradient" }
+            .forEach { $0.removeFromSuperlayer() }
+        view.layer.sublayers?.first(where: { $0.name == "html-to-ios-gradient" })?.isHidden = visual != nil
+        if let color = UIColor(htmlToIOS: gradients?.first ?? background) {
+            view.backgroundColor = color
+        }
+        if let gradients, gradients.count >= 2 {
+            let layer = CAGradientLayer()
+            layer.name = "html-to-ios-control-state-gradient"
+            layer.colors = gradients.compactMap { UIColor(htmlToIOS: $0)?.cgColor }
+            layer.startPoint = CGPoint(x: 0, y: 0.5)
+            layer.endPoint = CGPoint(x: 1, y: 0.5)
+            view.layer.insertSublayer(layer, at: 0)
+        }
+        if let color = UIColor(htmlToIOS: foreground) {
+            applyControlForeground(color, to: view)
+        }
+        view.layer.borderWidth = visual?.borderWidth ?? spec.style.borderWidth ?? 0
+        view.layer.borderColor = UIColor(htmlToIOS: visual?.borderColor ?? spec.style.borderColor)?.cgColor
+        view.layer.cornerRadius = visual?.cornerRadius ?? spec.style.cornerRadius ?? 0
+        view.alpha = visual?.opacity ?? spec.style.opacity ?? 1
+        let scale = visual?.scale ?? 1
+        view.transform = CGAffineTransform(scaleX: scale, y: scale)
+        if let color = UIColor(htmlToIOS: visual?.shadowColor ?? spec.style.shadowColor) {
+            view.layer.shadowColor = color.cgColor
+            view.layer.shadowOpacity = 1
+            view.layer.shadowRadius = visual?.shadowRadius ?? spec.style.shadowRadius ?? 0
+            view.layer.shadowOffset = CGSize(
+                width: visual?.shadowOffsetX ?? spec.style.shadowOffsetX ?? 0,
+                height: visual?.shadowOffsetY ?? spec.style.shadowOffsetY ?? 0
+            )
+        } else {
+            view.layer.shadowOpacity = 0
+        }
+    }
+
+    private func applyControlForeground(_ color: UIColor, to view: UIView) {
+        view.tintColor = color
+        (view as? UILabel)?.textColor = color
+        (view as? UITextField)?.textColor = color
+        (view as? UITextView)?.textColor = color
+        if let button = view as? UIButton,
+           let title = button.attributedTitle(for: .normal)?.mutableCopy() as? NSMutableAttributedString {
+            title.addAttribute(.foregroundColor, value: color, range: NSRange(location: 0, length: title.length))
+            button.setAttributedTitle(title, for: .normal)
+        }
+        view.subviews.forEach { applyControlForeground(color, to: $0) }
+    }
+
     private func applyStyle(_ spec: HTMLToIOSNodeSpec, to view: UIView) {
         view.translatesAutoresizingMaskIntoConstraints = false
         let selected = state.isSelected(spec)
@@ -4565,7 +4826,9 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
 
     private func updateGeneratedLayers(in current: UIView) {
         for layer in current.layer.sublayers ?? [] {
-            if layer.name == "html-to-ios-gradient" { layer.frame = current.bounds }
+            if layer.name == "html-to-ios-gradient" || layer.name == "html-to-ios-control-state-gradient" {
+                layer.frame = current.bounds
+            }
             if let border = layer as? CAShapeLayer, layer.name == "html-to-ios-border" {
                 border.frame = current.bounds
                 border.path = UIBezierPath(

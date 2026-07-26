@@ -202,6 +202,7 @@ UI IR 是浏览器渲染结果与原生代码之间的稳定中间层。不要�
 - `content.lines`、`lineRects`、`lineTexts`、`firstBaselineY`、`lastBaselineY` 与 `fontMetrics` 使用浏览器实际文字行框、字符归属和字体度量。`lineTexts` 只有在逐字符 Range 与完整渲染文本可校验一致时才写入；`whiteSpace`、`webkitLineClamp`、`textOverflow`、`flexShrink`、`flexWrap` 和宽高比继续保留在 computed `style` 中。
 - 文本节点和输入节点使用 `textBehavior` 固化行为判定。`role` 为 `input|display`，`nativeControl` 为 `label|text-field|text-view`；编辑、只读、选择、多行、内部滚动和 secure 分开表达。`readonly` 输入仍是输入控件，纯展示 TextView 必须 `editable=false`。
 - `dataBinding` 只在存在明确动态数据标注时生成，并默认作为视觉 fixture 元数据。`ownership=external` 必须具有 `sourceID`，但基础转换不生成接口或 ViewModel；loading/content/empty/error 只用于区分需要还原的画面结构。
+- `controlVisualStates` 保存浏览器实测的 `pressed|focused|disabled|selected` 紧凑样式。它只记录与 normal 状态不同或来源当前明确激活的状态；原生 Button/UIControl/输入焦点消费该字段，不能靠统一高亮效果替代。
 - 横向 repeat item、紧凑图标容器和比例媒体的来源 rect 是生成 `fixed/min/intrinsic/aspectRatio` 策略的证据。生成器可派生运行时样式，但不得删除原始 rect 与 CSS 证据。
 - `support` 使用 `native`、`native-fallback`、`placeholder` 或 `unsupported`。
 - `source.synthetic` 记录 pseudo-element 等浏览器生成节点；`layout.estimated` 表示边界需要截图纠偏。

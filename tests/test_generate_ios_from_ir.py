@@ -1498,6 +1498,18 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 },
             }
             field["style"]["padding"] = ["10px", "14px", "10px", "14px"]
+            field["controlVisualStates"] = {
+                "focused": {
+                    "color": "rgb(20, 30, 40)", "backgroundColor": "rgb(255, 255, 255)",
+                    "backgroundImage": "none",
+                    "borderTopColor": "rgb(80, 90, 240)", "borderRightColor": "rgb(80, 90, 240)",
+                    "borderBottomColor": "rgb(80, 90, 240)", "borderLeftColor": "rgb(80, 90, 240)",
+                    "borderTopWidth": "2px", "borderRightWidth": "2px",
+                    "borderBottomWidth": "2px", "borderLeftWidth": "2px",
+                    "borderRadius": "10px", "boxShadow": "0 2px 8px rgba(80, 90, 240, 0.25)",
+                    "opacity": "1", "transform": "scale(1.01)",
+                },
+            }
             field["dataBinding"] = {
                 "sourceID": "profile", "itemIDKey": "id", "stateRole": "content",
                 "pagination": "none", "ownership": "external",
@@ -1524,6 +1536,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("HTMLToIOSInputPolicyModifier", swiftui_runtime)
             self.assertIn("prompt: inputPrompt", swiftui_runtime)
             self.assertIn(".padding(.horizontal, -5)", swiftui_runtime)
+            self.assertIn("HTMLToIOSControlButtonStyle", swiftui_runtime)
+            self.assertIn("activeControlVisualStyle", swiftui_runtime)
 
             uikit_dir = root / "uikit"
             self.run_generator([path], uikit_dir, ui_stack="uikit")
@@ -1537,6 +1551,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("field.attributedPlaceholder = attributedPlaceholder(spec)", uikit_runtime)
             self.assertIn("field.contentInsets = contentInsets(spec)", uikit_runtime)
             self.assertIn("field.markedTextRange == nil", uikit_runtime)
+            self.assertIn("installControlVisualStates", uikit_runtime)
+            self.assertIn("HTMLToIOSStatefulButton", uikit_runtime)
             generated = json.loads((uikit_dir / PAYLOAD).read_text(encoding="utf-8"))
             generated_field = generated["screens"][0]["root"]["children"][0]
             self.assertEqual(generated_field["textBehavior"]["initialValue"], "Sky")
@@ -1544,6 +1560,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertEqual(generated_field["textBehavior"]["fieldID"], "profile.name")
             self.assertEqual(generated_field["textBehavior"]["placeholderStyle"]["fontSize"], 14)
             self.assertEqual(generated_field["textBehavior"]["placeholderStyle"]["fontWeight"], "500")
+            self.assertEqual(generated_field["controlVisualStates"]["focused"]["borderWidth"], 2)
+            self.assertAlmostEqual(generated_field["controlVisualStates"]["focused"]["scale"], 1.01)
             self.assertEqual(generated_field["dataBinding"]["sourceID"], "profile")
             self.assertTrue(generated_field["dataBinding"]["requiresViewModel"])
 

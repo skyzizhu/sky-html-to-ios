@@ -183,6 +183,16 @@ def validate(data):
                             errors.append(f"{nwhere}.dataBinding.{key} must be a boolean")
                     if data_binding.get("ownership") == "external" and not data_binding.get("sourceID"):
                         errors.append(f"{nwhere}.dataBinding.sourceID is required for external ownership")
+            control_states = node.get("controlVisualStates")
+            if control_states is not None:
+                if not isinstance(control_states, dict):
+                    errors.append(f"{nwhere}.controlVisualStates must be an object")
+                else:
+                    for key, value in control_states.items():
+                        if key not in {"pressed", "focused", "disabled", "selected"}:
+                            errors.append(f"{nwhere}.controlVisualStates has invalid state: {key}")
+                        if not isinstance(value, dict):
+                            errors.append(f"{nwhere}.controlVisualStates.{key} must be an object")
             semantic_type = node.get("semanticType")
             if semantic_type not in ALLOWED_SEMANTIC_TYPES:
                 errors.append(f"{nwhere}.semanticType has invalid value: {semantic_type}")

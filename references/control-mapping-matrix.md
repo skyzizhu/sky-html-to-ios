@@ -178,6 +178,8 @@ UI IR 应保留：
 
 hover 在 iPhone 没有直接等价。若只用于视觉反馈可忽略；若承载必要信息，转换成点击、菜单或长按入口并报告。
 
+浏览器提取阶段应对可见交互控件实测 pressed 与 focused 的计算样式，并保留初始 disabled/selected 状态。原生端由 `ButtonStyle`、`UIControl.isHighlighted/isEnabled/isSelected` 和输入焦点驱动同名状态；只有来源没有状态差异时才沿用系统反馈。
+
 ## 11. 置信度与降级
 
 每个节点写入：

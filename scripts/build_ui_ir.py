@@ -1653,6 +1653,7 @@ def build_ir(data: dict, args) -> dict:
             },
             "textBehavior": text_behavior(node, mapping["semanticType"]),
             "dataBinding": binding_contract,
+            "controlVisualStates": node.get("controlStateStyles") or None,
             "nativeMapping": mapping["nativeMapping"],
             "iosHints": {
                 key.removeprefix("data-ios-"): value

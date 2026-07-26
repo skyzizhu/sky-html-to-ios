@@ -341,6 +341,17 @@ class BuildUIIRTests(unittest.TestCase):
                 "fontSize": "14px", "fontWeight": "500", "color": "rgba(80, 90, 110, 0.65)",
                 "lineHeight": "20px", "letterSpacing": "0.2px", "opacity": "0.8",
             }
+            nodes[1]["controlStateStyles"] = {
+                "focused": {
+                    "color": "rgb(20, 30, 40)", "backgroundColor": "rgb(255, 255, 255)",
+                    "borderTopColor": "rgb(80, 90, 240)", "borderRightColor": "rgb(80, 90, 240)",
+                    "borderBottomColor": "rgb(80, 90, 240)", "borderLeftColor": "rgb(80, 90, 240)",
+                    "borderTopWidth": "2px", "borderRightWidth": "2px",
+                    "borderBottomWidth": "2px", "borderLeftWidth": "2px",
+                    "borderRadius": "10px", "boxShadow": "none", "opacity": "1", "transform": "none",
+                    "backgroundImage": "none",
+                },
+            }
             nodes[2]["attributes"] = {
                 "maxlength": "200", "placeholder": "Notes",
                 "data-ios-data-source": "profile-notes", "data-ios-item-id": "id",
@@ -382,6 +393,10 @@ class BuildUIIRTests(unittest.TestCase):
             self.assertEqual(
                 by_runtime_id["name"]["textBehavior"]["placeholderStyle"]["foreground"],
                 "rgba(80, 90, 110, 0.65)",
+            )
+            self.assertEqual(
+                by_runtime_id["name"]["controlVisualStates"]["focused"]["borderTopWidth"],
+                "2px",
             )
             self.assertEqual(by_runtime_id["notes"]["semanticType"], "text-area")
             self.assertTrue(by_runtime_id["notes"]["textBehavior"]["multiline"])

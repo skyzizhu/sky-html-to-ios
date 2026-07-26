@@ -101,6 +101,12 @@ class ValidateUIIRTests(unittest.TestCase):
         self.assertTrue(any("pagination has invalid value" in error for error in errors))
         self.assertTrue(any("sourceID is required" in error for error in errors))
 
+    def test_control_visual_states_use_supported_state_names(self) -> None:
+        payload = node("button", "none")
+        payload["controlVisualStates"] = {"active": {"opacity": "0.8"}}
+        errors, _ = MODULE.validate(ir(payload))
+        self.assertTrue(any("invalid state: active" in error for error in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

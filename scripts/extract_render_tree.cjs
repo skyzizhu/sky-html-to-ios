@@ -933,6 +933,125 @@ async function main() {
       };
     }, rootSelector);
 
+    const compactControlStyle = async (locator) => locator.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        color: style.color,
+        backgroundColor: style.backgroundColor,
+        backgroundImage: style.backgroundImage,
+        borderTopColor: style.borderTopColor,
+        borderRightColor: style.borderRightColor,
+        borderBottomColor: style.borderBottomColor,
+        borderLeftColor: style.borderLeftColor,
+        borderTopWidth: style.borderTopWidth,
+        borderRightWidth: style.borderRightWidth,
+        borderBottomWidth: style.borderBottomWidth,
+        borderLeftWidth: style.borderLeftWidth,
+        borderRadius: style.borderRadius,
+        boxShadow: style.boxShadow,
+        opacity: style.opacity,
+        transform: style.transform,
+      };
+    });
+    const stateDiffers = (left, right) => JSON.stringify(left) !== JSON.stringify(right);
+    const interactiveIds = new Set((extracted.interactions || []).map((item) => item.sourceRuntimeId));
+    for (const node of extracted.nodes.filter((item) => interactiveIds.has(item.runtimeId)).slice(0, 80)) {
+      if (!node.visible || node.synthetic || node.properties?.disabled) {
+        if (node.properties?.disabled) {
+          try {
+            node.controlStateStyles = { disabled: await compactControlStyle(page.locator(node.selector).first()) };
+          } catch (error) {
+            warnings.push(`Disabled control state sampling skipped for ${node.selector}: ${error.message}`);
+          }
+        }
+        continue;
+      }
+      const locator = page.locator(node.selector).first();
+      try {
+        const normal = await compactControlStyle(locator);
+        const states = {};
+        await locator.focus();
+        const focused = await compactControlStyle(locator);
+        if (stateDiffers(focused, normal)) states.focused = focused;
+        await locator.evaluate((element) => element.blur());
+
+        const box = await locator.boundingBox();
+        if (box && box.width > 0 && box.height > 0) {
+          await page.evaluate(() => {
+            const blocker = (event) => {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+            };
+            globalThis.__htmlToIOSControlStateBlocker = blocker;
+            for (const type of ["pointerdown", "pointerup", "mousedown", "mouseup", "click"]) {
+              addEventListener(type, blocker, true);
+            }
+          });
+          let pressed;
+          try {
+            await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+            await page.mouse.down();
+            pressed = await compactControlStyle(locator);
+            await page.mouse.move(0, 0);
+            await page.mouse.up();
+          } finally {
+            await page.evaluate(() => {
+              const blocker = globalThis.__htmlToIOSControlStateBlocker;
+              if (blocker) {
+                for (const type of ["pointerdown", "pointerup", "mousedown", "mouseup", "click"]) {
+                  removeEventListener(type, blocker, true);
+                }
+              }
+              delete globalThis.__htmlToIOSControlStateBlocker;
+            });
+          }
+          if (stateDiffers(pressed, normal)) states.pressed = pressed;
+        }
+        if (["button", "input", "select", "textarea"].includes(node.tag)) {
+          const disabled = await locator.evaluate((element) => {
+            const clone = element.cloneNode(true);
+            clone.disabled = true;
+            clone.style.position = "fixed";
+            clone.style.left = "-10000px";
+            clone.style.top = "-10000px";
+            clone.style.pointerEvents = "none";
+            element.parentElement.appendChild(clone);
+            try {
+              const style = getComputedStyle(clone);
+              return {
+                color: style.color,
+                backgroundColor: style.backgroundColor,
+                backgroundImage: style.backgroundImage,
+                borderTopColor: style.borderTopColor,
+                borderRightColor: style.borderRightColor,
+                borderBottomColor: style.borderBottomColor,
+                borderLeftColor: style.borderLeftColor,
+                borderTopWidth: style.borderTopWidth,
+                borderRightWidth: style.borderRightWidth,
+                borderBottomWidth: style.borderBottomWidth,
+                borderLeftWidth: style.borderLeftWidth,
+                borderRadius: style.borderRadius,
+                boxShadow: style.boxShadow,
+                opacity: style.opacity,
+                transform: style.transform,
+              };
+            } finally {
+              clone.remove();
+            }
+          });
+          if (stateDiffers(disabled, normal)) states.disabled = disabled;
+        }
+        if (node.properties?.checked || node.properties?.selected || node.attributes?.["aria-selected"] === "true") {
+          states.selected = normal;
+        }
+        if (Object.keys(states).length) node.controlStateStyles = states;
+      } catch (error) {
+        warnings.push(`Control state sampling skipped for ${node.selector}: ${error.message}`);
+        try { await page.mouse.up(); } catch {}
+      }
+    }
+    await page.mouse.move(0, 0);
+
     const parentIds = new Set(extracted.nodes.map((node) => node.parentRuntimeId).filter(Boolean));
     for (const node of extracted.nodes) {
       if (node.encapsulation?.customElement && !node.encapsulation.shadowHost && !parentIds.has(node.runtimeId) && node.visible) {
