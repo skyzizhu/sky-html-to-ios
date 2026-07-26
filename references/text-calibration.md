@@ -31,6 +31,10 @@ python3 scripts/build_text_calibration.py render-tree.json \
 
 SwiftUI `lineSpacing` 不是 CSS `line-height`；UIKit 使用 `NSParagraphStyle.minimumLineHeight/maximumLineHeight` 时要同时处理 baseline offset。中英文混排、Emoji、JetBrains Mono 等等宽字体和不同 weight 必须分别验证。
 
+生成器必须保留字体候选、generic family、style 和 100–900 weight，不能只留下字号。无法合法嵌入来源 Web Font 时，按最终可用语义选择原生 fallback：`monospace` → monospaced system design，`serif` → serif system design，普通 `sans-serif/system-ui` → default system design，并在报告中保留 fallback 风险。`800/900`、`100/200/300` 不得分别压成统一 bold 或 regular。
+
+SwiftUI 多行文字的额外间距按 `CSS line-height - native UIFont.lineHeight` 计算，并把剩余 leading 对称分配到首尾行框；禁止继续使用 `line-height - font-size`。UIKit 使用目标 line height 固定 paragraph 的 minimum/maximum line height，并按原生字体 line height 计算 baseline offset。未显式给出 line-height 时沿用原生字体度量，不制造额外 leading。
+
 复合文字内容不能只保留拼接后的字符串。直接文本节点、内联 span 和视觉子 View 应保留浏览器中的顺序、Range 宽高与前置间距。来源中明确为单行的独立片段可以在实测宽度内使用 `lineLimit(1)` 与有限 `minimumScaleFactor`；多行正文和富文本只把实测宽度作为可收缩上限，禁止为了匹配基准截图造成根页面横向溢出。
 
 `Range.getClientRects()` 的矩形数量不等于视觉行数；数字、单位、上下标等不同字号 run 可能在同一行产生多个不同高度的矩形。应按垂直重叠和中心线距离合并视觉行，单行多字号内容在 SwiftUI 使用 `firstTextBaseline`、在 UIKit 使用 first-baseline 约束，不能因 DOM 容器是 `display:block` 就改成纵向堆叠。

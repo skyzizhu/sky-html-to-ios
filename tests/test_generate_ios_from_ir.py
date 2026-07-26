@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -100,6 +101,33 @@ class GenerateIOSFromIRTests(unittest.TestCase):
         if expect_success and result.returncode != 0:
             self.fail(result.stderr or result.stdout)
         return result
+
+    def test_generated_uikit_sources_typecheck_when_xcode_is_available(self) -> None:
+        if shutil.which("xcrun") is None:
+            self.skipTest("xcrun is unavailable")
+        sdk = subprocess.run(
+            ["xcrun", "--sdk", "iphonesimulator", "--show-sdk-path"],
+            text=True,
+            capture_output=True,
+        )
+        if sdk.returncode != 0:
+            self.skipTest("iPhone Simulator SDK is unavailable")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "home.json"
+            path.write_text(json.dumps(ir("home")), encoding="utf-8")
+            out_dir = root / "Generated" / "HTMLToIOS"
+            self.run_generator([path], out_dir, ui_stack="uikit")
+            sources = sorted(str(item) for item in out_dir.rglob("*.swift"))
+            completed = subprocess.run(
+                [
+                    "xcrun", "--sdk", "iphonesimulator", "swiftc",
+                    "-target", "arm64-apple-ios16.0-simulator", "-typecheck", *sources,
+                ],
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
 
     def test_multi_page_payload_and_modified_file_ownership(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -264,7 +292,9 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             uikit_dir = root / "uikit"
             self.run_generator([path], uikit_dir, ui_stack="uikit")
             uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
-            self.assertIn("directionalLockEnabled = true", uikit_runtime)
+            self.assertIn("isDirectionalLockEnabled = true", uikit_runtime)
+            self.assertIn("final class HTMLToIOSUIKitState", uikit_runtime)
+            self.assertNotIn("private final class HTMLToIOSUIKitState", uikit_runtime)
             self.assertIn("alwaysBounceHorizontal = false", uikit_runtime)
             self.assertIn("label.numberOfLines = spec.style.textLineLimit ?? 0", uikit_runtime)
             self.assertIn("if spec.style.textLineLimit == 1 { return .byClipping }", uikit_runtime)
@@ -1134,11 +1164,17 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             runtime = (out_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn("let measuredTextWidth = style.textMeasureWidth.map", runtime)
             self.assertIn("private var isMeasuredText: Bool", runtime)
+            self.assertIn("htmlToIOSUIFontLineHeight", runtime)
+            self.assertIn("let lineBoxLeading = calibratesTextLineBox", runtime)
+            self.assertIn("htmlToIOSFont(size: fontSize", runtime)
             self.assertIn('} else if spec.axis == "vertical" {', runtime)
             uikit_dir = root / "uikit"
             self.run_generator([path], uikit_dir, ui_stack="uikit")
             uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn("return runs.map(\\.text).joined()", uikit_runtime)
+            self.assertIn("paragraph.minimumLineHeight = targetLineHeight", uikit_runtime)
+            self.assertIn("attributes[.baselineOffset] = (targetLineHeight - font.lineHeight) / 2", uikit_runtime)
+            self.assertIn("private func nativeFont(size: Double", uikit_runtime)
 
     def test_overlapping_inline_range_rects_are_one_visual_text_line(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1147,7 +1183,12 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             root_node = payload["screens"][0]["nodes"][0]
             score = node("home.score", root_node["id"], "text", "82", display="block")
             score["layout"]["rect"] = {"x": 44, "y": 100, "width": 46, "height": 30}
-            score["style"].update({"fontSize": "26px", "fontWeight": "800"})
+            score["style"].update({
+                "fontSize": "26px",
+                "fontWeight": "800",
+                "fontFamily": '"JetBrains Mono", monospace',
+                "fontStyle": "italic",
+            })
             score["content"].update({
                 "lines": 2,
                 "lineTexts": ["82", "分"],
@@ -1175,6 +1216,10 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             )
 
             self.assertEqual(generated_score["style"]["expectedTextLines"], 1)
+            self.assertEqual(generated_score["style"]["fontDesign"], "monospaced")
+            self.assertEqual(generated_score["style"]["fontStyle"], "italic")
+            self.assertEqual(generated_score["richTextRuns"][0]["fontDesign"], "monospaced")
+            self.assertEqual(generated_score["richTextRuns"][0]["fontStyle"], "italic")
             self.assertEqual(generated_score["style"]["textLineLimit"], 1)
             self.assertEqual(generated_score["axis"], "horizontal")
             self.assertIsNone(generated_score["style"]["textMeasureWidth"])
@@ -1182,6 +1227,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertNotIn("\n", "".join(run["text"] for run in generated_score["richTextRuns"]))
             runtime = (out_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn("HStack(alignment: .firstTextBaseline, spacing: 0)", runtime)
+            self.assertIn('if value >= 800 { return .heavy }', runtime)
+            self.assertIn('case "monospaced": return .monospaced', runtime)
 
 
     def test_computed_flex_direction_overrides_absolute_layout_mode(self) -> None:

@@ -240,7 +240,7 @@ UI IR 是浏览器渲染结果与原生代码之间的稳定中间层。不要�
 样式保留最终计算值，不保留无法确定的原始 CSS 表达式：
 
 - `backgroundColor`、`color`、`opacity`
-- `fontFamily`、`fontSize`、`fontWeight`、`lineHeight`、`letterSpacing`、`textAlign`
+- `fontFamily`、`fontSize`、`fontWeight`、`fontStyle`、`lineHeight`、`letterSpacing`、`textAlign`
 - `padding`、`margin`、`gap`
 - `borderWidths`、`borderColors`、`borderStyles`
 - `cornerRadii`
@@ -250,6 +250,8 @@ UI IR 是浏览器渲染结果与原生代码之间的稳定中间层。不要�
 - `objectFit`、`objectPosition`、`clipPath`、`filter`、`backdropFilter`
 
 颜色统一为可解析的 `rgb()`/`rgba()` 或 8 位 Hex。四方向值都展开成 top/right/bottom/left，四角值展开成 topLeft/topRight/bottomRight/bottomLeft。
+
+生成载荷还要从 `fontFamily` 推导 `fontDesign=default|monospaced|serif|rounded`，作为 Web Font 不可嵌入时的原生 fallback 契约；原始 family 字符串仍须保留，不能用推导值覆盖来源证据。
 
 ## Content
 

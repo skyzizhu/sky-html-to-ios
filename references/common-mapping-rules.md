@@ -44,6 +44,7 @@ IR 中保留 content rect、padding、border 和 margin。原生实现必须区�
 
 - 使用实际渲染字体族、字号、字重、行高、字距、对齐和截断规则。
 - CSS `font-weight: 500/600` 映射到最接近的 iOS weight，不要全部退化为 regular/bold。
+- 完整保留 100–900 weight、italic/oblique 和 generic family；monospace/serif/rounded fallback 要使用对应的 iOS system design。
 - `line-height` 是最终行框高度；SwiftUI `lineSpacing` 通常应使用 `lineHeight - fontMetricsLineHeight`，不能直接把 line-height 当 lineSpacing。
 - 多行文本验证实际换行位置。字体度量差异往往比 padding 更容易造成累计偏差。
 - 保留 `nowrap`、line clamp、ellipsis 和富文本片段。
