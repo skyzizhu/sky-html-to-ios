@@ -60,7 +60,10 @@
 - 滚动页的 `UIScrollView` leading/trailing/top/bottom 约束到父 View 完整 bounds，不创建 `safeAreaInsets` 相减后的宽高常量，也不在 `viewDidLoad` 读取尚未稳定的 `view.safeAreaInsets`。
 - 系统管理页面保留 `contentInsetAdjustmentBehavior = .automatic`，由 `adjustedContentInset` 反映状态栏、导航栏、Tab Bar 和 Home Indicator。开启 `.automatic` 后不得再把 `view.safeAreaInsets` 加入 `contentInset`。
 - 自绘 top/bottom bar 可以覆盖在全尺寸 ScrollView 上，只把栏位自身实际高度追加到 `contentInset`/`scrollIndicatorInsets` 一次。系统安全区仍由 `.automatic` 负责。
+- 自绘 viewport bar 必须 leading/trailing 约束到父 View；不得同时保留来源画板固定宽度。横向 arranged subview 根据来源 `flex-grow` 选择 `.fillEqually`/`.fillProportionally` 或调整 hugging/compression，小图标与角标继续保持 intrinsic/aspect ratio。
 - 只有架构计划明确为 `immersive-content` 或完全自管容器时才使用 `.never`；此时页面必须独立处理所有系统遮挡，并在旋转、分屏、键盘和 interactive transition 后重新验证。
+
+生成器改动后至少用一个真实 UIKit 工程执行 `xcodebuild`。包含多行文字、复合水平控件、滚动容器、导航栏、底栏和 presentation 的样例应进入回归；只验证 SwiftUI 编译不能证明 UIKit 路径可用。
 
 ## 事件
 

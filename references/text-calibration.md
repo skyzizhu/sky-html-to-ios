@@ -50,6 +50,8 @@ SwiftUI 多行文字的额外间距按 `CSS line-height - native UIFont.lineHeig
 
 浏览器 Range 的 `height`、`preferredHeight` 和 line rect 高度是文字度量证据，不是原生 `Text`、`UILabel` 或 `UITextView` 的默认硬高度。除非来源节点自身存在固定高度、裁剪或明确的单行控件契约，否则禁止将 Range 高度写入 `.frame(height:)`、height constraint 或 intrinsic content size 覆盖。CSS line-height 继续拥有纵向布局；Range 高度只参与行数、baseline、裁剪和字体 fallback 诊断。
 
+浏览器已确认多行时，可把合并后 line box 总高度作为可扩展 `minHeight`，但不能转成固定高度。SwiftUI 多行 Text 使用 vertical fixed-size/layout priority 保留行框，UIKit `UILabel` 使用多行和 required vertical compression resistance；两端仍允许因窄屏、Dynamic Type 或内容变化向下增长。
+
 首基线校准只能作用于纯文字叶子的字形绘制位置，且字体解析状态必须是 `loaded-web-font` 或 `system-local`；不能改变父容器尺寸、padding 或相邻节点间距。先用目标原生字体的 ascender/leading 计算原生首基线，再与 UI IR 的 `firstBaselineOffset` 比较；偏移必须限制在字号的正负 25% 内。SwiftUI 使用不参与布局计算的文字内容 offset，UIKit 合并到 attributed string 的 baseline offset。按钮、输入框、图标加文字、状态圆点、富组件及包含子 View 的节点不得套用整节点基线偏移，它们按控件 content inset、`firstTextBaseline` 或来源 `align-items` 单独校准。
 
 当浏览器报告 `generic-fallback` 或 `unresolved-fallback` 时，不能通过固定高度掩盖字体不一致。先核对行数、文本宽度、first/last baseline 和截断，再决定是否接受 iOS system fallback。只有字体文件、字号、字重和实际可用字体族已经确定，才允许以约 1pt baseline 偏差作为精细验收目标。

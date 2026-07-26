@@ -330,8 +330,10 @@ python3 scripts/generate_ios_from_ir.py \
 10. 能力为 `available` 时读取 `references/visual-agent-review.md`，实际打开图片并检查 failed-threshold 状态；能力为 `unavailable` 时标记 `not-run`；`unknown` 时先尝试打开一张图片，不能把 unknown 当成完成。
 11. 按 UI IR node 局部纠偏，重新构建并回归所有受影响状态；默认最多 3 轮。
 12. 至少复核首屏、有意义的长页末端、弹层和切换状态。动画 0/50/100 帧只有具备原生确定性采样钩子时才设为 required，否则作为 advisory，不能用三张相同静态图冒充动画验证。
-13. 在项目支持的 320/375/393/430pt 或实际设备宽度上验证 Auto Layout、文字换行、边距和横向溢出；使用 `scripts/compare_text_calibration.py` 核对 iOS 文字测量结果。
+13. 在项目支持的 320/375/393/430pt 或实际设备宽度上验证 Auto Layout、文字换行、边距和横向溢出；使用 `scripts/validate_responsive_ios_matrix.py` 为每个宽度指定真实可用 Simulator，使用 `scripts/compare_text_calibration.py` 核对 iOS 文字测量结果。禁止把一台设备截图缩放后冒充多设备验证；本机缺少某尺寸 runtime 时必须如实报告。
 14. 执行轴向隔离走查：纵向页面的横向拖动不得移动根内容；横向 carousel 的纵向拖动不得带动其自身产生纵向偏移。逐项核对横向 item 宽度、文字行数、图标容器宽高比和末项可达性。
+15. 几何采集仅在 `-HTMLToIOSGeometryCapture 1` 测试启动参数下扩展 accessibility tree，正常 App 不改变辅助功能分组。报告必须同时给出全部可见节点和 `validationRegions` 节点的采集率；容器合并 frame、装饰节点和横向滚动拥有的越界不能误判为根页面溢出。
+16. 同一生成器版本至少执行一次 SwiftUI 与 UIKit 的真实 `xcodebuild` 回归。对 sheet、modal、popover、overlay、push 和 tab 切换，XCUITest 必须验证目标页面或 presentation 根节点实际出现后再截图。
 
 对于大展示板中的固定手机画板，状态捕获使用 HTML 源 viewport 执行动作，再按 UI IR 的目标 viewport 生成归一化对比图；这是验收图片的单次设计归一化，不得转化为 iOS 运行时整页缩放。归一化方式和原始尺寸必须写入 captures report。
 

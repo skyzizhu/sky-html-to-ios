@@ -40,7 +40,7 @@ def find_exported_attachment(
     export_manifest,
     state_id: str,
     state_index: int,
-    suffix: str,
+    suffix: str = ".png",
 ) -> Path | None:
     expected = f"{state_id}{suffix}"
     for test_record in export_manifest if isinstance(export_manifest, list) else []:
@@ -100,6 +100,8 @@ def main() -> int:
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--device", default="iPhone 15 Pro")
     parser.add_argument("--minimum-ios", default="16.0")
+    parser.add_argument("--viewport-width", type=int, help="Logical output width for this simulator case")
+    parser.add_argument("--viewport-height", type=int, help="Logical output height for this simulator case")
     parser.add_argument("--derived-data", type=Path)
     parser.add_argument("--test-timeout-seconds", type=int, default=240)
     args = parser.parse_args()
@@ -108,7 +110,8 @@ def main() -> int:
     if manifest.get("schemaVersion") != "visual-state-manifest-1.0":
         parser.error("Unsupported visual state manifest")
     viewport = manifest.get("targetViewport") or manifest.get("viewport") or {}
-    width, height = round(float(viewport.get("width", 393))), round(float(viewport.get("height", 852)))
+    width = args.viewport_width or round(float(viewport.get("width", 393)))
+    height = args.viewport_height or round(float(viewport.get("height", 852)))
     work_dir = args.out_dir.parent / ".ios-visual-capture"
     source_dir = work_dir / "VisualTests"
     result_bundle = work_dir / "VisualCapture.xcresult"
@@ -175,6 +178,8 @@ def main() -> int:
         "target": args.target,
         "scheme": prepared_report["scheme"],
         "simulatorId": simulator_id,
+        "device": args.device,
+        "viewport": {"width": width, "height": height},
         "captures": captures,
         "missing": missing,
         "resultBundle": str(result_bundle.resolve()),

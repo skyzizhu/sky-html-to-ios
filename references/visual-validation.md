@@ -103,6 +103,12 @@ Review bundle 同时输出 `fidelityPercent`、`targetFidelityPercent=100` 和 `
 
 `capture_ios_states.py` 除 `<state-id>.png` 外还应导出 `<state-id>.geometry.json`。`build_visual_review_bundle.py` 使用 `compare_node_geometry.py` 生成 `geometry-report.json`：只把 accessibility role 与来源类别一致、且横向位置仍能与来源节点对应的节点计入高置信度累计统计，并按预期 y 排序形成 `anchorRows` 与 `driftTransitions`。横向中心、位置和覆盖范围均无法对应的节点应保留在异常明细中，但不能污染纵向统计。若 top/middle/bottom 的 median y delta 近似一致，处理区域内容起点；若 delta 随 y 增大，沿首个 transition 检查其间容器的 line-height、padding、border-box、item 高度和 gap。低置信度或缺失 accessibility frame 只能作为补充证据，不能据此写死容器高度。
 
+几何 XCUITest 使用 `-HTMLToIOSGeometryCapture 1` 临时把所有可见源节点加入 accessibility 容器；正常启动不得改变 App 的辅助功能层级。`geometryCaptureCoverage` 同时报告全部请求节点与 `validationRegions` 节点的 requested/captured/rate，后者是关键区域覆盖门槛。SwiftUI 容器的 accessibility frame 可能是子节点 union，装饰节点也可能无独立 frame；响应式溢出分析应排除这些容器/装饰节点，并区分由横向滚动容器合法拥有的越界。
+
 自动状态截图由 `build_visual_state_manifest.py` 生成清单，`capture_html_states.cjs` 捕获 HTML；iOS 侧由 `prepare_visual_ui_tests.rb` 和 `capture_ios_states.py` 按同一清单的 `iosActions` 捕获。XCTest 导出的 Retina 像素图必须在 capture 阶段降采样到 `targetViewport`，并在 `captures.json` 保留 original/output size；visual diff 阶段禁止暗中 resize。两侧文件统一使用 `<state-id>.png`。
+
+presentation 和路由状态不能只凭截图存在判断。manifest 应为目标根节点生成 `exists` 断言，并在 sheet/modal/popover/overlay、push、tab 到达后执行；关闭或返回状态使用 `not-exists` 或目标路由断言。断言未通过时不得导出该状态为有效截图。
+
+局部状态的 `not-exists` 只能在结构目标与浏览器 runtime 证据一致时生成。若 runtime 的 after snapshot 明确报告目标仍可见（例如先 opacity/transform，再异步收起），不得仅凭祖先关系武断断言消失；应保留对应视觉状态截图，或在 HTML 动作中加入与真实脚本一致的稳定等待后重新探测。
 
 `validationRegions` 必须至少包含 viewport，并尽量包含 top navigation、bottom/tab/action bar、文字、控件和资源节点。固定画板的 region 坐标必须服从与 HTML 基准相同的 cover/center 裁切，禁止按目标高度压缩整个 y 轴。导航与底部持久区域标为 critical；报告中的 `regions.png`、`worstSemanticRegions` 和 geometry report 必须保留 nodeId，便于直接回到 UI IR 和生成组件。

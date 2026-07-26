@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.28.0"
+GENERATOR_VERSION = "1.29.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -1205,6 +1205,8 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     scroll_axis = str(layout.get("scrollAxis") or "none")
     parent_scroll_axis = str(parent_layout.get("scrollAxis") or "none")
     line_count = visual_text_line_count(content)
+    if semantic in {"text", "label", "heading"} and line_count > 1 and measured_height > 0:
+        min_height = max(min_height, measured_height)
     node_rich_text_runs = inline_runs if inline_text_container else rich_text_runs(context, node)
     browser_line_texts = content.get("lineTexts") or []
     browser_broken_text = plain_text_with_browser_line_breaks(
@@ -1475,6 +1477,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "padding": padding,
             "margin": margin,
             "spacing": min(max(scaled_css_value(style.get("gap"), context.design_scale), 0), 40),
+            "flexGrow": max(number(style.get("flexGrow")), 0),
             "widthFraction": width_fraction,
             "minHeight": min_height,
             "preferredWidth": min(max(width, 0), context.root_width),
@@ -1908,6 +1911,34 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
     root["style"]["cornerRadius"] = 0
     top_bar = node_payload(context, top_bar_id, presentation=True) if top_bar_id else None
     bottom_bar = node_payload(context, bottom_bar_id, presentation=True) if bottom_bar_id else None
+
+    def normalize_viewport_bar_geometry(bar: dict[str, Any] | None) -> None:
+        if not bar:
+            return
+        bar_style = bar.get("style") or {}
+        bar_style.update({
+            "fixedWidth": None,
+            "preferredWidth": None,
+            "widthFraction": 1.0,
+            "preservesIntrinsicWidth": False,
+            "resistsCompression": False,
+            "offsetX": 0,
+        })
+        if str(bar.get("axis") or "") != "horizontal":
+            return
+        # A viewport bar is pinned to the native parent width. Large direct
+        # children participate in that width allocation, while their icons,
+        # labels, badges, and other descendants retain measured geometry.
+        for child in bar.get("children") or []:
+            child_style = child.get("style") or {}
+            if number(child_style.get("widthFraction")) < 0.2:
+                continue
+            child_style["fixedWidth"] = None
+            child_style["preservesIntrinsicWidth"] = False
+            child_style["resistsCompression"] = False
+
+    normalize_viewport_bar_geometry(top_bar)
+    normalize_viewport_bar_geometry(bottom_bar)
     presentations = []
     for state, target_ids in presentation_states:
         for target_id in target_ids:
@@ -2020,6 +2051,14 @@ struct HTMLToIOSSafeAreaSpec: Codable {{
 }}
 
 enum HTMLToIOSLaunchConfiguration {{
+    static var geometryCaptureEnabled: Bool {{
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-HTMLToIOSGeometryCapture"), arguments.indices.contains(index + 1) else {{
+            return false
+        }}
+        return ["1", "true", "yes"].contains(arguments[index + 1].lowercased())
+    }}
+
     static var initialRoute: String? {{
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "-HTMLToIOSInitialRoute"), arguments.indices.contains(index + 1) else {{
@@ -2314,6 +2353,7 @@ struct HTMLToIOSStyleSpec: Codable {{
     let padding: [Double]?
     let margin: [Double]?
     let spacing: Double?
+    let flexGrow: Double?
     let widthFraction: Double?
     let minHeight: Double?
     let preferredWidth: Double?
@@ -3002,7 +3042,9 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
         let preferredWidth = constrainsPreferredWidth ? CGFloat(style.preferredWidth ?? 0) : 0
         let measuredTextWidth = style.textMeasureWidth.map { CGFloat($0) }
         let maxWidth: CGFloat? = measuredTextWidth
-            ?? (constrainsPreferredWidth && (style.widthFraction ?? 0) > 0.88 ? .infinity : nil)
+            ?? ((style.flexGrow ?? 0) > 0 || (constrainsPreferredWidth && (style.widthFraction ?? 0) > 0.88)
+                ? .infinity
+                : nil)
         let idealWidth: CGFloat? = preferredWidth > 0 && maxWidth == nil ? preferredWidth : nil
         let minWidth: CGFloat? = (enforcesPreferredWidth || style.resistsCompression == true) && preferredWidth > 0 ? preferredWidth : nil
         let rawMinHeight = style.minHeight ?? 0
@@ -3043,7 +3085,9 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
                 horizontal: style.preservesIntrinsicWidth == true,
                 vertical: (style.expectedTextLines ?? 1) > 1
             )
-            .layoutPriority(style.preservesIntrinsicWidth == true ? 1 : 0)
+            .layoutPriority(
+                style.resistsCompression == true ? 2 : (style.preservesIntrinsicWidth == true ? 1 : 0)
+            )
             .offset(y: baselineAdjustment)
         let insetContent = typography
             .padding(.top, (padding.indices.contains(0) ? padding[0] : 0) + lineBoxLeading / 2)
@@ -3081,7 +3125,11 @@ private struct HTMLToIOSAccessibilityModifier: ViewModifier {
     let spec: HTMLToIOSNodeSpec
 
     @ViewBuilder func body(content: Content) -> some View {
-        if spec.action != nil || (spec.children.isEmpty && spec.overlayChildren.isEmpty) {
+        if HTMLToIOSLaunchConfiguration.geometryCaptureEnabled {
+            content
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier(spec.id)
+        } else if spec.action != nil || (spec.children.isEmpty && spec.overlayChildren.isEmpty) {
             content
                 .accessibilityIdentifier(spec.id)
                 .accessibilityLabel(spec.accessibilityLabel ?? spec.text)
@@ -3184,7 +3232,7 @@ struct HTMLToIOSNativeNodeView: View {
             backgroundOverride: selectionBackground,
             gradientOverride: selectionGradient,
             constrainsPreferredWidth: isMeasuredText || spec.children.isEmpty || isNativeControl,
-            enforcesPreferredWidth: isNativeControl,
+            enforcesPreferredWidth: isNativeControl && spec.style.preservesIntrinsicWidth == true,
             calibratesTextLineBox: isTextBearingNode,
             calibratesFirstBaseline: isPureTextNode && hasReliableFontMetrics
         ))
@@ -3731,6 +3779,7 @@ struct HTMLToIOSNativeNodeView: View {
         } else if let childID = item.childID,
                   let child = spec.children.first(where: { $0.id == childID }) {
             HTMLToIOSNativeNodeView(store: store, spec: child, textOverrides: textOverrides)
+                .frame(maxWidth: (child.style.flexGrow ?? 0) > 0 ? .infinity : nil)
         }
     }
 
@@ -4575,6 +4624,17 @@ final class HTMLToIOSNodeRenderer {
             $0.gapBefore != nil || $0.flexibleGapBefore == true
         }
         stack.spacing = usesMeasuredSpacing ? 0 : (spec.style.spacing ?? 8)
+        let directChildren = spec.contentItems.compactMap { item in
+            item.childID.flatMap { childID in spec.children.first(where: { $0.id == childID }) }
+        }
+        if spec.axis == "horizontal",
+           directChildren.count >= 2,
+           directChildren.allSatisfy({ ($0.style.flexGrow ?? 0) > 0 }) {
+            let firstGrow = directChildren.first?.style.flexGrow ?? 0
+            stack.distribution = directChildren.allSatisfy {
+                abs(($0.style.flexGrow ?? 0) - firstGrow) < 0.001
+            } ? .fillEqually : .fillProportionally
+        }
         if let dynamicItems = state.contentOverrides[spec.id], !dynamicItems.isEmpty {
             dynamicItems.forEach { stack.addArrangedSubview(makeDynamicView($0, in: spec)) }
         } else if spec.contentItems.isEmpty {
@@ -4879,9 +4939,12 @@ final class HTMLToIOSNodeRenderer {
         case "end", "right": label.textAlignment = .right
         default: label.textAlignment = .left
         }
-        if spec.style.preservesIntrinsicWidth == true {
+        if spec.style.preservesIntrinsicWidth == true || spec.style.resistsCompression == true {
             label.setContentCompressionResistancePriority(.required, for: .horizontal)
             label.setContentHuggingPriority(.required, for: .horizontal)
+        }
+        if (spec.style.expectedTextLines ?? 1) > 1 {
+            label.setContentCompressionResistancePriority(.required, for: .vertical)
         }
         return label
     }
@@ -5228,7 +5291,7 @@ final class HTMLToIOSNodeRenderer {
            spec.style.fixedWidth == nil || spec.style.fixedHeight == nil {
             view.widthAnchor.constraint(equalTo: view.heightAnchor, multiplier: ratio).isActive = true
         }
-        if spec.style.preservesIntrinsicWidth == true {
+        if spec.style.preservesIntrinsicWidth == true || spec.style.resistsCompression == true {
             view.setContentCompressionResistancePriority(.required, for: .horizontal)
             view.setContentHuggingPriority(.required, for: .horizontal)
         }

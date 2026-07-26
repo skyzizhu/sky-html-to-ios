@@ -41,6 +41,8 @@ class VisualValidationTests(unittest.TestCase):
         self.assertIn("requireHittable: true", source)
         self.assertIn('domain: "HTMLToIOSVisualValidation"', source)
         self.assertIn("captureGeometry(name:", source)
+        self.assertIn('"-HTMLToIOSGeometryCapture", "1"', source)
+        self.assertIn('manifest["geometryNodes"]', source)
         self.assertIn('uniformTypeIdentifier: "public.json"', source)
         self.assertNotIn('XCTFail("Element exists but is not hittable', source)
 
@@ -82,11 +84,21 @@ class VisualValidationTests(unittest.TestCase):
                 item for item in manifest["validationRegions"] if item["nodeId"] == "home.title"
             )
             self.assertEqual(title["geometryRect"], [20, 47, 120, 30])
+            self.assertEqual(
+                [item["nodeId"] for item in manifest["geometryNodes"]],
+                ["home.root", "home.title"],
+            )
 
     def test_node_geometry_report_exposes_vertical_accumulation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             manifest = {
+                "geometryNodes": [
+                    {"nodeId": "top"},
+                    {"nodeId": "middle"},
+                    {"nodeId": "bottom"},
+                    {"nodeId": "missing-container"},
+                ],
                 "validationRegions": [
                     {"nodeId": "top", "category": "typography", "geometryRect": [10, 100, 80, 20]},
                     {"nodeId": "middle", "category": "control", "geometryRect": [10, 300, 100, 40]},
@@ -125,6 +137,9 @@ class VisualValidationTests(unittest.TestCase):
             self.assertEqual(report["summary"]["verticalDriftSpanPt"], 14)
             self.assertEqual(report["summary"]["bands"]["top"]["medianYDeltaPt"], 1)
             self.assertEqual(report["summary"]["bands"]["bottom"]["medianYDeltaPt"], 15)
+            self.assertEqual(report["summary"]["geometryCaptureCoverage"]["requestedNodeCount"], 4)
+            self.assertEqual(report["summary"]["geometryCaptureCoverage"]["capturedNodeCount"], 3)
+            self.assertEqual(report["summary"]["geometryCaptureCoverage"]["captureRate"], 0.75)
             misidentified = next(item for item in report["nodes"] if item["nodeId"] == "misidentified")
             self.assertFalse(misidentified["verticalAggregationEligible"])
 
@@ -160,6 +175,83 @@ class VisualValidationTests(unittest.TestCase):
             action = json.loads(output.read_text(encoding="utf-8"))["states"][0]["iosActions"][0]
             self.assertEqual(action["assertion"], {
                 "type": "not-exists", "accessibilityIdentifier": "home.card",
+            })
+
+    def test_manifest_does_not_assert_removal_when_runtime_target_remains_visible(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = {
+                "schemaVersion": "1.2",
+                "source": {"entry": str(root / "prototype.html"), "viewport": {"width": 393, "height": 852}},
+                "target": {"viewportPt": {"width": 393, "height": 852}},
+                "screens": [{
+                    "id": "home", "rootNodeId": "home.root", "sourceSelector": "#home",
+                    "systemChrome": {}, "regions": {},
+                    "nodes": [
+                        node("home.root", None, "container", [0, 0, 393, 852]),
+                        node("home.card", "home.root", "container", [20, 100, 353, 200]),
+                        node("home.accept", "home.card", "button", [200, 240, 140, 44], "Accept"),
+                    ],
+                }],
+                "states": [{
+                    "id": "remove-card",
+                    "kind": "local-state",
+                    "targetSelector": ".card",
+                    "targetNodeIds": ["home.card"],
+                }],
+                "interactions": [{
+                    "id": "accept",
+                    "sourceNodeId": "home.accept",
+                    "target": "remove-card",
+                    "evidence": {
+                        "runtime": {
+                            "after": {"targets": {".card": {"visible": True}}},
+                        }
+                    },
+                }],
+                "visualStates": [{"id": "after-accept", "required": True, "interactionSequence": ["accept"]}],
+            }
+            source, output = root / "ui-ir.json", root / "visual-manifest.json"
+            source.write_text(json.dumps(payload), encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(MANIFEST_SCRIPT), str(source), "--out", str(output)],
+                text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            action = json.loads(output.read_text(encoding="utf-8"))["states"][0]["iosActions"][0]
+            self.assertNotIn("assertion", action)
+
+    def test_manifest_asserts_presentation_target_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = {
+                "schemaVersion": "1.2",
+                "source": {"entry": str(root / "prototype.html"), "viewport": {"width": 393, "height": 852}},
+                "target": {"viewportPt": {"width": 393, "height": 852}},
+                "screens": [{
+                    "id": "home", "rootNodeId": "home.root", "sourceSelector": "#home",
+                    "systemChrome": {}, "regions": {},
+                    "nodes": [
+                        node("home.root", None, "container", [0, 0, 393, 852]),
+                        node("home.open", "home.root", "button", [20, 100, 100, 44], "Open"),
+                        node("home.sheet", "home.root", "container", [0, 400, 393, 452]),
+                    ],
+                }],
+                "states": [{"id": "sheet-open", "kind": "sheet-overlay", "targetNodeIds": ["home.sheet"]}],
+                "interactions": [{
+                    "id": "open-sheet", "sourceNodeId": "home.open", "target": "sheet-open",
+                }],
+                "visualStates": [{"id": "after-sheet", "required": True, "interactionSequence": ["open-sheet"]}],
+            }
+            source, output = root / "ui-ir.json", root / "visual-manifest.json"
+            source.write_text(json.dumps(payload), encoding="utf-8")
+            subprocess.run(
+                [sys.executable, str(MANIFEST_SCRIPT), str(source), "--out", str(output)],
+                text=True, capture_output=True, check=True,
+            )
+            action = json.loads(output.read_text(encoding="utf-8"))["states"][0]["iosActions"][0]
+            self.assertEqual(action["assertion"], {
+                "type": "exists", "accessibilityIdentifier": "home.sheet",
             })
 
     def test_manifest_replays_render_tree_activation_settle_checkpoint(self) -> None:

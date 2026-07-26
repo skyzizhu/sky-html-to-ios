@@ -106,6 +106,11 @@ def main() -> int:
         for item in actual_payload.get("nodes") or []
         if item.get("nodeId") and rect_values(item.get("frame"))
     }
+    requested_geometry = {
+        str(item.get("nodeId")): item
+        for item in manifest.get("geometryNodes") or []
+        if item.get("nodeId")
+    }
 
     comparisons = []
     for node_id, region in expected.items():
@@ -176,6 +181,19 @@ def main() -> int:
         "matchedNodeCount": len(comparisons),
         "reliableMatchedNodeCount": len(reliable),
         "missingNodeIds": sorted(set(expected) - set(actual)),
+        "geometryCaptureCoverage": {
+            "requestedNodeCount": len(requested_geometry),
+            "capturedNodeCount": len(set(requested_geometry) & set(actual)),
+            "captureRate": rounded(
+                len(set(requested_geometry) & set(actual)) / len(requested_geometry)
+            ) if requested_geometry else None,
+            "missingNodeIds": sorted(set(requested_geometry) - set(actual)),
+            "validationRequestedNodeCount": len(expected),
+            "validationCapturedNodeCount": len(set(expected) & set(actual)),
+            "validationCaptureRate": rounded(
+                len(set(expected) & set(actual)) / len(expected)
+            ) if expected else None,
+        },
         "medianYDeltaPt": median(y_deltas),
         "medianHeightDeltaPt": median(height_deltas),
         "verticalDriftSpanPt": rounded(max(y_deltas) - min(y_deltas)) if y_deltas else None,

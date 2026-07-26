@@ -55,5 +55,6 @@ hover 在 iPhone 上没有直接等价。仅装饰 hover 可以忽略；承载�
 - 手势动画：验证起点、交互中间态、完成和取消。
 - 循环动画：验证一个完整周期，并检查离屏/后台暂停。
 - 开启 Reduce Motion 时提供系统允许的简化效果。
+- 页面与 presentation 转场先验证目标 controller/view 的 accessibility identifier 已出现，再截图；dismiss/pop 后验证其消失或前一页面重新到达。动画帧不能替代生命周期断言。
 
 视觉 Agent 不能仅凭单张截图判断动画正确，应结合 motion IR、采样帧和实际触发路径。

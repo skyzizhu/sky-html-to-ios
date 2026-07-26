@@ -308,13 +308,17 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("constrainsPreferredWidth: isMeasuredText || spec.children.isEmpty || isNativeControl", runtime_text)
             self.assertIn("enforcesPreferredWidth: isNativeControl", runtime_text)
             self.assertIn("(enforcesPreferredWidth || style.resistsCompression == true)", runtime_text)
-            self.assertIn("constrainsPreferredWidth && (style.widthFraction ?? 0) > 0.88 ? .infinity : nil", runtime_text)
+            self.assertIn(
+                "(style.flexGrow ?? 0) > 0 || (constrainsPreferredWidth && (style.widthFraction ?? 0) > 0.88)",
+                runtime_text,
+            )
             self.assertNotIn(".frame(minWidth: minWidth, idealWidth: idealWidth)\n            .frame(maxWidth:", runtime_text)
             self.assertIn("hiddenNodeIDs = nextHiddenNodeIDs", runtime_text)
             self.assertNotIn("UIViewRepresentable", runtime_text)
             self.assertNotIn("sizeThatFits(_ proposal:", runtime_text)
             self.assertIn("vertical: (style.expectedTextLines ?? 1) > 1", runtime_text)
-            self.assertNotIn("accessibilityElement(children: .contain)", runtime_text)
+            self.assertIn("HTMLToIOSLaunchConfiguration.geometryCaptureEnabled", runtime_text)
+            self.assertIn("accessibilityElement(children: .contain)", runtime_text)
             models_text = (out_dir / MODELS_FILE).read_text(encoding="utf-8")
             navigation_text = (out_dir / NAVIGATION_FILE).read_text(encoding="utf-8")
             self.assertIn("-HTMLToIOSInitialRoute", models_text)
@@ -901,6 +905,10 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             screen = generated["screens"][0]
             self.assertEqual(screen["topBar"]["id"], "home.top")
             self.assertEqual(screen["bottomBar"]["id"], "home.bottom")
+            self.assertIsNone(screen["topBar"]["style"]["preferredWidth"])
+            self.assertIsNone(screen["bottomBar"]["style"]["preferredWidth"])
+            self.assertEqual(screen["topBar"]["style"]["widthFraction"], 1.0)
+            self.assertEqual(screen["bottomBar"]["style"]["widthFraction"], 1.0)
             self.assertEqual(screen["bottomBarPlacement"], "viewport-overlay")
             self.assertFalse(screen["showsNavigationBar"])
             self.assertEqual(screen["root"]["backgroundAssetName"], "html_home_background")
@@ -922,6 +930,57 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn('screen.bottomBarPlacement == "safe-area-inset" ? (generatedBottomBar?.bounds.height ?? 0) : 0', uikit_runtime)
             self.assertIn('screen.bottomBarPlacement == "viewport-overlay"\n                        ? view.bottomAnchor', uikit_runtime)
+
+    def test_viewport_bar_releases_large_direct_children_without_relaxing_icons(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("home")
+            screen = payload["screens"][0]
+            root_node = screen["nodes"][0]
+            bottom = node("home.bottom", root_node["id"], "footer")
+            bottom["layout"]["rect"].update({"width": 393, "height": 88})
+            left = node("home.bottom.left", bottom["id"], "button", "Export")
+            left["layout"]["rect"].update({"width": 168, "height": 48})
+            left["style"]["flexShrink"] = "0"
+            left["style"]["flexGrow"] = "1"
+            icon = node("home.bottom.left.icon", left["id"], "icon")
+            icon["layout"]["rect"].update({"width": 20, "height": 20})
+            icon["style"]["flexShrink"] = "0"
+            right = node("home.bottom.right", bottom["id"], "button", "Retry")
+            right["layout"]["rect"].update({"width": 168, "height": 48})
+            right["style"]["flexShrink"] = "0"
+            right["style"]["flexGrow"] = "1"
+            screen["nodes"].extend([bottom, left, icon, right])
+            screen["regions"] = {
+                "bottomBar": {
+                    "nodeId": bottom["id"],
+                    "kind": "bottom-action-bar",
+                    "placement": "viewport-overlay",
+                }
+            }
+
+            path = root / "home.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            out_dir = root / "out"
+            self.run_generator([path], out_dir)
+            generated = json.loads((out_dir / PAYLOAD).read_text(encoding="utf-8"))
+            bar = generated["screens"][0]["bottomBar"]
+            generated_left = next(item for item in bar["children"] if item["id"] == left["id"])
+            generated_icon = generated_left["children"][0]
+            runtime = (out_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+
+            self.assertIsNone(bar["style"]["preferredWidth"])
+            self.assertIsNone(generated_left["style"]["fixedWidth"])
+            self.assertFalse(generated_left["style"]["preservesIntrinsicWidth"])
+            self.assertFalse(generated_left["style"]["resistsCompression"])
+            self.assertEqual(generated_left["style"]["flexGrow"], 1)
+            self.assertEqual(generated_icon["style"]["preferredWidth"], 20)
+            self.assertTrue(generated_icon["style"]["preservesIntrinsicWidth"])
+            self.assertIn(
+                "enforcesPreferredWidth: isNativeControl && spec.style.preservesIntrinsicWidth == true",
+                runtime,
+            )
+            self.assertIn("(style.flexGrow ?? 0) > 0", runtime)
 
     def test_custom_popover_overlay_preserves_source_geometry_for_both_stacks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

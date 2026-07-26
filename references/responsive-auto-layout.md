@@ -68,6 +68,8 @@ NODE_PATH=<playwright-node-modules> node scripts/analyze_responsive_layout.cjs \
 - 高度随文字行数变化：让 intrinsic content size 决定，不写死高度。
 - absolute/overlay：相对最近定位容器建立约束，不使用页面全局坐标。
 - 横向滚动集合：容器宽度随 viewport，item 使用来源 fixed/intrinsic/bounded width；不得把 item 宽度按屏宽重新平均分配。
+- 普通 Flex/Grid 行必须保留 `flex-grow`、`flex-shrink` 和 basis 的空间分配语义。`flex-grow > 0` 的直接子项在 SwiftUI 使用可伸展 frame，在 UIKit 使用相应 stack distribution、hugging 与 compression priority；不能只保留文字 intrinsic width，也不能把理想宽度无条件升级为最小宽度。
+- viewport 级 navigation bar、tab bar、toolbar 和 bottom action bar 的宽度由父容器 leading/trailing 决定。来源画板宽度只能作为基准 `preferredWidth`，不得由栏内按钮总理想宽度反向撑开；栏内大项允许按 flex 规则压缩/伸展，小图标、角标和文字继续保留自身度量。
 - 紧凑方形视觉容器：只要浏览器实测宽高明确、尺寸不超过 180pt、宽高比接近 1，且节点依赖背景色、渐变、圆角、边框或阴影表达视觉，即使它位于纵向流或单格 CSS Grid 中，也必须保留 fixed/bounded width、height 与 `aspectRatio`；不能让 Stack/Grid 的 fill alignment 把圆形拉成胶囊。
 - 百分比圆角按实测容器短边计算，例如 `border-radius: 50%` 对 104×104 容器应得到 52pt，不能把百分数当作 px，也不能用与容器无关的圆角上限截断。
 - 单行紧凑文本：保留 measured line count、nowrap 和 compression resistance；只有空间策略明确允许时才截断，不能静默换行改变 item 高度。
@@ -118,5 +120,17 @@ iOS 基准使用约 22.25pt 的 leading/trailing constraint。到 320、375、43
 - 文本行数变化合理
 - 横向 item 宽度、gap、末项可达性和紧凑图标宽高比正确
 - fixed header/footer、滚动和弹层仍可用
+
+原生矩阵必须使用真实 Simulator：
+
+```bash
+python3 scripts/validate_responsive_ios_matrix.py visual-state-manifest.json \
+  --project App.xcodeproj --target App --out-dir responsive-matrix \
+  --case '375x667:iPhone SE (3rd generation)' \
+  --case '393x852:iPhone 16' \
+  --case '430x932:iPhone 16 Plus'
+```
+
+宽高用于报告中的逻辑 viewport，设备名必须对应本机真实 runtime。若没有 320pt 设备，不得把 375pt 截图缩成 320pt；记录缺失并使用项目现有最窄设备完成门槛。
 
 多尺寸目标是保持设计语义和可用性，不要求每个尺寸都与单一 HTML 截图拥有相同换行。

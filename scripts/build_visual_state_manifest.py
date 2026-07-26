@@ -25,6 +25,43 @@ def numeric(value, default: float = 0.0) -> float:
         return default
 
 
+def build_geometry_nodes(screen: dict) -> list[dict]:
+    nodes = {str(node["id"]): node for node in screen.get("nodes") or []}
+    child_counts: dict[str, int] = {}
+    for node in screen.get("nodes") or []:
+        parent_id = str(node.get("parentId") or "")
+        if parent_id:
+            child_counts[parent_id] = child_counts.get(parent_id, 0) + 1
+
+    def initially_visible(node: dict) -> bool:
+        visited: set[str] = set()
+        current = node
+        while current:
+            current_id = str(current.get("id") or "")
+            if current_id in visited:
+                return False
+            visited.add(current_id)
+            if (current.get("state") or {}).get("initiallyVisible") is False:
+                return False
+            current = nodes.get(str(current.get("parentId") or ""))
+        return True
+
+    return [
+        {
+            "nodeId": node["id"],
+            "parentNodeId": node.get("parentId"),
+            "semanticType": node.get("semanticType") or "container",
+            "scrollAxis": (node.get("layout") or {}).get("scrollAxis") or "none",
+            "position": (node.get("layout") or {}).get("position") or "static",
+            "hasChildren": child_counts.get(str(node["id"]), 0) > 0,
+            "isDecorative": bool((node.get("content") or {}).get("isDecorative"))
+                or str(node.get("semanticType") or "") == "decoration",
+        }
+        for node in screen.get("nodes") or []
+        if initially_visible(node)
+    ]
+
+
 def build_validation_regions(screen: dict, target_viewport: dict, design_scale: float = 1.0) -> list[dict]:
     nodes = {str(node["id"]): node for node in screen.get("nodes") or []}
     root = nodes.get(str(screen.get("rootNodeId") or "")) or {}
@@ -196,12 +233,29 @@ def main() -> int:
             if interaction.get("sourceNodeId"):
                 ios_action = {"type": "tap", "accessibilityIdentifier": interaction.get("sourceNodeId"), "interactionId": interaction_id}
                 target_state = states_by_id.get(str(interaction.get("target") or "")) or {}
-                if str(target_state.get("kind") or "") == "local-state":
+                target_kind = str(target_state.get("kind") or "")
+                if any(token in target_kind for token in ("sheet", "modal", "popover", "overlay", "alert", "dialog")):
+                    target_ids = [str(item) for item in target_state.get("targetNodeIds") or [] if str(item)]
+                    if target_ids:
+                        ios_action["assertion"] = {
+                            "type": "exists",
+                            "accessibilityIdentifier": target_ids[0],
+                        }
+                elif target_kind == "local-state":
                     target_ids = {str(item) for item in target_state.get("targetNodeIds") or []}
+                    runtime_after_targets = (
+                        (((interaction.get("evidence") or {}).get("runtime") or {}).get("after") or {}).get("targets")
+                        or {}
+                    )
+                    target_selector = str(target_state.get("targetSelector") or "")
+                    runtime_target = runtime_after_targets.get(target_selector) if target_selector else None
+                    runtime_confirms_visible = (
+                        isinstance(runtime_target, dict) and runtime_target.get("visible") is True
+                    )
                     current = str(interaction.get("sourceNodeId") or "")
                     while current:
                         if current in target_ids:
-                            if current != interaction.get("sourceNodeId"):
+                            if current != interaction.get("sourceNodeId") and not runtime_confirms_visible:
                                 ios_action["assertion"] = {
                                     "type": "not-exists",
                                     "accessibilityIdentifier": current,
@@ -234,6 +288,7 @@ def main() -> int:
         "rootSelector": screen.get("sourceSelector") or "html",
         "systemChrome": screen.get("systemChrome") or {},
         "comparisonMasks": build_comparison_masks(screen, target_viewport),
+        "geometryNodes": build_geometry_nodes(screen),
         "validationRegions": build_validation_regions(screen, target_viewport, numeric(target.get("scale"), 1)),
         "states": states,
     }

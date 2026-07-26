@@ -52,6 +52,9 @@ def action_source(action)
     if assertion["type"] == "not-exists"
       target = swift_string(assertion["accessibilityIdentifier"])
       lines << "try assertElementAbsent(identifier: #{target}, in: app)"
+    elsif assertion["type"] == "exists"
+      target = swift_string(assertion["accessibilityIdentifier"])
+      lines << "try assertElementPresent(identifier: #{target}, in: app)"
     end
     lines.join("\n        ")
   when "scroll"
@@ -83,8 +86,8 @@ state_methods = (manifest["states"] || []).each_with_index.map do |state, index|
   SWIFT
 end.join("\n")
 
-geometry_identifiers = (manifest["validationRegions"] || [])
-  .filter_map { |region| region["nodeId"].to_s.strip }
+geometry_identifiers = ((manifest["geometryNodes"] || []) + (manifest["validationRegions"] || []))
+  .filter_map { |item| item["nodeId"].to_s.strip }
   .reject(&:empty?)
   .uniq
 geometry_identifiers_source = "[#{geometry_identifiers.map { |item| swift_string(item) }.join(", ")}]"
@@ -113,6 +116,7 @@ swift = <<~SWIFT
           if let motionProgress {
               app.launchArguments += ["-HTMLToIOSMotionProgress", String(motionProgress)]
           }
+          app.launchArguments += ["-HTMLToIOSGeometryCapture", "1"]
           app.launchArguments += ["-UIAnimationsEnabled", "NO"]
           app.launch()
           return app
@@ -147,6 +151,10 @@ swift = <<~SWIFT
       private func assertElementAbsent(identifier: String, in app: XCUIApplication) throws {
           let candidate = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
           XCTAssertTrue(candidate.waitForNonExistence(timeout: 3), "Expected element to disappear: \(identifier)")
+      }
+
+      private func assertElementPresent(identifier: String, in app: XCUIApplication) throws {
+          _ = try element(identifier: identifier, in: app)
       }
 
       private func fillElement(identifier: String, value: String, in app: XCUIApplication) throws {
