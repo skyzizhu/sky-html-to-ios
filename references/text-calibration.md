@@ -48,6 +48,12 @@ SwiftUI `lineSpacing` 不是 CSS `line-height`；UIKit 使用 `NSParagraphStyle.
 
 SwiftUI 多行文字的额外间距按 `CSS line-height - native UIFont.lineHeight` 计算，并把剩余 leading 对称分配到首尾行框；禁止继续使用 `line-height - font-size`。UIKit 使用目标 line height 固定 paragraph 的 minimum/maximum line height，并按原生字体 line height 计算 baseline offset。未显式给出 line-height 时沿用原生字体度量，不制造额外 leading。
 
+浏览器 Range 的 `height`、`preferredHeight` 和 line rect 高度是文字度量证据，不是原生 `Text`、`UILabel` 或 `UITextView` 的默认硬高度。除非来源节点自身存在固定高度、裁剪或明确的单行控件契约，否则禁止将 Range 高度写入 `.frame(height:)`、height constraint 或 intrinsic content size 覆盖。CSS line-height 继续拥有纵向布局；Range 高度只参与行数、baseline、裁剪和字体 fallback 诊断。
+
+首基线校准只能作用于纯文字叶子的字形绘制位置，且字体解析状态必须是 `loaded-web-font` 或 `system-local`；不能改变父容器尺寸、padding 或相邻节点间距。先用目标原生字体的 ascender/leading 计算原生首基线，再与 UI IR 的 `firstBaselineOffset` 比较；偏移必须限制在字号的正负 25% 内。SwiftUI 使用不参与布局计算的文字内容 offset，UIKit 合并到 attributed string 的 baseline offset。按钮、输入框、图标加文字、状态圆点、富组件及包含子 View 的节点不得套用整节点基线偏移，它们按控件 content inset、`firstTextBaseline` 或来源 `align-items` 单独校准。
+
+当浏览器报告 `generic-fallback` 或 `unresolved-fallback` 时，不能通过固定高度掩盖字体不一致。先核对行数、文本宽度、first/last baseline 和截断，再决定是否接受 iOS system fallback。只有字体文件、字号、字重和实际可用字体族已经确定，才允许以约 1pt baseline 偏差作为精细验收目标。
+
 复合文字内容不能只保留拼接后的字符串。直接文本节点、内联 span 和视觉子 View 应保留浏览器中的顺序、Range 宽高与前置间距。来源中明确为单行的独立片段可以在实测宽度内使用 `lineLimit(1)` 与有限 `minimumScaleFactor`；多行正文和富文本只把实测宽度作为可收缩上限，禁止为了匹配基准截图造成根页面横向溢出。
 
 `Range.getClientRects()` 的矩形数量不等于视觉行数；数字、单位、上下标等不同字号 run 可能在同一行产生多个不同高度的矩形。应按垂直重叠和中心线距离合并视觉行，单行多字号内容在 SwiftUI 使用 `firstTextBaseline`、在 UIKit 使用 first-baseline 约束，不能因 DOM 容器是 `display:block` 就改成纵向堆叠。
@@ -66,6 +72,10 @@ python3 scripts/compare_text_calibration.py text-calibration.json ios-text-metri
 ```
 
 默认要求行数完全一致，frame 偏差不超过约 1.5pt，baseline 偏差不超过约 1pt。截图仍用于观察字形、抗锯齿、富文本颜色和下划线；结构化指标用于防止肉眼漏掉累计换行误差。
+
+纵向几何必须按区域分别核对：system chrome/safe area、顶部栏、滚动内容、固定底栏和 presentation 各自建立锚点，禁止用整页统一 `y` 偏移修正所有区域。对每个区域依次比较顶部锚点、首个文本 baseline、内容高度、相邻间距和底部锚点；若误差随节点向下逐步增大，优先检查 line-height、段落间距和重复 item 高度，不能在页面末尾补偿。iOS safe area 由系统管理时，不得再从滚动视图宽高或内容高度中手工扣减；仅根据来源的 system chrome 所有权决定是否使用 `safeAreaInset`、content inset 或全屏延伸。
+
+当固定移动画板包含模拟状态栏、原生实现改用系统状态栏时，应校准“首个应用内容的可见起点”，而不是把模拟状态栏再生成一遍。若固定画板按宽度归一化后高于目标 viewport，先按视觉基准的 cover/center 规则扣除顶部裁切量，再得到可见源状态栏高度。SwiftUI 可让内容背景延伸到顶部并按该高度恢复内容起点；UIKit 可在保留全尺寸 scroll frame 的前提下，用 `sourceVisibleStatusBarHeight - safeAreaInsets.top` 调整 content inset。禁止从容器 frame 高度减去状态栏或安全区，也禁止把这项局部 chrome 校准套到固定底栏和弹层。
 
 ## Dynamic Type
 

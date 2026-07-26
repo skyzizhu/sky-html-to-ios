@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.26.0"
+GENERATOR_VERSION = "1.27.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -1747,8 +1747,20 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
         if 12 <= height <= min(root_height * 0.12, 90):
             status_bar_heights.append(height)
     source_status_bar_height = max(status_bar_heights, default=0.0)
+    target_viewport = (ir.get("target") or {}).get("viewportPt") or {}
+    target_height = number(target_viewport.get("height"), root_height)
+    design_scale = number((ir.get("target") or {}).get("scale"), 1)
+    fixed_artboard_cover_crop_top = (
+        max((root_height - target_height) / 2, 0)
+        if abs(design_scale - 1) > 0.001 and root_height > target_height
+        else 0
+    )
+    visible_source_status_bar_height = max(
+        source_status_bar_height - fixed_artboard_cover_crop_top,
+        0,
+    )
     aligns_to_source_status_bar = bool(
-        source_status_bar_height
+        visible_source_status_bar_height
         and (screen.get("systemChrome") or {}).get("statusBar") == "native"
         and navigation_style != "native"
     )
@@ -1915,7 +1927,7 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
         "moduleId": str(screen.get("moduleId") or "").strip() or None,
         "title": navigation["title"],
         "showsNavigationBar": navigation_style == "native",
-        "sourceStatusBarHeight": source_status_bar_height if aligns_to_source_status_bar and safe_area_payload["owner"] != "system" else None,
+        "sourceStatusBarHeight": visible_source_status_bar_height if aligns_to_source_status_bar else None,
         "safeArea": safe_area_payload,
         "navigation": navigation,
         "tabContainer": tab_container,
@@ -2414,7 +2426,11 @@ private func htmlToIOSFont(size: Double, weight: String?, design: String?, nativ
 }
 
 private func htmlToIOSUIFontLineHeight(size: Double, weight: String?, design: String?, nativeName: String?, style: String?) -> CGFloat {
-    if let nativeName, let font = UIFont(name: nativeName, size: size) { return font.lineHeight }
+    htmlToIOSUIFont(size: size, weight: weight, design: design, nativeName: nativeName, style: style).lineHeight
+}
+
+private func htmlToIOSUIFont(size: Double, weight: String?, design: String?, nativeName: String?, style: String?) -> UIFont {
+    if let nativeName, let font = UIFont(name: nativeName, size: size) { return font }
     let value = Int(weight ?? "400") ?? 400
     let uiWeight: UIFont.Weight
     if value >= 900 { uiWeight = .black }
@@ -2430,7 +2446,7 @@ private func htmlToIOSUIFontLineHeight(size: Double, weight: String?, design: St
     let systemDesign: UIFontDescriptor.SystemDesign? = design == "monospaced" ? .monospaced : (design == "serif" ? .serif : (design == "rounded" ? .rounded : nil))
     if let systemDesign, let designed = descriptor.withDesign(systemDesign) { descriptor = designed }
     if style == "italic" || style == "oblique", let italic = descriptor.withSymbolicTraits(.traitItalic) { descriptor = italic }
-    return UIFont(descriptor: descriptor, size: size).lineHeight
+    return UIFont(descriptor: descriptor, size: size)
 }
 
 @MainActor
@@ -2944,6 +2960,7 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
     let constrainsPreferredWidth: Bool
     let enforcesPreferredWidth: Bool
     let calibratesTextLineBox: Bool
+    let calibratesFirstBaseline: Bool
 
     func body(content: Content) -> some View {
         let padding = style.padding ?? [0, 0, 0, 0]
@@ -2971,6 +2988,18 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
             style: style.fontStyle
         )
         let lineBoxLeading = calibratesTextLineBox ? max((style.lineHeight ?? Double(nativeLineHeight)) - Double(nativeLineHeight), 0) : 0
+        let nativeFont = htmlToIOSUIFont(
+            size: fontSize,
+            weight: style.fontWeight,
+            design: style.fontDesign,
+            nativeName: style.fontNativeName,
+            style: style.fontStyle
+        )
+        let nativeFirstBaseline = nativeFont.ascender + max(nativeFont.leading, 0) / 2
+        let rawBaselineAdjustment = calibratesFirstBaseline
+            ? CGFloat(style.firstBaselineOffset ?? Double(nativeFirstBaseline)) - nativeFirstBaseline
+            : 0
+        let baselineAdjustment = min(max(rawBaselineAdjustment, -CGFloat(fontSize) * 0.25), CGFloat(fontSize) * 0.25)
         let typography = content
             .font(htmlToIOSFont(size: fontSize, weight: style.fontWeight, design: style.fontDesign, nativeName: style.fontNativeName, style: style.fontStyle))
             .foregroundStyle(foreground)
@@ -2980,6 +3009,7 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
             .tracking(style.letterSpacing ?? 0)
             .fixedSize(horizontal: style.preservesIntrinsicWidth == true, vertical: false)
             .layoutPriority(style.preservesIntrinsicWidth == true ? 1 : 0)
+            .offset(y: baselineAdjustment)
         let insetContent = typography
             .padding(.top, (padding.indices.contains(0) ? padding[0] : 0) + lineBoxLeading / 2)
             .padding(.trailing, padding.indices.contains(1) ? padding[1] : 0)
@@ -3120,7 +3150,8 @@ struct HTMLToIOSNativeNodeView: View {
             gradientOverride: selectionGradient,
             constrainsPreferredWidth: isMeasuredText || spec.children.isEmpty || isNativeControl,
             enforcesPreferredWidth: isNativeControl,
-            calibratesTextLineBox: isTextBearingNode
+            calibratesTextLineBox: isTextBearingNode,
+            calibratesFirstBaseline: isPureTextNode && hasReliableFontMetrics
         ))
         .overlay {
             ZStack {
@@ -3194,6 +3225,14 @@ struct HTMLToIOSNativeNodeView: View {
     private var isTextBearingNode: Bool {
         ["text", "label", "heading", "button", "link", "menu-item", "tab-item"].contains(spec.semantic)
             && (!spec.text.isEmpty || !(spec.richTextRuns ?? []).isEmpty || spec.contentItems.contains { $0.kind == "text" })
+    }
+    private var isPureTextNode: Bool {
+        ["text", "label", "heading"].contains(spec.semantic)
+            && spec.children.isEmpty
+            && spec.contentItems.allSatisfy { $0.kind == "text" }
+    }
+    private var hasReliableFontMetrics: Bool {
+        ["loaded-web-font", "system-local"].contains(spec.style.fontResolutionStatus)
     }
 
     private var inputPrompt: Text {
@@ -3783,7 +3822,7 @@ struct HTMLToIOSGeneratedScreenView: View {
     }
 
     @ViewBuilder private var chromeAlignedNavigationContent: some View {
-        if screen.safeArea.owner != "system", let sourceStatusBarHeight = screen.sourceStatusBarHeight, sourceStatusBarHeight > 0 {
+        if let sourceStatusBarHeight = screen.sourceStatusBarHeight, sourceStatusBarHeight > 0 {
             navigationContent
                 .padding(.top, sourceStatusBarHeight)
                 .ignoresSafeArea(.container, edges: .top)
@@ -4862,10 +4901,21 @@ final class HTMLToIOSNodeRenderer {
                 .paragraphStyle: paragraph,
                 .kern: run.letterSpacing ?? spec.style.letterSpacing ?? 0,
             ]
+            var baselineOffset: CGFloat = 0
             if let targetLineHeight, targetLineHeight > 0 {
                 paragraph.minimumLineHeight = targetLineHeight
                 paragraph.maximumLineHeight = targetLineHeight
-                attributes[.baselineOffset] = (targetLineHeight - font.lineHeight) / 2
+                baselineOffset += (targetLineHeight - font.lineHeight) / 2
+            }
+            if isPureTextSpec(spec),
+               hasReliableFontMetrics(spec),
+               let expectedFirstBaseline = spec.style.firstBaselineOffset {
+                let nativeFirstBaseline = font.ascender + max(font.leading, 0) / 2
+                let rawAdjustment = CGFloat(expectedFirstBaseline) - nativeFirstBaseline
+                baselineOffset += min(max(rawAdjustment, -font.pointSize * 0.25), font.pointSize * 0.25)
+            }
+            if abs(baselineOffset) > 0.001 {
+                attributes[.baselineOffset] = baselineOffset
             }
             if let foreground = UIColor(htmlToIOS: run.foreground ?? spec.style.foreground) {
                 attributes[.foregroundColor] = foreground
@@ -4876,6 +4926,16 @@ final class HTMLToIOSNodeRenderer {
             result.append(NSAttributedString(string: run.text, attributes: attributes))
         }
         return result
+    }
+
+    private func isPureTextSpec(_ spec: HTMLToIOSNodeSpec) -> Bool {
+        ["text", "label", "heading"].contains(spec.semantic)
+            && spec.children.isEmpty
+            && spec.contentItems.allSatisfy { $0.kind == "text" }
+    }
+
+    private func hasReliableFontMetrics(_ spec: HTMLToIOSNodeSpec) -> Bool {
+        ["loaded-web-font", "system-local"].contains(spec.style.fontResolutionStatus)
     }
 
     private func lineBreakMode(_ spec: HTMLToIOSNodeSpec) -> NSLineBreakMode {
@@ -5215,7 +5275,7 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
     }
 
     private func renderScreen() {
-        let previousOffset = generatedScrollView?.contentOffset ?? .zero
+        let previousOffset = generatedScrollView?.contentOffset
         generatedScrollView = nil; generatedTopBar = nil; generatedBottomBar = nil
         view.subviews.forEach { $0.removeFromSuperview() }
         let renderer = HTMLToIOSNodeRenderer(state: generatedState, actionHandler: { [weak self] action in self?.perform(action) })
@@ -5265,7 +5325,19 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
         }
         NSLayoutConstraint.activate(constraints)
         view.layoutIfNeeded()
-        scroll.setContentOffset(previousOffset, animated: false)
+        if let sourceStatusBarHeight = screen.sourceStatusBarHeight, sourceStatusBarHeight > 0 {
+            let topCalibration = CGFloat(sourceStatusBarHeight) - view.safeAreaInsets.top
+            scroll.contentInset.top = topCalibration
+            scroll.verticalScrollIndicatorInsets.top = max(CGFloat(sourceStatusBarHeight), 0)
+        }
+        if let previousOffset {
+            scroll.setContentOffset(previousOffset, animated: false)
+        } else {
+            scroll.setContentOffset(
+                CGPoint(x: 0, y: -scroll.adjustedContentInset.top),
+                animated: false
+            )
+        }
     }
 
     func wrapGeneratedContent(_ content: UIView) -> UIView { content }

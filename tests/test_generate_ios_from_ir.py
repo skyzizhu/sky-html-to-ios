@@ -147,6 +147,43 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 )
                 self.assertEqual(completed.returncode, 0, f"{ui_stack}:\n{completed.stdout}{completed.stderr}")
 
+    def test_pure_text_baseline_calibration_does_not_hard_code_range_height(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("baseline")
+            root_node = payload["screens"][0]["nodes"][0]
+            title = node("baseline.title", root_node["id"], "heading", "Measured title")
+            title["content"].update({
+                "lines": 1,
+                "firstBaselineY": 24,
+                "lastBaselineY": 24,
+                "lineRects": [{"x": 0, "y": 0, "width": 112, "height": 31}],
+                "fontResolution": {
+                    "status": "system-local",
+                    "resolvedFamily": "Helvetica",
+                    "failedFamilies": [],
+                },
+            })
+            payload["screens"][0]["nodes"].append(title)
+            path = root / "baseline.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            swiftui_dir = root / "swiftui"
+            self.run_generator([path], swiftui_dir)
+            swiftui_runtime = (swiftui_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            swiftui_payload = json.loads((swiftui_dir / PAYLOAD).read_text(encoding="utf-8"))
+            swiftui_title = swiftui_payload["screens"][0]["root"]["children"][0]
+            self.assertEqual(swiftui_title["style"]["firstBaselineOffset"], 24)
+            self.assertIsNone(swiftui_title["style"]["fixedHeight"])
+            self.assertIn("let nativeFirstBaseline = nativeFont.ascender", swiftui_runtime)
+            self.assertIn(".offset(y: baselineAdjustment)", swiftui_runtime)
+
+            uikit_dir = root / "uikit"
+            self.run_generator([path], uikit_dir, ui_stack="uikit")
+            uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn("hasReliableFontMetrics(spec)", uikit_runtime)
+            self.assertIn("baselineOffset += min(max(rawAdjustment", uikit_runtime)
+
     def test_common_html_controls_emit_native_control_configuration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1104,7 +1141,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("private func applyMotion(_ spec: HTMLToIOSNodeSpec, to view: UIView)", uikit_runtime)
             self.assertIn('CABasicAnimation(keyPath: "transform.rotation")', uikit_runtime)
 
-    def test_system_safe_area_owns_status_bar_without_source_height_compensation(self) -> None:
+    def test_system_safe_area_preserves_source_content_origin_without_resizing_scroll_frame(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             payload = ir("home")
@@ -1121,11 +1158,13 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             out_dir = root / "out"
             self.run_generator([path], out_dir)
             generated = json.loads((out_dir / PAYLOAD).read_text(encoding="utf-8"))
-            self.assertIsNone(generated["screens"][0]["sourceStatusBarHeight"])
+            self.assertEqual(generated["screens"][0]["sourceStatusBarHeight"], 52)
             self.assertEqual(generated["screens"][0]["safeArea"]["owner"], "system")
             self.assertFalse(generated["screens"][0]["safeArea"]["subtractFromContainerDimensions"])
             runtime = (out_dir / RUNTIME_FILE).read_text(encoding="utf-8")
-            self.assertIn("screen.safeArea.owner != \"system\"", runtime)
+            self.assertIn("if let sourceStatusBarHeight = screen.sourceStatusBarHeight", runtime)
+            self.assertIn(".padding(.top, sourceStatusBarHeight)", runtime)
+            self.assertIn(".ignoresSafeArea(.container, edges: .top)", runtime)
             self.assertIn(".safeAreaInset(edge: .top, spacing: 0)", runtime)
             uikit_dir = root / "uikit-out"
             self.run_generator([path], uikit_dir, ui_stack="uikit")
@@ -1133,8 +1172,35 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("scroll.contentInsetAdjustmentBehavior = screen.safeArea.contentInsetAdjustment == \"never\" ? .never : .automatic", uikit_runtime)
             self.assertIn("scroll.topAnchor.constraint(equalTo: view.topAnchor)", uikit_runtime)
             self.assertIn("scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor)", uikit_runtime)
+            self.assertIn("let topCalibration = CGFloat(sourceStatusBarHeight) - view.safeAreaInsets.top", uikit_runtime)
+            self.assertIn("scroll.contentInset.top = topCalibration", uikit_runtime)
+            self.assertIn("CGPoint(x: 0, y: -scroll.adjustedContentInset.top)", uikit_runtime)
             self.assertNotIn("scroll.topAnchor.constraint(equalTo: top.bottomAnchor)", uikit_runtime)
             self.assertNotIn("scroll.bottomAnchor.constraint(equalTo: bottom.topAnchor)", uikit_runtime)
+
+    def test_fixed_artboard_status_bar_height_accounts_for_center_crop(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("home")
+            payload["target"] = {
+                "uiStack": "swiftui",
+                "viewportPt": {"width": 393, "height": 852},
+                "scale": 393 / 318,
+            }
+            root_node = payload["screens"][0]["nodes"][0]
+            root_node["layout"]["rect"].update({"width": 393, "height": 862.622641509434})
+            status = node("home.statusbar", root_node["id"], "container")
+            status["layout"]["rect"] = {"x": 0, "y": 0, "width": 393, "height": 51.905660377358494}
+            payload["screens"][0]["nodes"].append(status)
+            payload["screens"][0]["systemChrome"] = {
+                "statusBar": "native", "navigationBar": "none", "homeIndicator": "native",
+            }
+            path = root / "home.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            out_dir = root / "out"
+            self.run_generator([path], out_dir)
+            generated = json.loads((out_dir / PAYLOAD).read_text(encoding="utf-8"))
+            self.assertAlmostEqual(generated["screens"][0]["sourceStatusBarHeight"], 46.5943396226)
 
     def test_symbol_text_is_promoted_to_directional_system_icon(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1374,7 +1440,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn("return runs.map(\\.text).joined()", uikit_runtime)
             self.assertIn("paragraph.minimumLineHeight = targetLineHeight", uikit_runtime)
-            self.assertIn("attributes[.baselineOffset] = (targetLineHeight - font.lineHeight) / 2", uikit_runtime)
+            self.assertIn("baselineOffset += (targetLineHeight - font.lineHeight) / 2", uikit_runtime)
             self.assertIn("private func nativeFont(size: Double", uikit_runtime)
 
     def test_overlapping_inline_range_rects_are_one_visual_text_line(self) -> None:

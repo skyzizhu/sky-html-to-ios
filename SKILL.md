@@ -221,6 +221,8 @@ python3 scripts/build_ui_ir.py render-tree.json \
 
 随后读取 `references/text-calibration.md`、`references/form-and-dynamic-data.md`、`references/responsive-auto-layout.md` 和 `references/page-regions-and-system-chrome.md`，运行 `scripts/build_text_calibration.py`、`scripts/analyze_responsive_layout.cjs` 和 `scripts/probe_scroll_region_behaviors.cjs`。固定缩小画板只允许将设计 token 一次性归一化到基准设备；原生页面始终使用 Auto Layout/SwiftUI layout，不能运行时整体缩放。文字行数、baseline、截断和富文本 range 进入专项验收。文本控件必须先生成 `textBehavior`，区分 input/display、单行/多行、editable/readonly/selectable/scrollable，再选择 TextField、TextView 或 Label；纯展示 TextView 必须关闭编辑。顶部栏、底部栏、浮动操作和 presentation 必须进入 screen regions；fixed、sticky、scroll-away、hide-on-scroll、collapse 和 appearance-change 必须用真实滚动采样判定，不得只靠 class 名或首帧位置猜测。
 
+文字 Range 高度只作为行盒、裁剪和 fallback 诊断，除非来源自身固定高度或裁剪，否则不得直接生成 Text/Label 的硬高度。首基线只对纯文字叶子的字形位置做有界校准，不得靠修改父容器 padding 或整页纵向偏移掩盖误差。纵向走查按顶部系统区域、滚动内容、固定底栏和弹层分别建立锚点；安全区由系统管理时，不得从滚动容器宽高或内容高度再次手工扣减。
+
 动态列表、筛选、分类或步骤切换改变内容高度时，交互快照必须记录目标容器前后 rect。生成器优先让原生集合按内容和约束计算尺寸；仅当 HTML 自身存在固定高度容器或 presentation 且浏览器证明确有尺寸变化时，才在共享状态中生成该节点的 `sizeOverrides`。SwiftUI 和 UIKit 消费同一状态；禁止为某个截图在 Controller/View 中追加孤立常量。
 
 多页面项目保留独立 `html-route-graph.json` 和 `interaction-state-graph.json` 作为跨 screen 契约。每个 screen 的 UI IR 负责页面内部结构；路由图负责 screen 集合，交互图负责 push/present 候选、sheet、popover、Tab、返回/关闭、计时跳转和局部状态。覆盖文件中的已确认原生所有权必须合并进 IR，禁止把所有页面压成一个 screen IR。
