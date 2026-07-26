@@ -188,16 +188,20 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             payload = ir("dynamic")
             root_node = payload["screens"][0]["nodes"][0]
             tab = node("dynamic.tab", root_node["id"], "button", "Category")
-            grid = node("dynamic.grid", root_node["id"], "container")
+            panel = node("dynamic.panel", root_node["id"], "container")
+            panel["layout"]["rect"] = {"x": 20, "y": 300, "width": 353, "height": 180}
+            panel["style"]["height"] = "180px"
+            grid = node("dynamic.grid", panel["id"], "container")
+            grid["layout"]["rect"] = {"x": 32, "y": 350, "width": 329, "height": 90}
+            grid["style"]["height"] = "90px"
             grid["layout"]["mode"] = "grid"
             grid["style"]["gridTemplateColumns"] = "repeat(3, 1fr)"
             template = node("dynamic.item", grid["id"], "text", "A")
-            payload["screens"][0]["nodes"].extend([tab, grid, template])
-            payload["states"] = [{
-                "id": "category-selection",
-                "kind": "selection",
-                "targetNodeIds": [tab["id"]],
-            }]
+            payload["screens"][0]["nodes"].extend([tab, panel, grid, template])
+            payload["states"] = [
+                {"id": "category-selection", "kind": "selection", "targetNodeIds": [tab["id"]]},
+                {"id": "emoji-popover", "kind": "popover-overlay", "targetNodeIds": [panel["id"]]},
+            ]
             payload["interactions"] = [{
                 "id": "interaction.dynamic.category",
                 "sourceNodeId": tab["id"],
@@ -217,6 +221,9 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                         "sourceNodeId": tab["id"],
                         "targetNodeId": grid["id"],
                         "mode": "replace-children",
+                        "targetRectBeforeCssPx": {"x": 32, "y": 350, "width": 329, "height": 90},
+                        "targetRectAfterCssPx": {"x": 32, "y": 350, "width": 329, "height": 210},
+                        "scrollAxisAfter": "vertical",
                         "items": [
                             {"text": "B", "textLeaves": ["B"]},
                             {"text": "C", "textLeaves": ["C"]},
@@ -234,8 +241,17 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             variant = generated_tab["action"]["contentVariant"]
             self.assertEqual(variant["targetNodeID"], grid["id"])
             self.assertEqual([item["textValues"] for item in variant["items"]], [["B"], ["C"]])
+            self.assertEqual(variant["sizeOverrides"], [
+                {"nodeID": grid["id"], "width": None, "height": 210.0},
+                {"nodeID": panel["id"], "width": None, "height": 300.0},
+            ])
+            self.assertEqual(variant["scrollAxisOverride"], "vertical")
             swiftui_runtime = (swiftui_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn("contentOverrides[variant.targetNodeID] = variant.items", swiftui_runtime)
+            self.assertIn("sizeOverride: store.sizeOverrides[spec.id]", swiftui_runtime)
+            self.assertIn("store.scrollAxisOverrides[spec.id]", swiftui_runtime)
+            swiftui_navigation = (swiftui_dir / NAVIGATION_FILE).read_text(encoding="utf-8")
+            self.assertIn("store.sizeOverrides[presentation.node.id]?.height", swiftui_navigation)
             self.assertIn("dynamicContentItem", swiftui_runtime)
 
             uikit_dir = root / "uikit"
@@ -243,6 +259,11 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn("makeDynamicView", uikit_runtime)
             self.assertIn("state.contentOverrides[spec.id]", uikit_runtime)
+            self.assertIn("state.sizeOverrides[spec.id]", uikit_runtime)
+            self.assertIn("state.scrollAxisOverrides[spec.id]", uikit_runtime)
+            uikit_root = (uikit_dir / NAVIGATION_FILE).read_text(encoding="utf-8")
+            self.assertIn("generatedState.perform(action)", uikit_root)
+            self.assertIn("generatedState.sizeOverrides[presentation.node.id]?.height", uikit_root)
 
     def test_axis_isolation_intrinsic_item_width_and_compact_square_geometry(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

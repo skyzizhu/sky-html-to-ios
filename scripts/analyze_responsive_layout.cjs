@@ -141,6 +141,23 @@ async function main() {
     await page.evaluate(async () => { if (document.fonts?.ready) await document.fonts.ready; });
     let selector = args.selector;
     if (!selector) selector = await page.evaluate(() => {
+      const viewportWidth = document.documentElement.clientWidth;
+      const semanticRoots = [
+        ...document.querySelectorAll("[data-ios-app-root], main, [role='main'], #app, #root, .app-shell"),
+      ].filter((element) => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return style.display !== "none" && style.visibility !== "hidden"
+          && rect.width >= viewportWidth * 0.72 && rect.height >= 120;
+      }).sort((left, right) => right.getBoundingClientRect().width * right.getBoundingClientRect().height
+        - left.getBoundingClientRect().width * left.getBoundingClientRect().height);
+      if (semanticRoots.length) {
+        const element = semanticRoots[0];
+        if (element.id) return `#${CSS.escape(element.id)}`;
+        if (element.hasAttribute("data-ios-app-root")) return "[data-ios-app-root]";
+        if (element.tagName.toLowerCase() === "main" && document.querySelectorAll("main").length === 1) return "main";
+        if (element.getAttribute("role") === "main" && document.querySelectorAll("[role='main']").length === 1) return "[role='main']";
+      }
       const candidates = Array.from(document.querySelectorAll("[id], [class]")).map((element) => {
         const rect = element.getBoundingClientRect();
         const name = `${element.id} ${element.className}`;
@@ -186,6 +203,18 @@ async function main() {
       const elements = [root, ...root.querySelectorAll("*")];
       return {
         selector,
+        documentMetrics: {
+          viewportWidth: innerWidth,
+          clientWidth: document.documentElement.clientWidth,
+          scrollWidth: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth || 0),
+          horizontalOverflow: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth || 0) - document.documentElement.clientWidth,
+          metaViewport: document.querySelector('meta[name="viewport"]')?.getAttribute("content") || null,
+          responsiveMediaQueryCount: Array.from(document.styleSheets).reduce((count, sheet) => {
+            try {
+              return count + Array.from(sheet.cssRules || []).filter((rule) => rule.type === CSSRule.MEDIA_RULE && /(max|min)-width/i.test(rule.conditionText || "")).length;
+            } catch (_) { return count; }
+          }, 0),
+        },
         nodes: elements.map((element, index) => {
           const rect = element.getBoundingClientRect();
           const parent = element === root ? null : element.parentElement;
@@ -236,6 +265,34 @@ async function main() {
     const baselineIndex = args.widths.reduce((best, width, index) => Math.abs(width - args.baselineWidth) < Math.abs(args.widths[best] - args.baselineWidth) ? index : best, 0);
     const sourceNaturalWidth = naturalRootWidths[baselineIndex];
     const designScale = selectedMode === "fixed-artboard" ? args.baselineWidth / sourceNaturalWidth : 1;
+    const rootTracksViewport = targetSpan <= 0 || rootSpan >= targetSpan * 0.6;
+    const mobileOverflow = natural.map((sample) => Math.max(0, sample.documentMetrics.horizontalOverflow));
+    const hasMaterialHorizontalOverflow = mobileOverflow.some((value) => value > 12);
+    const rootCoverage = natural.map((sample) => sample.nodes[0].rect.width / Math.max(1, sample.targetWidth));
+    const coversMobileViewport = rootCoverage.every((value) => value >= 0.78 && value <= 1.08);
+    const hasResponsiveEvidence = natural.some((sample) => sample.documentMetrics.responsiveMediaQueryCount > 0)
+      || natural.some((sample) => /width\s*=\s*device-width/i.test(sample.documentMetrics.metaViewport || ""))
+      || rootTracksViewport;
+    let sourceKind;
+    let conversionStatus;
+    const reasons = [];
+    if (selectedMode === "fixed-artboard" && sourceNaturalWidth >= 280 && sourceNaturalWidth <= 500) {
+      sourceKind = "fixed-mobile-artboard";
+      conversionStatus = "automatic";
+      reasons.push("A portrait mobile-width artboard remains fixed across viewport probes.");
+    } else if (selectedMode === "viewport" && !hasMaterialHorizontalOverflow && coversMobileViewport && hasResponsiveEvidence) {
+      sourceKind = args.selector && args.selector !== "body" ? "responsive-mobile-root" : "responsive-document";
+      conversionStatus = "automatic";
+      reasons.push("The page root follows mobile viewport widths without document-level horizontal overflow.");
+    } else if (hasMaterialHorizontalOverflow || sourceNaturalWidth > 500) {
+      sourceKind = "desktop-only";
+      conversionStatus = "blocked-needs-scope-or-redesign-consent";
+      reasons.push("Mobile probes retain desktop-width content or produce document-level horizontal overflow.");
+    } else {
+      sourceKind = "ambiguous-responsive-source";
+      conversionStatus = "needs-input";
+      reasons.push("The page has no explicit mobile artboard and mobile responsiveness is not proven by layout measurements.");
+    }
     let samples = natural;
     if (selectedMode === "fixed-artboard") {
       samples = [];
@@ -266,6 +323,17 @@ async function main() {
       source: args.html ? { kind: "html-file", entry: path.resolve(args.html) } : { kind: "url", entry: args.url },
       rootSelector: samples[0].selector,
       mode: selectedMode,
+      sourceClassification: {
+        kind: sourceKind,
+        conversionStatus,
+        reasons,
+        rootTracksViewport,
+        coversMobileViewport,
+        hasResponsiveEvidence,
+        hasMaterialHorizontalOverflow,
+        mobileHorizontalOverflowCssPx: mobileOverflow,
+        rootCoverageRatios: rootCoverage,
+      },
       normalization: {
         policy: selectedMode === "fixed-artboard" ? "scale-design-tokens-once-then-use-auto-layout" : "one-css-pixel-to-one-point-at-baseline",
         sourceNaturalWidthCssPx: sourceNaturalWidth,
@@ -274,7 +342,7 @@ async function main() {
         runtimeWholePageScalingAllowed: false,
       },
       sampleWidthsPt: args.widths,
-      samples: samples.map((sample) => ({ targetWidthPt: sample.targetWidth, sourceProbeWidthCssPx: sample.sourceProbeWidth, rootWidthPt: sample.nodes[0].rect.width })),
+      samples: samples.map((sample) => ({ targetWidthPt: sample.targetWidth, sourceProbeWidthCssPx: sample.sourceProbeWidth, rootWidthPt: sample.nodes[0].rect.width, documentMetrics: sample.documentMetrics })),
       rules,
       warnings: Array.from(new Set(warnings)),
       summary: { nodesCompared: rules.length, fixedArtboardDetected: selectedMode === "fixed-artboard", ambiguousNodes: rules.filter((rule) => rule.horizontal === "intrinsic-or-custom").length },
@@ -282,7 +350,7 @@ async function main() {
     const out = path.resolve(args.out);
     fs.mkdirSync(path.dirname(out), { recursive: true });
     fs.writeFileSync(out, `${JSON.stringify(output, null, 2)}\n`, "utf8");
-    process.stdout.write(`${JSON.stringify({ out, mode: selectedMode, ...output.normalization, ...output.summary }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ out, mode: selectedMode, sourceKind, conversionStatus, ...output.normalization, ...output.summary }, null, 2)}\n`);
   } finally {
     await browser.close();
     if (server) await new Promise((resolve) => server.close(resolve));

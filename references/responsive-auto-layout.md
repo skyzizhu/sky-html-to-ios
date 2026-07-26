@@ -2,6 +2,17 @@
 
 HTML 截图提供基准视觉，iOS 实现使用 Auto Layout/SwiftUI layout semantics。禁止把整个页面放进 `scaleEffect` 或按设备宽度实时整体缩放。
 
+## 来源分类门禁
+
+在创建新工程或生成代码前，对每个独立页面范围在 320、375、393、430px 运行实测分类：
+
+- `responsive-document` / `responsive-mobile-root`：根容器宽度随 viewport 变化，覆盖主要移动宽度，且 document horizontal overflow 不超过容差。viewport meta、width media query 和布局几何变化属于支持证据，但不能单独替代实测。
+- `fixed-mobile-artboard`：固定在 280-500px 的竖向应用画板；允许一次性设计 token 归一化。
+- `desktop-only`：移动 viewport 下仍保留大于 500px 的自然根宽、明显 `min-width` 或超过 12px 的 document horizontal overflow。不得缩放成手机页面。
+- `ambiguous-responsive-source`：未发现明确手机画板，且根宽、覆盖率或响应式证据不足。停止自动生成并确认页面根、移动 breakpoint 或是否允许适配设计。
+
+响应式网站没有手机外壳时，使用语义 app root、`main`/`[role=main]`，最后才使用 `body`。不得因为某个普通卡片恰好为 393px 宽就将它当作完整 screen。
+
 ## 两类来源
 
 ### 原生响应式页面
@@ -41,6 +52,10 @@ NODE_PATH=<playwright-node-modules> node scripts/analyze_responsive_layout.cjs \
 ```
 
 工具自动区分 viewport 与 fixed-artboard，按目标宽度探测节点相对父容器的位置、宽高响应和文字行数，输出 Auto Layout 建议。
+
+## 动态内容与架构
+
+内容变体应先进入 ViewModel/store，再由 `LazyVGrid`、Stack、`UICollectionView`、`UITableView` 和 Auto Layout 的 intrinsic content size 重新布局。若来源中的弹层或固定容器会随内容状态改变尺寸，记录浏览器前后 rect，并把差值转换为状态化约束；不要在页面控制器里为每种分类写一组绝对 frame。自动生成的尺寸覆盖只允许作用于实测发生变化的内容容器及其 presentation 根，不向无关祖先传播。若 `overflow:auto` 只在某个内容变体中产生真实溢出，滚动轴也属于状态数据；该容器转换为独立原生滚动 viewport，不能让溢出内容压缩同级标题、标签栏或操作区。
 
 ## 约束推断
 

@@ -639,6 +639,15 @@ def normalize_dynamic_contracts(
                 if not target_selector or not after_items or before_items == after_items:
                     continue
                 target_node_ids = selector_to_node_ids.get(target_selector, [])
+                after_scroll = (after_target or {}).get("scroll") or {}
+                vertical_scroll = (
+                    str(after_scroll.get("overflowY") or "visible") in {"auto", "scroll"}
+                    and float(after_scroll.get("scrollHeight") or 0) > float(after_scroll.get("clientHeight") or 0) + 1
+                )
+                horizontal_scroll = (
+                    str(after_scroll.get("overflowX") or "visible") in {"auto", "scroll"}
+                    and float(after_scroll.get("scrollWidth") or 0) > float(after_scroll.get("clientWidth") or 0) + 1
+                )
                 content_variants.append({
                     "sourceNodeId": node_ids[variant_ordinal] if variant_ordinal < len(node_ids) else (node_ids[0] if node_ids else None),
                     "sourceIndex": runtime_variant.get("sourceIndex"),
@@ -646,6 +655,9 @@ def normalize_dynamic_contracts(
                     "targetSelector": target_selector,
                     "targetNodeId": target_node_ids[0] if target_node_ids else None,
                     "mode": "replace-children",
+                    "targetRectBeforeCssPx": (before_target or {}).get("rect"),
+                    "targetRectAfterCssPx": (after_target or {}).get("rect"),
+                    "scrollAxisAfter": "both" if vertical_scroll and horizontal_scroll else "vertical" if vertical_scroll else "horizontal" if horizontal_scroll else "none",
                     "items": [{
                         "text": item.get("text") or "",
                         "textLeaves": item.get("textLeaves") or ([item.get("text")] if item.get("text") else []),

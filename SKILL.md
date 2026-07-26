@@ -17,6 +17,7 @@ description: 将可运行的移动端 HTML 高保真原型转换为可编译、�
 6. 必须验证编译结果。环境允许时，还必须执行 HTML 截图、模拟器截图和视觉差异检查。
 7. 纠偏时只修改产生差异的节点或组件，避免重写无关页面。
 8. 响应式页面必须从多宽度计算结果推断原生约束；禁止用运行时整页缩放代替 Auto Layout。
+9. 视觉复刻不得破坏原生 UI 架构。页面、容器、可复用 View/Cell、状态和路由按职责分层；状态变化通过数据模型驱动 Stack/Grid/Auto Layout，不在业务页面散落截图坐标或逐状态 frame。
 
 ## 支持范围
 
@@ -173,6 +174,13 @@ python3 scripts/inspect_ios_sdk.py \
 - 去除纯手机外壳、模拟刘海、展示标签和背景板装饰。
 - 多个候选且无法可靠确定时，展示候选的 selector、尺寸和截图位置，请用户确认。
 
+没有显式手机画板时，先用 `scripts/analyze_responsive_layout.cjs` 在 320/375/393/430 宽度分类来源：
+
+- `responsive-document` / `responsive-mobile-root`：根宽跟随 viewport、移动宽度无文档级横向溢出，并有 viewport、媒体查询或实测重排证据；按目标移动 viewport 直接提取，`1 CSS px = 1 pt`，不缩放桌面版。
+- `fixed-mobile-artboard`：按固定手机设计稿执行一次 token 归一化。
+- `desktop-only`：存在桌面最小宽度、持续横向溢出或根宽明显大于手机 viewport；在用户指定移动页面范围或明确允许响应式重设计前停止。
+- `ambiguous-responsive-source`：没有手机画板且实测证据不足；要求用户确认 app root、目标 breakpoint 或转换范围，不得任选卡片当页面根。
+
 ### 5. 生成并校验 UI IR
 
 先运行 `scripts/build_ui_ir.py`，将 `extract_render_tree.cjs` 的输出转换为可审查的 UI IR 草稿：
@@ -210,6 +218,8 @@ python3 scripts/build_ui_ir.py render-tree.json \
 运行 `scripts/validate_ui_ir.py`。自动映射置信度低于 `0.7` 的节点必须人工复核；IR 未通过校验时不得开始生成代码。
 
 随后读取 `references/text-calibration.md`、`references/responsive-auto-layout.md` 和 `references/page-regions-and-system-chrome.md`，运行 `scripts/build_text_calibration.py`、`scripts/analyze_responsive_layout.cjs` 和 `scripts/probe_scroll_region_behaviors.cjs`。固定缩小画板只允许将设计 token 一次性归一化到基准设备；原生页面始终使用 Auto Layout/SwiftUI layout，不能运行时整体缩放。文字行数、baseline、截断和富文本 range 进入专项验收。顶部栏、底部栏、浮动操作和 presentation 必须进入 screen regions；fixed、sticky、scroll-away、hide-on-scroll、collapse 和 appearance-change 必须用真实滚动采样判定，不得只靠 class 名或首帧位置猜测。
+
+动态列表、筛选、分类或步骤切换改变内容高度时，交互快照必须记录目标容器前后 rect。生成器优先让原生集合按内容和约束计算尺寸；仅当 HTML 自身存在固定高度容器或 presentation 且浏览器证明确有尺寸变化时，才在共享状态中生成该节点的 `sizeOverrides`。SwiftUI 和 UIKit 消费同一状态；禁止为某个截图在 Controller/View 中追加孤立常量。
 
 多页面项目保留独立 `html-route-graph.json` 和 `interaction-state-graph.json` 作为跨 screen 契约。每个 screen 的 UI IR 负责页面内部结构；路由图负责 screen 集合，交互图负责 push/present 候选、sheet、popover、Tab、返回/关闭、计时跳转和局部状态。覆盖文件中的已确认原生所有权必须合并进 IR，禁止把所有页面压成一个 screen IR。
 

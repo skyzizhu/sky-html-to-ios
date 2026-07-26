@@ -657,10 +657,20 @@ async function main() {
             const element = document.querySelector(selector);
             if (!element) { targets[selector] = null; continue; }
             const rootRect = element.getBoundingClientRect();
+            const rootStyle = getComputedStyle(element);
             targets[selector] = {
               visible: visible(element),
               classes: Array.from(element.classList).sort(),
               text: (element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 1000),
+              rect: { x: rootRect.x, y: rootRect.y, width: rootRect.width, height: rootRect.height },
+              scroll: {
+                overflowX: rootStyle.overflowX,
+                overflowY: rootStyle.overflowY,
+                scrollWidth: element.scrollWidth,
+                scrollHeight: element.scrollHeight,
+                clientWidth: element.clientWidth,
+                clientHeight: element.clientHeight,
+              },
               directChildren: Array.from(element.children).slice(0, 160).map((child, index) => contentItem(child, index, rootRect)),
             };
           } catch (_) { targets[selector] = null; }

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.21.0"
+GENERATOR_VERSION = "1.22.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -1406,6 +1406,13 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
     for node in nodes_list:
         children.setdefault(node.get("parentId"), []).append(str(node["id"]))
 
+    presentation_root_ids = {
+        str(target_id)
+        for state in ir.get("states") or []
+        if str(state.get("kind") or "") in PRESENTATION_KINDS
+        for target_id in state.get("targetNodeIds") or []
+    }
+
     def text_leaf_ids(node_id: str) -> list[str]:
         child_ids = children.get(node_id) or []
         result = [leaf_id for child_id in child_ids for leaf_id in text_leaf_ids(child_id)]
@@ -1436,7 +1443,37 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
                 "textByNodeID": {leaf_id: values[value_index] for value_index, leaf_id in enumerate(leaf_ids) if value_index < len(values)},
                 "textValues": values,
             })
-        return {"targetNodeID": target_node_id, "items": items} if items else None
+        if not items:
+            return None
+        size_overrides = []
+        before_rect = raw.get("targetRectBeforeCssPx") or {}
+        after_rect = raw.get("targetRectAfterCssPx") or {}
+        measured_rect = ((nodes.get(target_node_id) or {}).get("layout") or {}).get("rect") or {}
+        before_height = number(before_rect.get("height"))
+        after_height = number(after_rect.get("height"))
+        measured_height = number(measured_rect.get("height"))
+        if before_height > 0 and after_height > 0 and abs(after_height - before_height) > 0.5:
+            scale = measured_height / before_height if measured_height > 0 else 1
+            size_overrides.append({"nodeID": target_node_id, "width": None, "height": after_height * scale})
+            current = target_node_id
+            while current:
+                if current in presentation_root_ids:
+                    presentation_rect = ((nodes.get(current) or {}).get("layout") or {}).get("rect") or {}
+                    presentation_height = number(presentation_rect.get("height"))
+                    if presentation_height > 0 and current != target_node_id:
+                        size_overrides.append({
+                            "nodeID": current,
+                            "width": None,
+                            "height": presentation_height + (after_height - before_height) * scale,
+                        })
+                    break
+                current = str((nodes.get(current) or {}).get("parentId") or "")
+        return {
+            "targetNodeID": target_node_id,
+            "items": items,
+            "sizeOverrides": size_overrides,
+            "scrollAxisOverride": str(raw.get("scrollAxisAfter") or "none"),
+        }
 
     states_by_id = {str(state.get("id")): state for state in ir.get("states") or []}
     actions: dict[str, dict[str, Any]] = {}
@@ -1571,7 +1608,7 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
             expansion_states[str(target_id)] = str(state.get("id"))
 
     presentation_states = []
-    presentation_root_ids: set[str] = set()
+    presentation_root_ids = set()
     for state in ir.get("states") or []:
         kind = str(state.get("kind") or "")
         if kind not in PRESENTATION_KINDS:
@@ -1919,6 +1956,14 @@ struct HTMLToIOSActionSpec: Codable {{
 struct HTMLToIOSContentVariantSpec: Codable {{
     let targetNodeID: String
     let items: [HTMLToIOSDynamicContentItemSpec]
+    let sizeOverrides: [HTMLToIOSSizeOverrideSpec]
+    let scrollAxisOverride: String
+}}
+
+struct HTMLToIOSSizeOverrideSpec: Codable {{
+    let nodeID: String
+    let width: Double?
+    let height: Double?
 }}
 
 struct HTMLToIOSDynamicContentItemSpec: Codable, Identifiable {{
@@ -2158,6 +2203,8 @@ final class HTMLToIOSGeneratedStore: ObservableObject {
     @Published var hiddenNodeIDs: Set<String> = []
     @Published var feedbackText: [String: String] = [:]
     @Published var contentOverrides: [String: [HTMLToIOSDynamicContentItemSpec]] = [:]
+    @Published var sizeOverrides: [String: HTMLToIOSSizeOverrideSpec] = [:]
+    @Published var scrollAxisOverrides: [String: String] = [:]
     @Published var sheet: PresentedState?
     @Published var fullScreen: PresentedState?
     @Published var popover: PresentedState?
@@ -2219,6 +2266,8 @@ final class HTMLToIOSGeneratedStore: ObservableObject {
         guard let spec else { return }
         if let variant = spec.contentVariant {
             contentOverrides[variant.targetNodeID] = variant.items
+            for override in variant.sizeOverrides { sizeOverrides[override.nodeID] = override }
+            scrollAxisOverrides[variant.targetNodeID] = variant.scrollAxisOverride
         }
         let routeID = spec.targetScreenID ?? spec.target
         let stateID = spec.targetStateID ?? spec.target
@@ -2585,6 +2634,7 @@ private struct HTMLToIOSMotionModifier: ViewModifier {
 
 private struct HTMLToIOSStyleModifier: ViewModifier {
     let style: HTMLToIOSStyleSpec
+    let sizeOverride: HTMLToIOSSizeOverrideSpec?
     let assetName: String?
     let foregroundOverride: String?
     let backgroundOverride: String?
@@ -2606,8 +2656,10 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
         let minWidth: CGFloat? = (enforcesPreferredWidth || style.resistsCompression == true) && preferredWidth > 0 ? preferredWidth : nil
         let rawMinHeight = style.minHeight ?? 0
         let minHeight: CGFloat? = rawMinHeight > 0 ? CGFloat(rawMinHeight) : nil
-        let fixedWidth: CGFloat? = style.fixedWidth.map { CGFloat($0) }
-        let fixedHeight: CGFloat? = style.fixedHeight.map { CGFloat($0) }
+        let sourceFixedWidth: CGFloat? = style.fixedWidth.map { CGFloat($0) }
+        let sourceFixedHeight: CGFloat? = style.fixedHeight.map { CGFloat($0) }
+        let fixedWidth: CGFloat? = sizeOverride?.width.map { CGFloat($0) } ?? sourceFixedWidth
+        let fixedHeight: CGFloat? = sizeOverride?.height.map { CGFloat($0) } ?? sourceFixedHeight
         let fontSize = style.fontSize ?? 16
         let nativeLineHeight = htmlToIOSUIFontLineHeight(
             size: fontSize,
@@ -2704,6 +2756,7 @@ struct HTMLToIOSNativeNodeView: View {
     private var styledContent: some View {
         content.modifier(HTMLToIOSStyleModifier(
             style: spec.style,
+            sizeOverride: store.sizeOverrides[spec.id],
             assetName: spec.backgroundAssetName,
             foregroundOverride: selectionForeground,
             backgroundOverride: selectionBackground,
@@ -2748,7 +2801,10 @@ struct HTMLToIOSNativeNodeView: View {
     }
 
     @ViewBuilder private var content: some View {
-        switch spec.semantic {
+        if effectiveScrollAxis != "none" && spec.semantic != "carousel" && spec.semantic != "scroll" {
+            scrollContainer
+        } else {
+          switch spec.semantic {
         case "button", "link", "menu-item", "tab-item":
             if spec.action != nil {
                 Button(action: { store.perform(spec.action) }) { buttonContent }
@@ -2836,6 +2892,7 @@ struct HTMLToIOSNativeNodeView: View {
                 childContent
                     .contentShape(Rectangle())
             }
+          }
         }
     }
 
@@ -2865,7 +2922,7 @@ struct HTMLToIOSNativeNodeView: View {
     }
 
     @ViewBuilder private var scrollContainer: some View {
-        switch spec.style.scrollAxis {
+        switch effectiveScrollAxis {
         case "horizontal":
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: verticalAlignment, spacing: contentSpacing) { dynamicOrOrderedContent }
@@ -2883,6 +2940,10 @@ struct HTMLToIOSNativeNodeView: View {
             }
             .clipped()
         }
+    }
+
+    private var effectiveScrollAxis: String {
+        store.scrollAxisOverrides[spec.id] ?? spec.style.scrollAxis ?? (spec.semantic == "scroll" ? "vertical" : "none")
     }
 
     @ViewBuilder private var buttonContent: some View {
@@ -3311,7 +3372,8 @@ struct HTMLToIOSGeneratedRootView: View {
                 let rect = presentation.sourceRect
                 let globalFrame = proxy.frame(in: .global)
                 let width = min(CGFloat(rect.indices.contains(2) ? rect[2] : 0), proxy.size.width)
-                let height = min(CGFloat(rect.indices.contains(3) ? rect[3] : 0), proxy.size.height)
+                let measuredHeight = store.sizeOverrides[presentation.node.id]?.height ?? (rect.indices.contains(3) ? rect[3] : 0)
+                let height = min(CGFloat(measuredHeight), proxy.size.height)
                 let localX = CGFloat(rect.indices.contains(0) ? rect[0] : 0) - globalFrame.minX
                 let localY = CGFloat(rect.indices.contains(1) ? rect[1] : 0) - globalFrame.minY
                 let centerX = min(max(localX + width / 2, width / 2), proxy.size.width - width / 2)
@@ -3370,6 +3432,8 @@ final class HTMLToIOSUIKitState {
     var selectionOverrides: [String: Bool] = [:]
     var selectionCounts: [String: Int] = [:]
     var contentOverrides: [String: [HTMLToIOSDynamicContentItemSpec]] = [:]
+    var sizeOverrides: [String: HTMLToIOSSizeOverrideSpec] = [:]
+    var scrollAxisOverrides: [String: String] = [:]
 
     func isSelected(_ spec: HTMLToIOSNodeSpec) -> Bool {
         guard let stateID = spec.selectionStateID else { return false }
@@ -3380,6 +3444,8 @@ final class HTMLToIOSUIKitState {
     func perform(_ spec: HTMLToIOSActionSpec) {
         if let variant = spec.contentVariant {
             contentOverrides[variant.targetNodeID] = variant.items
+            for override in variant.sizeOverrides { sizeOverrides[override.nodeID] = override }
+            scrollAxisOverrides[variant.targetNodeID] = variant.scrollAxisOverride
         }
         let stateID = spec.targetStateID ?? spec.target
         guard let stateID else { return }
@@ -3417,7 +3483,11 @@ final class HTMLToIOSNodeRenderer {
 
     func makeView(_ spec: HTMLToIOSNodeSpec) -> UIView {
         let view: UIView
-        switch spec.semantic {
+        let effectiveScrollAxis = state.scrollAxisOverrides[spec.id] ?? spec.style.scrollAxis ?? "none"
+        if effectiveScrollAxis != "none" && spec.semantic != "carousel" && spec.semantic != "scroll" {
+            view = makeScrollContainer(spec)
+        } else {
+          switch spec.semantic {
         case "button", "link", "menu-item", "tab-item":
             if spec.children.isEmpty && spec.overlayChildren.isEmpty {
                 let button = UIButton(type: .system)
@@ -3500,6 +3570,7 @@ final class HTMLToIOSNodeRenderer {
                 stack.addGestureRecognizer(HTMLToIOSClosureTapGestureRecognizer { [actionHandler] in actionHandler(spec.action) })
             }
             view = stack
+          }
         }
         applyStyle(spec, to: view)
         attachOverlayChildren(spec, to: view)
@@ -3677,10 +3748,10 @@ final class HTMLToIOSNodeRenderer {
     }
 
     private func makeScrollContainer(_ spec: HTMLToIOSNodeSpec) -> UIView {
-        let axis = spec.semantic == "carousel" ? "horizontal" : (spec.style.scrollAxis ?? "vertical")
+        let axis = spec.semantic == "carousel" ? "horizontal" : (state.scrollAxisOverrides[spec.id] ?? spec.style.scrollAxis ?? "vertical")
         if axis == "none" { return makeStack(spec) }
         let scroll = UIScrollView()
-        let stack = makeStack(spec)
+        let stack = spec.axis == "grid" ? makeGrid(spec) : makeStack(spec)
         scroll.isDirectionalLockEnabled = axis != "both"
         scroll.alwaysBounceHorizontal = false
         scroll.alwaysBounceVertical = false
@@ -3965,12 +4036,13 @@ final class HTMLToIOSNodeRenderer {
         }
         let needsClipping = spec.style.clipsContent == true || (spec.style.cornerRadius ?? 0) > 0
         view.clipsToBounds = needsClipping && spec.style.shadowColor == nil
-        if let width = spec.style.fixedWidth, width > 0 {
+        let sizeOverride = state.sizeOverrides[spec.id]
+        if let width = sizeOverride?.width ?? spec.style.fixedWidth, width > 0 {
             view.widthAnchor.constraint(equalToConstant: width).isActive = true
         } else if let width = spec.style.textMeasureWidth, width > 0 {
             view.widthAnchor.constraint(lessThanOrEqualToConstant: width).isActive = true
         }
-        if let height = spec.style.fixedHeight, height > 0 {
+        if let height = sizeOverride?.height ?? spec.style.fixedHeight, height > 0 {
             view.heightAnchor.constraint(equalToConstant: height).isActive = true
         }
         if let ratio = spec.style.aspectRatio,
@@ -4181,6 +4253,8 @@ final class HTMLToIOSGeneratedCustomOverlayController: UIViewController {
     private let presentation: HTMLToIOSPresentationSpec
     private let actionHandler: (HTMLToIOSActionSpec?) -> Void
     private let generatedState = HTMLToIOSUIKitState()
+    private let backdrop = UIControl()
+    private weak var panel: UIView?
 
     init(presentation: HTMLToIOSPresentationSpec, actionHandler: @escaping (HTMLToIOSActionSpec?) -> Void) {
         self.presentation = presentation
@@ -4195,28 +4269,36 @@ final class HTMLToIOSGeneratedCustomOverlayController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .clear
-        let backdrop = UIControl()
         backdrop.translatesAutoresizingMaskIntoConstraints = false
         backdrop.backgroundColor = .clear
         backdrop.addAction(UIAction { [weak self] _ in self?.dismiss(animated: true) }, for: .touchUpInside)
         view.addSubview(backdrop)
-
-        let renderer = HTMLToIOSNodeRenderer(state: generatedState, actionHandler: actionHandler)
-        let panel = renderer.makeView(presentation.node)
-        panel.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(panel)
-        let rect = presentation.sourceRect
-        let width = CGFloat(rect.indices.contains(2) ? rect[2] : 0)
-        let height = CGFloat(rect.indices.contains(3) ? rect[3] : 0)
-        let sourceLeading = panel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: CGFloat(rect.indices.contains(0) ? rect[0] : 0))
-        let sourceTop = panel.topAnchor.constraint(equalTo: view.topAnchor, constant: CGFloat(rect.indices.contains(1) ? rect[1] : 0))
-        sourceLeading.priority = .defaultHigh
-        sourceTop.priority = .defaultHigh
         NSLayoutConstraint.activate([
             backdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             backdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             backdrop.topAnchor.constraint(equalTo: view.topAnchor),
             backdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        renderPanel(animated: false)
+    }
+
+    private func renderPanel(animated: Bool) {
+        panel?.removeFromSuperview()
+        let renderer = HTMLToIOSNodeRenderer(state: generatedState, actionHandler: { [weak self] action in
+            self?.perform(action)
+        })
+        let panel = renderer.makeView(presentation.node)
+        self.panel = panel
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(panel)
+        let rect = presentation.sourceRect
+        let width = CGFloat(rect.indices.contains(2) ? rect[2] : 0)
+        let height = CGFloat(generatedState.sizeOverrides[presentation.node.id]?.height ?? (rect.indices.contains(3) ? rect[3] : 0))
+        let sourceLeading = panel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: CGFloat(rect.indices.contains(0) ? rect[0] : 0))
+        let sourceTop = panel.topAnchor.constraint(equalTo: view.topAnchor, constant: CGFloat(rect.indices.contains(1) ? rect[1] : 0))
+        sourceLeading.priority = .defaultHigh
+        sourceTop.priority = .defaultHigh
+        NSLayoutConstraint.activate([
             sourceLeading,
             sourceTop,
             panel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor),
@@ -4226,6 +4308,20 @@ final class HTMLToIOSGeneratedCustomOverlayController: UIViewController {
             panel.widthAnchor.constraint(equalToConstant: width),
             panel.heightAnchor.constraint(equalToConstant: height),
         ])
+        if animated {
+            panel.alpha = 0
+            UIView.animate(withDuration: 0.2) { panel.alpha = 1; self.view.layoutIfNeeded() }
+        }
+    }
+
+    private func perform(_ action: HTMLToIOSActionSpec?) {
+        guard let action else { return }
+        if action.contentVariant != nil || ["toggle-state", "toggle-selection", "toggle-expanded", "update-value"].contains(action.action) {
+            generatedState.perform(action)
+            renderPanel(animated: true)
+        } else {
+            actionHandler(action)
+        }
     }
 }
 

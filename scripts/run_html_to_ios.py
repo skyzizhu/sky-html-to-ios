@@ -635,6 +635,54 @@ class Orchestrator:
         screens = [screen for screen in route_data.get("screens") or [] if screen.get("includeInNativeConversion", True)]
         if not screens:
             raise OrchestrationError("discover-html-routes", "No native-conversion screens were discovered.")
+        source_layout_reports = []
+        classified_scopes = set()
+        for screen in screens:
+            container_selector = str(screen.get("containerSelector") or "")
+            activation = screen.get("activation") or {}
+            activation_selectors = activation.get("selectors") or []
+            activation_selector = str(activation_selectors[0]) if activation.get("type") == "click" and activation_selectors else ""
+            scope_key = (container_selector, activation_selector)
+            if scope_key in classified_scopes:
+                continue
+            classified_scopes.add(scope_key)
+            layout_report = self.report_dir / "source-layout" / f"{safe_app_name(str(screen.get('id') or 'screen')).lower()}.json"
+            command: list[str | Path] = [
+                self.node,
+                self.scripts / "analyze_responsive_layout.cjs",
+                "--html", html,
+                "--out", layout_report,
+                "--widths", getattr(self.args, "responsive_widths", "320,375,393,430"),
+                "--height", str(getattr(self.args, "height", 852)),
+                "--baseline-width", str(getattr(self.args, "width", 393)),
+                "--mode", "auto",
+            ]
+            if container_selector:
+                command.extend(["--selector", container_selector])
+            if activation_selector:
+                command.extend(["--activate-selector", activation_selector])
+            self.run_command(
+                f"classify-source-layout-{screen.get('id')}",
+                command,
+                environment=self.node_environment,
+                parse_json=False,
+            )
+            source_layout_reports.append(str(layout_report))
+            if not layout_report.is_file():
+                continue
+            layout_data = json.loads(layout_report.read_text(encoding="utf-8"))
+            classification = layout_data.get("sourceClassification") or {}
+            status = str(classification.get("conversionStatus") or "needs-input")
+            if status != "automatic":
+                reasons = "; ".join(str(item) for item in classification.get("reasons") or [])
+                raise OrchestrationError(
+                    "classify-source-layout",
+                    f"Screen {screen.get('id')} is {classification.get('kind', 'ambiguous')}: {reasons} "
+                    "Choose a mobile page/root, or explicitly redesign the responsive behavior before native conversion.",
+                    "needs-input",
+                )
+        self.artifacts["sourceLayoutClassifications"] = source_layout_reports
+        self.report["qualityGates"]["sourceLayoutClassification"] = "passed"
         return html, route_graph, interaction_graph, overrides, screens
 
     def build_irs_from_html(

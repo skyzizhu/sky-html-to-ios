@@ -99,7 +99,7 @@ python3 scripts/build_ui_ir.py render-tree.json \
 
 合并器必须：排除其他虚拟 screen 子树；保留当前 screen 外部但属于其流程的共享底栏/弹层；将一个 class selector 映射到全部重复 node；将容器内部动作补成 opener → action 的 prerequisite sequence；保留返回时重置其他 screen 状态等跨 screen 副作用。interaction graph 存在时，没有 href/form/data-ios/动态证据的普通 button 不应生成 `unknown` 业务动作。
 
-对于 `innerHTML`、列表筛选、分类切换和步骤切换产生的重复内容变化，合并器必须生成结构化 `contentVariants`：触发 source node、目标容器 node、替换模式以及按 DOM 顺序排列的 item 文字叶子。只有直接子项的数量、顺序或内容确实变化时才生成 `replace-children`；父标签自身的计数或文本变化继续使用普通 `update-value`，避免误删静态子结构。代码生成时复用目标容器现有的原生 item 模板和样式，只替换状态对应的数据；SwiftUI 与 UIKit 必须消费同一份变体 payload。
+对于 `innerHTML`、列表筛选、分类切换和步骤切换产生的重复内容变化，合并器必须生成结构化 `contentVariants`：触发 source node、目标容器 node、替换模式、目标前后 rect、前后 scroll/client 度量，以及按 DOM 顺序排列的 item 文字叶子。只有直接子项的数量、顺序或内容确实变化时才生成 `replace-children`；父标签自身的计数或文本变化继续使用普通 `update-value`，避免误删静态子结构。代码生成时复用目标容器现有的原生 item 模板和样式，只替换状态对应的数据；若实测高度变化影响固定 presentation，则生成共享的状态化尺寸约束，不在页面代码中硬编码状态 frame。初始内容未溢出、变体内容开始溢出的 `overflow:auto` 容器必须在状态中升级为对应轴的原生 ScrollView，滚动所有权优先于外层点击包装。SwiftUI 与 UIKit 必须消费同一份变体 payload。
 
 ## 边界与降级
 
