@@ -35,21 +35,41 @@ def choose_simulator(device_name: str) -> str:
     return candidates[0][2]
 
 
-def find_exported_attachment(export_dir: Path, export_manifest, state_id: str, state_index: int) -> Path | None:
-    expected = f"{state_id}.png"
+def find_exported_attachment(
+    export_dir: Path,
+    export_manifest,
+    state_id: str,
+    state_index: int,
+    suffix: str,
+) -> Path | None:
+    expected = f"{state_id}{suffix}"
     for test_record in export_manifest if isinstance(export_manifest, list) else []:
         test_identifier = str(test_record.get("testIdentifier") or "")
         index_matches = f"/test_{state_index}_" in test_identifier or f"test_{state_index}_" in test_identifier
         for record in test_record.get("attachments") or []:
             suggested = str(record.get("suggestedHumanReadableName") or "")
             exported = record.get("exportedFileName")
-            name_matches = suggested == expected or suggested.startswith(f"{state_id}_")
-            if (name_matches or index_matches) and exported and (export_dir / exported).is_file():
+            if suffix == ".geometry.json":
+                name_matches = (
+                    suggested == expected
+                    or (suggested.startswith(f"{state_id}.geometry") and suggested.endswith(".json"))
+                )
+            else:
+                name_matches = (
+                    suggested == expected
+                    or (suggested.startswith(f"{state_id}_") and suggested.endswith(suffix))
+                )
+            suffix_matches = (
+                ".geometry" in suggested and suggested.endswith(".json")
+                if suffix == ".geometry.json"
+                else suggested.endswith(suffix)
+            )
+            if (name_matches or (index_matches and suffix_matches)) and exported and (export_dir / exported).is_file():
                 return export_dir / exported
     direct = export_dir / expected
     if direct.is_file():
         return direct
-    for candidate in export_dir.glob("*.png"):
+    for candidate in export_dir.iterdir():
         if expected in candidate.name:
             return candidate
     return None
@@ -118,18 +138,34 @@ def main() -> int:
 
     captures = []
     missing = []
+    args.out_dir.mkdir(parents=True, exist_ok=True)
     for state_index, state in enumerate(manifest.get("states") or []):
         state_id = state["id"]
-        exported = find_exported_attachment(export_dir, export_manifest, state_id, state_index)
+        exported = find_exported_attachment(export_dir, export_manifest, state_id, state_index, ".png")
         if not exported:
             missing.append(state_id)
             continue
         destination = args.out_dir / f"{state_id}.png"
+        geometry_exported = find_exported_attachment(
+            export_dir, export_manifest, state_id, state_index, ".geometry.json"
+        )
+        geometry_destination = args.out_dir / f"{state_id}.geometry.json"
+        geometry_path = None
+        if geometry_exported:
+            geometry = json.loads(geometry_exported.read_text(encoding="utf-8"))
+            geometry["stateId"] = state_id
+            geometry["viewport"] = {"width": width, "height": height}
+            geometry_destination.write_text(
+                json.dumps(geometry, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            geometry_path = str(geometry_destination.resolve())
         captures.append({
             "id": state_id,
             "required": state.get("required", True),
             "screenshot": str(destination.resolve()),
             "actions": state.get("iosActions") or [],
+            "geometry": geometry_path,
             **normalize(exported, destination, width, height),
         })
     report = {

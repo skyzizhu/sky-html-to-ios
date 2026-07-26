@@ -313,7 +313,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("hiddenNodeIDs = nextHiddenNodeIDs", runtime_text)
             self.assertNotIn("UIViewRepresentable", runtime_text)
             self.assertNotIn("sizeThatFits(_ proposal:", runtime_text)
-            self.assertIn(".fixedSize(horizontal: style.preservesIntrinsicWidth == true, vertical: false)", runtime_text)
+            self.assertIn("vertical: (style.expectedTextLines ?? 1) > 1", runtime_text)
             self.assertNotIn("accessibilityElement(children: .contain)", runtime_text)
             models_text = (out_dir / MODELS_FILE).read_text(encoding="utf-8")
             navigation_text = (out_dir / NAVIGATION_FILE).read_text(encoding="utf-8")
@@ -448,7 +448,12 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "mode": "flex-row",
                 "rect": {"x": 20, "y": 180, "width": 353, "height": 72},
             })
-            row["style"]["flexDirection"] = "row"
+            row["style"].update({
+                "flexDirection": "row",
+                "borderWidths": ["1px"] * 4,
+                "borderStyles": ["solid"] * 4,
+                "borderColors": ["rgb(220, 220, 225)"] * 4,
+            })
             icon_box = node("generic.icon-box", row["id"], "container")
             icon_box["layout"]["rect"] = {"x": 20, "y": 196, "width": 40, "height": 40}
             icon_box["style"].update({
@@ -498,12 +503,14 @@ class GenerateIOSFromIRTests(unittest.TestCase):
 
             self.assertEqual(generated_rail["style"]["scrollAxis"], "horizontal")
             self.assertEqual(generated_item["style"]["fixedWidth"], 88)
+            self.assertEqual(generated_item["style"]["fixedHeight"], 40)
             self.assertTrue(generated_item["style"]["preservesIntrinsicWidth"])
             self.assertEqual(generated_label["style"]["textLineLimit"], 1)
             self.assertTrue(generated_label["style"]["preservesIntrinsicWidth"])
             self.assertEqual(generated_icon_box["style"]["fixedWidth"], 40)
             self.assertEqual(generated_icon_box["style"]["fixedHeight"], 40)
             self.assertEqual(generated_icon_box["style"]["aspectRatio"], 1)
+            self.assertEqual(generated_row["style"]["minHeight"], 72)
             self.assertEqual(generated_orb["style"]["fixedWidth"], 104)
             self.assertEqual(generated_orb["style"]["fixedHeight"], 104)
             self.assertEqual(generated_orb["style"]["aspectRatio"], 1)
@@ -1401,7 +1408,27 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             emphasis["layout"]["rect"] = {"x": 120, "y": 180, "width": 72, "height": 20}
             emphasis["style"]["fontWeight"] = "700"
 
-            payload["screens"][0]["nodes"].extend([description, suggestion, emphasis])
+            summary = node(
+                "home.summary",
+                root_node["id"],
+                "text",
+                "2 处高优 · 3 处中优 · 1 处低优",
+                display="block",
+            )
+            summary["layout"]["rect"] = {"x": 44, "y": 280, "width": 168, "height": 40}
+            summary["style"]["lineHeight"] = "20px"
+            summary["content"].update({
+                "lines": 2,
+                "lineTexts": ["2 处高优 · 3 处中优 · 1 处", "低优"],
+                "runs": [{
+                    "kind": "text",
+                    "text": "2 处高优 · 3 处中优 · 1 处低优",
+                    "domIndex": 0,
+                    "rect": {"x": 44, "y": 280, "width": 168, "height": 40},
+                }],
+            })
+
+            payload["screens"][0]["nodes"].extend([description, suggestion, emphasis, summary])
             path = root / "home.json"
             path.write_text(json.dumps(payload), encoding="utf-8")
             out_dir = root / "out"
@@ -1414,14 +1441,23 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             generated_suggestion = next(
                 item for item in generated_root["children"] if item["id"] == suggestion["id"]
             )
+            generated_summary = next(
+                item for item in generated_root["children"] if item["id"] == summary["id"]
+            )
 
-            self.assertIsNone(generated_description["style"]["textMeasureWidth"])
+            self.assertEqual(generated_description["style"]["textMeasureWidth"], 264)
             self.assertEqual(generated_description["style"]["expectedTextLines"], 2)
             self.assertEqual([item["preferredWidth"] for item in generated_description["contentItems"]], [200, 264])
             self.assertTrue(all(item["singleLine"] for item in generated_description["contentItems"]))
             self.assertEqual(generated_description["contentItems"][1]["gapBefore"], 4)
             self.assertEqual(generated_suggestion["style"]["textMeasureWidth"], 258)
             self.assertEqual(generated_suggestion["style"]["expectedTextLines"], 3)
+            self.assertEqual(generated_summary["text"], "2 处高优 · 3 处中优 · 1 处\n低优")
+            self.assertEqual(
+                generated_summary["contentItems"][0]["text"],
+                "2 处高优 · 3 处中优 · 1 处\n低优",
+            )
+            self.assertEqual(generated_summary["style"]["textMeasureWidth"], 168)
             self.assertEqual([run["fontWeight"] for run in generated_suggestion["richTextRuns"]], ["400", "700", "400"])
             self.assertEqual(
                 "".join(run["text"] for run in generated_suggestion["richTextRuns"]),
@@ -1433,6 +1469,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("private var isMeasuredText: Bool", runtime)
             self.assertIn("htmlToIOSUIFontLineHeight", runtime)
             self.assertIn("let lineBoxLeading = calibratesTextLineBox", runtime)
+            self.assertIn("vertical: (style.expectedTextLines ?? 1) > 1", runtime)
             self.assertIn("htmlToIOSFont(size: fontSize", runtime)
             self.assertIn('} else if spec.axis == "vertical" {', runtime)
             uikit_dir = root / "uikit"

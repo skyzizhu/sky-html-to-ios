@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.27.0"
+GENERATOR_VERSION = "1.28.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -645,6 +645,19 @@ def rich_text_runs_with_browser_line_breaks(
     ]
 
 
+def plain_text_with_browser_line_breaks(text: str, line_texts: list[Any]) -> str:
+    normalized_lines = [
+        re.sub(r"\s+", " ", str(value or "")).strip()
+        for value in line_texts
+        if str(value or "").strip()
+    ]
+    if len(normalized_lines) < 2:
+        return text
+    source_key = re.sub(r"\s+", "", text)
+    lines_key = re.sub(r"\s+", "", "".join(normalized_lines))
+    return "\n".join(normalized_lines) if source_key and source_key == lines_key else text
+
+
 def child_rect(context: ScreenBuildContext, child_id: str) -> dict[str, Any]:
     layout = (context.nodes.get(child_id) or {}).get("layout") or {}
     return layout.get("sourceRectCssPx") or layout.get("rect") or {}
@@ -1136,8 +1149,18 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         else:
             radius_values.append(number(item) * context.design_scale)
     corner_radius = max(radius_values) if radius_values else 0.0
-    measured_height = min(max(number(rect.get("height")), 0.0), 160.0)
-    min_height = measured_height if semantic in {"button", "input", "text-field", "secure-field", "toggle", "switch", "progress", "progress-view"} else 0
+    measured_height = max(number(rect.get("height")), 0.0)
+    control_min_height = min(measured_height, 160.0) if semantic in {
+        "button", "input", "text-field", "secure-field", "toggle", "switch", "progress", "progress-view"
+    } else 0
+    bordered_flow_min_height = measured_height if (
+        max(border_widths) > 0
+        and measured_height <= max(context.root_width * 3, 1200)
+        and semantic not in {"text", "label", "heading", "icon", "image", "scroll"}
+        and parent_id is not None
+        and str(layout.get("position") or "static") not in {"absolute", "fixed"}
+    ) else 0
+    min_height = max(control_min_height, bordered_flow_min_height)
     decorative = bool(content.get("isDecorative"))
     has_visual_style = (
         color_string(style.get("backgroundColor")) is not None
@@ -1184,6 +1207,15 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     line_count = visual_text_line_count(content)
     node_rich_text_runs = inline_runs if inline_text_container else rich_text_runs(context, node)
     browser_line_texts = content.get("lineTexts") or []
+    browser_broken_text = plain_text_with_browser_line_breaks(
+        text,
+        browser_line_texts if len(browser_line_texts) == line_count else [],
+    )
+    if browser_broken_text != text:
+        text = browser_broken_text
+        textual_items = [item for item in content_items if item.get("kind") == "text"]
+        if len(textual_items) == 1:
+            textual_items[0]["text"] = browser_broken_text
     node_rich_text_runs = rich_text_runs_with_browser_line_breaks(
         node_rich_text_runs,
         browser_line_texts
@@ -1292,6 +1324,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         or measured_visual_leaf
         or compact_styled_inline_geometry
         or compact_overlay_geometry
+        or (horizontal_scroll_item and semantic not in {"image", "icon"})
         or (semantic == "carousel" and scroll_axis == "horizontal")
     ) else None
     preserves_aspect_ratio = bool(
@@ -1449,7 +1482,6 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "textMeasureWidth": (
                 min(max(width, 0), context.root_width)
                 if semantic in {"text", "label", "heading"}
-                and node_rich_text_runs
                 and line_count > 1
                 and width > 0
                 else None
@@ -3007,7 +3039,10 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
             .lineLimit(style.textLineLimit)
             .lineSpacing(lineBoxLeading)
             .tracking(style.letterSpacing ?? 0)
-            .fixedSize(horizontal: style.preservesIntrinsicWidth == true, vertical: false)
+            .fixedSize(
+                horizontal: style.preservesIntrinsicWidth == true,
+                vertical: (style.expectedTextLines ?? 1) > 1
+            )
             .layoutPriority(style.preservesIntrinsicWidth == true ? 1 : 0)
             .offset(y: baselineAdjustment)
         let insetContent = typography

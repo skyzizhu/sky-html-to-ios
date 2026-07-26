@@ -78,10 +78,16 @@ state_methods = (manifest["states"] || []).each_with_index.map do |state, index|
       func #{swift_identifier(state["id"], index)}() throws {
           let app = #{launch_call}
   #{actions}
-          capture(name: #{swift_string(state["id"] + ".png")})
+          capture(name: #{swift_string(state["id"] + ".png")}, app: app)
       }
   SWIFT
 end.join("\n")
+
+geometry_identifiers = (manifest["validationRegions"] || [])
+  .filter_map { |region| region["nodeId"].to_s.strip }
+  .reject(&:empty?)
+  .uniq
+geometry_identifiers_source = "[#{geometry_identifiers.map { |item| swift_string(item) }.join(", ")}]"
 
 locale = manifest["locale"].to_s.strip
 arguments = []
@@ -166,9 +172,42 @@ swift = <<~SWIFT
           for _ in 0..<repetitions { candidate.swipeUp(velocity: .fast) }
       }
 
-      private func capture(name: String) {
+      private func capture(name: String, app: XCUIApplication) {
           RunLoop.current.run(until: Date().addingTimeInterval(0.35))
           let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+          attachment.name = name
+          attachment.lifetime = .keepAlways
+          add(attachment)
+          captureGeometry(name: name.replacingOccurrences(of: ".png", with: ".geometry.json"), app: app)
+      }
+
+      private func captureGeometry(name: String, app: XCUIApplication) {
+          let identifiers = Set(#{geometry_identifiers_source})
+          var nodes: [[String: Any]] = []
+          var capturedIdentifiers = Set<String>()
+          for candidate in app.descendants(matching: .any).allElementsBoundByIndex {
+              let identifier = candidate.identifier
+              guard identifiers.contains(identifier), !capturedIdentifiers.contains(identifier) else { continue }
+              let frame = candidate.frame
+              guard !frame.isNull, !frame.isInfinite,
+                    frame.origin.x.isFinite, frame.origin.y.isFinite,
+                    frame.width.isFinite, frame.height.isFinite,
+                    frame.width > 0, frame.height > 0 else { continue }
+              capturedIdentifiers.insert(identifier)
+              nodes.append([
+                  "nodeId": identifier,
+                  "frame": [
+                      "x": frame.origin.x,
+                      "y": frame.origin.y,
+                      "width": frame.width,
+                      "height": frame.height,
+                  ],
+                  "elementType": candidate.elementType.rawValue,
+              ])
+          }
+          let payload: [String: Any] = ["nodes": nodes]
+          guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else { return }
+          let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
           attachment.name = name
           attachment.lifetime = .keepAlways
           add(attachment)

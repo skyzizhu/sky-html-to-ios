@@ -325,12 +325,13 @@ python3 scripts/generate_ios_from_ir.py \
 5. 总控默认使用 `scripts/prepare_visual_ui_tests.rb` 创建隔离且带 ownership 标记的 `HTMLToIOSVisualTests` target，再由 `scripts/capture_ios_states.py` 执行 XCUITest、导出 xcresult 附件并归一化到目标逻辑 viewport。现有同名非托管 target 不得覆盖；单阶段调试时才手动运行这两个脚本。
 6. 对移除、隐藏、展开、选择和路由类交互，视觉 manifest 应携带可推导的后置状态断言；XCUITest 必须先验证目标节点消失、出现、选中或路由到达，再截图。只完成 tap 而页面状态未变化不得算作有效状态捕获。
 7. 运行 `scripts/build_visual_review_bundle.py` 检查精确尺寸、全局 mismatch、平均差异、critical region 和文本 edge mismatch。任一 required state 超阈值必须重新生成和截图，不能由多模态评语改成通过。
-8. 判断当前 Agent 的实际图像查看能力，并以 `available`、`unavailable` 或 `auto` 传给 review bundle；不要根据模型名称猜测。脚本生成每个状态的像素报告、comparison、heatmap、overlay、regions 和能力门控状态。
-9. 能力为 `available` 时读取 `references/visual-agent-review.md`，实际打开图片并检查 failed-threshold 状态；能力为 `unavailable` 时标记 `not-run`；`unknown` 时先尝试打开一张图片，不能把 unknown 当成完成。
-10. 按 UI IR node 局部纠偏，重新构建并回归所有受影响状态；默认最多 3 轮。
-11. 至少复核首屏、有意义的长页末端、弹层和切换状态。动画 0/50/100 帧只有具备原生确定性采样钩子时才设为 required，否则作为 advisory，不能用三张相同静态图冒充动画验证。
-12. 在项目支持的 320/375/393/430pt 或实际设备宽度上验证 Auto Layout、文字换行、边距和横向溢出；使用 `scripts/compare_text_calibration.py` 核对 iOS 文字测量结果。
-13. 执行轴向隔离走查：纵向页面的横向拖动不得移动根内容；横向 carousel 的纵向拖动不得带动其自身产生纵向偏移。逐项核对横向 item 宽度、文字行数、图标容器宽高比和末项可达性。
+8. 同时读取每个状态的 `geometry-report.json`，先核对高置信度节点的 top/middle/bottom median y delta、height delta、`anchorRows` 和 `driftTransitions`。固定画板 region 坐标必须使用与 HTML 截图一致的 cover/center 裁切；累计漂移沿首个 transition 回查中间容器，禁止用整页 y offset 掩盖 border-box、item 高度或 gap 丢失。
+9. 判断当前 Agent 的实际图像查看能力，并以 `available`、`unavailable` 或 `auto` 传给 review bundle；不要根据模型名称猜测。脚本生成每个状态的像素报告、comparison、heatmap、overlay、regions 和能力门控状态。
+10. 能力为 `available` 时读取 `references/visual-agent-review.md`，实际打开图片并检查 failed-threshold 状态；能力为 `unavailable` 时标记 `not-run`；`unknown` 时先尝试打开一张图片，不能把 unknown 当成完成。
+11. 按 UI IR node 局部纠偏，重新构建并回归所有受影响状态；默认最多 3 轮。
+12. 至少复核首屏、有意义的长页末端、弹层和切换状态。动画 0/50/100 帧只有具备原生确定性采样钩子时才设为 required，否则作为 advisory，不能用三张相同静态图冒充动画验证。
+13. 在项目支持的 320/375/393/430pt 或实际设备宽度上验证 Auto Layout、文字换行、边距和横向溢出；使用 `scripts/compare_text_calibration.py` 核对 iOS 文字测量结果。
+14. 执行轴向隔离走查：纵向页面的横向拖动不得移动根内容；横向 carousel 的纵向拖动不得带动其自身产生纵向偏移。逐项核对横向 item 宽度、文字行数、图标容器宽高比和末项可达性。
 
 对于大展示板中的固定手机画板，状态捕获使用 HTML 源 viewport 执行动作，再按 UI IR 的目标 viewport 生成归一化对比图；这是验收图片的单次设计归一化，不得转化为 iOS 运行时整页缩放。归一化方式和原始尺寸必须写入 captures report。
 

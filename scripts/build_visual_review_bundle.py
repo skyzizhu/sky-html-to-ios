@@ -71,6 +71,22 @@ def main() -> int:
                 command.extend(["--mask", ",".join(str(round(float(value))) for value in rect)])
         completed = subprocess.run(command, check=True, text=True, capture_output=True)
         report = json.loads(completed.stdout)
+        geometry_source = args.ios_dir / f"{state_id}.geometry.json"
+        geometry_report = None
+        if geometry_source.is_file():
+            geometry_out = state_out / "geometry-report.json"
+            geometry_command = [
+                sys.executable,
+                str(Path(__file__).with_name("compare_node_geometry.py")),
+                str(args.manifest),
+                str(geometry_source),
+                "--out",
+                str(geometry_out),
+            ]
+            geometry_completed = subprocess.run(
+                geometry_command, check=True, text=True, capture_output=True
+            )
+            geometry_report = json.loads(geometry_out.read_text(encoding="utf-8"))
         diagnostics = report.get("diagnostics") or {}
         failures = []
         if report["resizedCurrent"]:
@@ -100,6 +116,7 @@ def main() -> int:
             "fidelityPercent": round(fidelity, 4),
             "exactPixelMatch": not report["resizedCurrent"] and report["mismatchRatio"] == 0 and report["meanAbsoluteDifference"] == 0,
             "report": report,
+            "geometryReport": geometry_report,
         })
 
     missing_required = [item["id"] for item in results if item["required"] and item["status"] == "missing"]

@@ -25,7 +25,7 @@ def numeric(value, default: float = 0.0) -> float:
         return default
 
 
-def build_validation_regions(screen: dict, target_viewport: dict) -> list[dict]:
+def build_validation_regions(screen: dict, target_viewport: dict, design_scale: float = 1.0) -> list[dict]:
     nodes = {str(node["id"]): node for node in screen.get("nodes") or []}
     root = nodes.get(str(screen.get("rootNodeId") or "")) or {}
     root_rect = (root.get("layout") or {}).get("rect") or {}
@@ -49,16 +49,24 @@ def build_validation_regions(screen: dict, target_viewport: dict) -> list[dict]:
             current = nodes.get(str(current.get("parentId") or ""))
         return True
 
+    uniform_scale = target_width / root_width
+    scaled_root_height = root_height * uniform_scale
+    cover_crop_top = (
+        max((scaled_root_height - target_height) / 2, 0)
+        if abs(design_scale - 1) > 0.001 and scaled_root_height > target_height
+        else 0
+    )
+
     def normalized_rect(node: dict, expand: int = 0) -> list[int] | None:
         rect = (node.get("layout") or {}).get("rect") or {}
         width = numeric(rect.get("width"))
         height = numeric(rect.get("height"))
         if width <= 0 or height <= 0:
             return None
-        left = round((numeric(rect.get("x")) - root_x) * target_width / root_width) - expand
-        top = round((numeric(rect.get("y")) - root_y) * target_height / root_height) - expand
-        right = round((numeric(rect.get("x")) - root_x + width) * target_width / root_width) + expand
-        bottom = round((numeric(rect.get("y")) - root_y + height) * target_height / root_height) + expand
+        left = round((numeric(rect.get("x")) - root_x) * uniform_scale) - expand
+        top = round((numeric(rect.get("y")) - root_y) * uniform_scale - cover_crop_top) - expand
+        right = round((numeric(rect.get("x")) - root_x + width) * uniform_scale) + expand
+        bottom = round((numeric(rect.get("y")) - root_y + height) * uniform_scale - cover_crop_top) + expand
         left, top = max(0, left), max(0, top)
         right, bottom = min(round(target_width), right), min(round(target_height), bottom)
         return [left, top, right - left, bottom - top] if right > left and bottom > top else None
@@ -101,6 +109,7 @@ def build_validation_regions(screen: dict, target_viewport: dict) -> list[dict]:
         else:
             continue
         rect = normalized_rect(node, expand)
+        geometry_rect = normalized_rect(node)
         if not rect:
             continue
         regions.append({
@@ -111,6 +120,7 @@ def build_validation_regions(screen: dict, target_viewport: dict) -> list[dict]:
             "criticality": criticality,
             "toleranceProfile": profile,
             "rect": rect,
+            "geometryRect": geometry_rect,
         })
     return regions
 
@@ -224,7 +234,7 @@ def main() -> int:
         "rootSelector": screen.get("sourceSelector") or "html",
         "systemChrome": screen.get("systemChrome") or {},
         "comparisonMasks": build_comparison_masks(screen, target_viewport),
-        "validationRegions": build_validation_regions(screen, target_viewport),
+        "validationRegions": build_validation_regions(screen, target_viewport, numeric(target.get("scale"), 1)),
         "states": states,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)

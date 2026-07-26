@@ -17,6 +17,7 @@ MANIFEST_SCRIPT = ROOT / "scripts" / "build_visual_state_manifest.py"
 DIFF_SCRIPT = ROOT / "scripts" / "visual_diff.py"
 BUNDLE_SCRIPT = ROOT / "scripts" / "build_visual_review_bundle.py"
 PREPARE_IOS_TESTS_SCRIPT = ROOT / "scripts" / "prepare_visual_ui_tests.rb"
+GEOMETRY_SCRIPT = ROOT / "scripts" / "compare_node_geometry.py"
 
 
 def node(node_id: str, parent_id: str | None, semantic: str, rect: list[int], text: str = "") -> dict:
@@ -39,7 +40,93 @@ class VisualValidationTests(unittest.TestCase):
         self.assertIn("matches.allElementsBoundByIndex.first(where: { $0.exists && $0.isHittable })", source)
         self.assertIn("requireHittable: true", source)
         self.assertIn('domain: "HTMLToIOSVisualValidation"', source)
+        self.assertIn("captureGeometry(name:", source)
+        self.assertIn('uniformTypeIdentifier: "public.json"', source)
         self.assertNotIn('XCTFail("Element exists but is not hittable', source)
+
+    def test_fixed_artboard_validation_geometry_uses_cover_center_crop(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = {
+                "schemaVersion": "1.2",
+                "source": {"entry": str(root / "prototype.html"), "viewport": {"width": 393, "height": 852}},
+                "target": {
+                    "viewportPt": {"width": 393, "height": 852},
+                    "appearance": "light",
+                    "scale": 393 / 318,
+                },
+                "screens": [{
+                    "id": "home",
+                    "rootNodeId": "home.root",
+                    "sourceSelector": "#home",
+                    "systemChrome": {},
+                    "regions": {},
+                    "nodes": [
+                        node("home.root", None, "container", [0, 0, 393, 862.6226]),
+                        node("home.title", "home.root", "heading", [20, 52, 120, 30], "Title"),
+                    ],
+                }],
+                "interactions": [],
+                "visualStates": [{"id": "initial", "required": True}],
+            }
+            source, output = root / "ui-ir.json", root / "manifest.json"
+            source.write_text(json.dumps(payload), encoding="utf-8")
+            subprocess.run(
+                [sys.executable, str(MANIFEST_SCRIPT), str(source), "--out", str(output)],
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            manifest = json.loads(output.read_text(encoding="utf-8"))
+            title = next(
+                item for item in manifest["validationRegions"] if item["nodeId"] == "home.title"
+            )
+            self.assertEqual(title["geometryRect"], [20, 47, 120, 30])
+
+    def test_node_geometry_report_exposes_vertical_accumulation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = {
+                "validationRegions": [
+                    {"nodeId": "top", "category": "typography", "geometryRect": [10, 100, 80, 20]},
+                    {"nodeId": "middle", "category": "control", "geometryRect": [10, 300, 100, 40]},
+                    {"nodeId": "bottom", "category": "typography", "geometryRect": [10, 600, 120, 20]},
+                    {"nodeId": "misidentified", "category": "typography", "geometryRect": [200, 700, 120, 20]},
+                ]
+            }
+            actual = {
+                "stateId": "initial",
+                "nodes": [
+                    {"nodeId": "top", "elementType": 48, "frame": {"x": 10, "y": 101, "width": 80, "height": 20}},
+                    {"nodeId": "middle", "elementType": 9, "frame": {"x": 10, "y": 306, "width": 100, "height": 38}},
+                    {"nodeId": "bottom", "elementType": 48, "frame": {"x": 10, "y": 615, "width": 120, "height": 20}},
+                    {"nodeId": "misidentified", "elementType": 48, "frame": {"x": 5, "y": 200, "width": 40, "height": 20}},
+                ],
+            }
+            manifest_path, actual_path, output = root / "manifest.json", root / "actual.json", root / "report.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            actual_path.write_text(json.dumps(actual), encoding="utf-8")
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(GEOMETRY_SCRIPT),
+                    str(manifest_path),
+                    str(actual_path),
+                    "--out",
+                    str(output),
+                ],
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(report["summary"]["matchedNodeCount"], 4)
+            self.assertEqual(report["summary"]["reliableMatchedNodeCount"], 3)
+            self.assertEqual(report["summary"]["verticalDriftSpanPt"], 14)
+            self.assertEqual(report["summary"]["bands"]["top"]["medianYDeltaPt"], 1)
+            self.assertEqual(report["summary"]["bands"]["bottom"]["medianYDeltaPt"], 15)
+            misidentified = next(item for item in report["nodes"] if item["nodeId"] == "misidentified")
+            self.assertFalse(misidentified["verticalAggregationEligible"])
 
     def test_manifest_asserts_local_state_ancestor_removal(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
