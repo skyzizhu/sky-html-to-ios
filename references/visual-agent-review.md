@@ -15,7 +15,7 @@
 生成 review bundle 时显式传入实际状态：
 
 ```bash
-python3 scripts/build_visual_review_bundle.py <manifest> \
+python3 "$SKILL_ROOT/scripts/build_visual_review_bundle.py" <manifest> \
   --html-dir <html-screenshots> \
   --ios-dir <ios-screenshots> \
   --out-dir <review-output> \

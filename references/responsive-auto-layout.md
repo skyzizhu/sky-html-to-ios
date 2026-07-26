@@ -43,7 +43,7 @@ adjustedContentInset = systemSafeArea + nativeSystemChrome + customBarInsetOnce
 ## 多宽度分析
 
 ```bash
-NODE_PATH=<playwright-node-modules> node scripts/analyze_responsive_layout.cjs \
+NODE_PATH=<playwright-node-modules> node "$SKILL_ROOT/scripts/analyze_responsive_layout.cjs" \
   --html <entry.html> \
   --selector <app-root> \
   --widths 320,375,393,430 \
@@ -124,13 +124,13 @@ iOS 基准使用约 22.25pt 的 leading/trailing constraint。到 320、375、43
 原生矩阵必须使用真实 Simulator：
 
 ```bash
-python3 scripts/validate_responsive_ios_matrix.py visual-state-manifest.json \
+python3 "$SKILL_ROOT/scripts/validate_responsive_ios_matrix.py" visual-state-manifest.json \
   --project App.xcodeproj --target App --out-dir responsive-matrix \
   --case '375x667:iPhone SE (3rd generation)' \
   --case '393x852:iPhone 16' \
   --case '430x932:iPhone 16 Plus'
 ```
 
-宽高用于报告中的逻辑 viewport，设备名必须对应本机真实 runtime。若没有 320pt 设备，不得把 375pt 截图缩成 320pt；记录缺失并使用项目现有最窄设备完成门槛。
+宽高用于报告中的逻辑 viewport，设备名必须对应本机真实 runtime。工具必须用原始截图尺寸反推 1×/2×/3× Retina scale，并校验它与声明 viewport 一致；不一致直接失败。同一矩阵不得重复声明相同宽高。若没有 320pt 设备，不得把 375pt 截图缩成 320pt；记录缺失并使用项目现有最窄设备完成门槛。
 
 多尺寸目标是保持设计语义和可用性，不要求每个尺寸都与单一 HTML 截图拥有相同换行。

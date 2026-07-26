@@ -76,12 +76,18 @@ description: 将可运行的移动端 HTML 高保真原型转换为可编译、�
 
 ## 执行流程
 
+### 路径约定
+
+先将当前 `SKILL.md` 所在目录解析为绝对路径 `SKILL_ROOT`。Agent 的 shell 工作目录保持用户工程目录；所有 `references/...` 和 `scripts/...` 都相对 `SKILL_ROOT` 读取或执行，不能假设用户工程中存在本 Skill 的脚本。
+
 ### 总控入口
 
 默认先读取 `references/orchestration.md` 和 `references/conversion-boundary-gates.md`，从 Agent 当前工作目录运行：
 
 ```bash
-python3 scripts/run_html_to_ios.py --html <prototype.html>
+python3 "$SKILL_ROOT/scripts/run_html_to_ios.py" \
+  --workspace "$PWD" \
+  --html <prototype.html>
 ```
 
 已经具备校验通过且无未决交互的 UI IR 时，重复传入 `--ir`。总控负责工作目录工程发现、输入预检、项目生成决策、必要时创建 App、逐页 IR 构建、命名计划、代码生成和 target 接入；构建与启动验证按项目状态分阶段执行。除非正在定位单个阶段故障，否则优先使用总控，不要求用户手工串联脚本。HTML 模式只有 required states 完整且视觉门禁通过时才可声称高保真验收完成；仍须检查 `qualityGates` 和 review bundle。
@@ -115,8 +121,8 @@ python3 scripts/run_html_to_ios.py --html <prototype.html>
 总控会运行工程检查与组件发现；单阶段调试时可手动运行，并读取发现的项目规范文件：
 
 ```bash
-python3 scripts/inspect_ios_project.py <ios-root> --out ios-project-report.json
-python3 scripts/discover_ios_components.py <ios-root> --out ios-component-index.json
+python3 "$SKILL_ROOT/scripts/inspect_ios_project.py" <ios-root> --out ios-project-report.json
+python3 "$SKILL_ROOT/scripts/discover_ios_components.py" <ios-root> --out ios-component-index.json
 ```
 
 检查：
@@ -137,7 +143,7 @@ python3 scripts/discover_ios_components.py <ios-root> --out ios-component-index.
 随后读取 `references/sdk-availability-policy.md`，运行：
 
 ```bash
-python3 scripts/inspect_ios_sdk.py \
+python3 "$SKILL_ROOT/scripts/inspect_ios_sdk.py" \
   --minimum-ios <deployment-target> \
   --out ios-sdk-report.json
 ```
@@ -188,7 +194,7 @@ python3 scripts/inspect_ios_sdk.py \
 先运行 `scripts/build_ui_ir.py`，将 `extract_render_tree.cjs` 的输出转换为可审查的 UI IR 草稿：
 
 ```bash
-python3 scripts/build_ui_ir.py render-tree.json \
+python3 "$SKILL_ROOT/scripts/build_ui_ir.py" render-tree.json \
   --out ui-ir.json \
   --screen-id home \
   --ui-stack swiftui \
@@ -267,7 +273,7 @@ python3 scripts/build_ui_ir.py render-tree.json \
 先读取 `references/code-generation-and-incremental-update.md` 和 `references/generated-source-layout.md`。UI IR 校验通过且交互不存在未决原生所有权后，使用 `scripts/generate_ios_from_ir.py` 生成可编译原生基线：
 
 ```bash
-python3 scripts/generate_ios_from_ir.py \
+python3 "$SKILL_ROOT/scripts/generate_ios_from_ir.py" \
   --ir page1-ui-ir.json \
   --ir page2-ui-ir.json \
   --out-dir <source-root>/Generated/HTMLToIOS \

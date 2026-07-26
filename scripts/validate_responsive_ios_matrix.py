@@ -51,6 +51,31 @@ def initial_manifest(manifest: dict, width: int, height: int) -> dict:
     return result
 
 
+def validate_device_viewport(capture: dict | None, width: int, height: int) -> dict:
+    original = (capture or {}).get("originalSize") or {}
+    original_width = float(original.get("width") or 0)
+    original_height = float(original.get("height") or 0)
+    if original_width <= 0 or original_height <= 0:
+        return {
+            "status": "failed",
+            "reason": "missing-original-screenshot-size",
+            "declaredViewport": {"width": width, "height": height},
+        }
+    scale_x = original_width / width
+    scale_y = original_height / height
+    native_scale = min((1, 2, 3), key=lambda candidate: abs(scale_x - candidate) + abs(scale_y - candidate))
+    matches = abs(scale_x - native_scale) <= 0.03 and abs(scale_y - native_scale) <= 0.03
+    return {
+        "status": "passed" if matches else "failed",
+        "reason": None if matches else "simulator-screenshot-does-not-match-declared-viewport",
+        "declaredViewport": {"width": width, "height": height},
+        "originalScreenshotSize": {"width": original_width, "height": original_height},
+        "inferredScaleX": round(scale_x, 4),
+        "inferredScaleY": round(scale_y, 4),
+        "expectedNativeScale": native_scale,
+    }
+
+
 def has_horizontal_scroll_owner(node_id: str, nodes: dict[str, dict]) -> bool:
     visited: set[str] = set()
     current = nodes.get(node_id)
@@ -125,6 +150,9 @@ def main() -> int:
     args = parser.parse_args()
 
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+    case_ids = [f"{case['width']}x{case['height']}" for case in args.case]
+    if len(case_ids) != len(set(case_ids)):
+        parser.error("each WIDTHxHEIGHT viewport may only appear once")
     devices = available_device_names()
     capture_script = Path(__file__).with_name("capture_ios_states.py")
     results = []
@@ -167,12 +195,16 @@ def main() -> int:
                 subprocess.run(command, text=True, check=True)
         captures = json.loads((case_dir / "captures.json").read_text(encoding="utf-8"))
         initial = next((item for item in captures.get("captures") or [] if item.get("id") == "initial"), None)
+        viewport_validation = validate_device_viewport(initial, case["width"], case["height"])
         geometry_path = Path(initial["geometry"]) if initial and initial.get("geometry") else None
         diagnostics = (
             analyze_geometry(manifest, json.loads(geometry_path.read_text(encoding="utf-8")), case["width"])
             if geometry_path and geometry_path.is_file()
             else {"status": "review-required", "reason": "missing-geometry"}
         )
+        diagnostics["deviceViewportValidation"] = viewport_validation
+        if viewport_validation["status"] == "failed":
+            diagnostics["status"] = "failed"
         results.append({**case, "id": case_id, "capture": initial, "diagnostics": diagnostics, "status": diagnostics["status"]})
 
     summary = {
@@ -182,6 +214,7 @@ def main() -> int:
         "qualityGate": (
             "failed"
             if missing_devices and not args.allow_missing_devices
+            else "failed" if any(item["status"] == "failed" for item in results)
             else "review-required" if any(item["status"] == "review-required" for item in results)
             else "passed"
         ),

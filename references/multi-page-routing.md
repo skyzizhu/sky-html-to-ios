@@ -7,7 +7,7 @@
 对本地入口执行：
 
 ```bash
-NODE_PATH=<workspace-node-modules> node scripts/discover_html_routes.cjs \
+NODE_PATH=<workspace-node-modules> node "$SKILL_ROOT/scripts/discover_html_routes.cjs" \
   --html <entry.html> \
   --out html-route-graph.json
 ```

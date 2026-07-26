@@ -83,7 +83,7 @@ def main() -> int:
                 "--out",
                 str(geometry_out),
             ]
-            geometry_completed = subprocess.run(
+            subprocess.run(
                 geometry_command, check=True, text=True, capture_output=True
             )
             geometry_report = json.loads(geometry_out.read_text(encoding="utf-8"))

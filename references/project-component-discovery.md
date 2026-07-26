@@ -5,8 +5,8 @@
 ## 执行
 
 ```bash
-python3 scripts/inspect_ios_project.py <ios-root> --out ios-project-report.json
-python3 scripts/discover_ios_components.py <ios-root> --out ios-component-index.json
+python3 "$SKILL_ROOT/scripts/inspect_ios_project.py" <ios-root> --out ios-project-report.json
+python3 "$SKILL_ROOT/scripts/discover_ios_components.py" <ios-root> --out ios-component-index.json
 ```
 
 索引覆盖 SwiftUI View/Style/Modifier、UIKit View/ViewController/Cell/UIControl、Router/Coordinator/Navigator、设计令牌和 Asset Catalog 资源。它是候选清单，不是自动复用结论。
@@ -32,7 +32,7 @@ python3 scripts/discover_ios_components.py <ios-root> --out ios-component-index.
 空工程没有可继承的 UI 架构，必须先让用户选择 SwiftUI 或 UIKit + Swift。不要把“Swift”和“SwiftUI”作为同一层级选项。使用：
 
 ```bash
-ruby scripts/create_ios_project.rb \
+ruby "$SKILL_ROOT/scripts/create_ios_project.rb" \
   --root <output-root> \
   --name <app-name> \
   --ui-stack swiftui \

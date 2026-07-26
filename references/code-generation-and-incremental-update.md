@@ -23,7 +23,7 @@
 每个 screen 的 IR 使用一个 `--ir`，顺序中的第一项是默认根页面：
 
 ```bash
-python3 scripts/generate_ios_from_ir.py \
+python3 "$SKILL_ROOT/scripts/generate_ios_from_ir.py" \
   --ir page1-ui-ir.json \
   --ir page2-ui-ir.json \
   --ir page3-ui-ir.json \
@@ -72,7 +72,7 @@ SwiftUI 入口符号是 `HTMLToIOSGeneratedRootView`；UIKit 入口符号是 `HT
 传统 `.xcodeproj` 使用：
 
 ```bash
-ruby scripts/integrate_generated_sources.rb \
+ruby "$SKILL_ROOT/scripts/integrate_generated_sources.rb" \
   --project <path/App.xcodeproj> \
   --target <TargetName> \
   --generated-dir <source-root>/Generated/HTMLToIOS

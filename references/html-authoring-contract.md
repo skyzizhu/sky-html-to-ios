@@ -136,7 +136,7 @@
 总控会自动运行：
 
 ```bash
-python3 scripts/validate_html_authoring_contract.py prototype.html \
+python3 "$SKILL_ROOT/scripts/validate_html_authoring_contract.py" prototype.html \
   --out html-authoring-contract-report.json
 ```
 

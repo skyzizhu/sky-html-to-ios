@@ -13,7 +13,7 @@ NODE_PATH="<node_modules>" "<node>" scripts/discover_html_interactions.cjs \
   --out interaction-state-graph.json \
   --overrides-out html-to-ios.overrides.json
 
-python3 scripts/validate_interaction_graph.py interaction-state-graph.json \
+python3 "$SKILL_ROOT/scripts/validate_interaction_graph.py" interaction-state-graph.json \
   --overrides html-to-ios.overrides.json
 ```
 
@@ -89,7 +89,7 @@ route graph 决定有哪些 screen，interaction graph 决定 screen/state 如�
 使用以下参数完成确定性合并：
 
 ```bash
-python3 scripts/build_ui_ir.py render-tree.json \
+python3 "$SKILL_ROOT/scripts/build_ui_ir.py" render-tree.json \
   --screen-id <screen-id> \
   --route-graph html-route-graph.json \
   --interaction-graph interaction-state-graph.json \

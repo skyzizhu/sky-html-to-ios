@@ -7,7 +7,7 @@
 `extract_render_tree.cjs` 的 `render-tree-1.2` 为文字节点记录 `textMetrics`：完整渲染文本、Range 行框、行数、字体加载状态和横纵裁剪。随后运行：
 
 ```bash
-python3 scripts/build_text_calibration.py render-tree.json \
+python3 "$SKILL_ROOT/scripts/build_text_calibration.py" render-tree.json \
   --out text-calibration.json \
   --target-width 393
 ```
@@ -69,7 +69,7 @@ UI IR 必须保留 `firstBaselineY`、`lastBaselineY` 和浏览器字体 ascent/
 生成页面时为文字节点保留 UI IR node ID/accessibility identifier，并让 UI Test 或 Debug-only 测量器导出：`nodeId`、frame、lineCount、firstBaseline、lastBaseline、truncated。运行：
 
 ```bash
-python3 scripts/compare_text_calibration.py text-calibration.json ios-text-metrics.json \
+python3 "$SKILL_ROOT/scripts/compare_text_calibration.py" text-calibration.json ios-text-metrics.json \
   --out text-comparison.json
 ```
 

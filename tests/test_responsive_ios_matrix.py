@@ -23,6 +23,26 @@ class ResponsiveIOSMatrixTests(unittest.TestCase):
         self.assertEqual(result["states"], [{"id": "initial"}])
         self.assertEqual(result["targetViewport"], {"width": 375, "height": 667})
 
+    def test_device_viewport_validation_requires_real_retina_dimensions(self) -> None:
+        matching = MODULE.validate_device_viewport(
+            {"originalSize": {"width": 1179, "height": 2556}},
+            393,
+            852,
+        )
+        self.assertEqual(matching["status"], "passed")
+        self.assertEqual(matching["expectedNativeScale"], 3)
+
+        mismatched = MODULE.validate_device_viewport(
+            {"originalSize": {"width": 1179, "height": 2556}},
+            320,
+            568,
+        )
+        self.assertEqual(mismatched["status"], "failed")
+        self.assertEqual(
+            mismatched["reason"],
+            "simulator-screenshot-does-not-match-declared-viewport",
+        )
+
     def test_geometry_analysis_exempts_nested_horizontal_scroller(self) -> None:
         manifest = {
             "geometryNodes": [

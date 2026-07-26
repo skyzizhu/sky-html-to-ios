@@ -2,16 +2,19 @@
 
 ## 默认入口
 
-从 Agent 当前工作目录执行总控。`--workspace` 省略时使用当前目录：
+先将 Skill 目录解析为绝对路径 `SKILL_ROOT`。shell 工作目录保持 Agent 当前用户工程目录；Skill 脚本从 `SKILL_ROOT` 执行：
 
 ```bash
-python3 scripts/run_html_to_ios.py --html <prototype.html>
+python3 "$SKILL_ROOT/scripts/run_html_to_ios.py" \
+  --workspace "$PWD" \
+  --html <prototype.html>
 ```
 
 已经完成 UI IR 与交互 resolution 时，可以跳过浏览器提取：
 
 ```bash
-python3 scripts/run_html_to_ios.py \
+python3 "$SKILL_ROOT/scripts/run_html_to_ios.py" \
+  --workspace "$PWD" \
   --ir page1-ui-ir.json \
   --ir page2-ui-ir.json
 ```

@@ -7,7 +7,7 @@
 先使用 `render-tree-1.2` 提取 `assetDetails`，再运行：
 
 ```bash
-python3 scripts/prepare_ios_assets.py render-tree.json \
+python3 "$SKILL_ROOT/scripts/prepare_ios_assets.py" render-tree.json \
   --source-root <html-project-root> \
   --out-dir <asset-staging>
 ```
