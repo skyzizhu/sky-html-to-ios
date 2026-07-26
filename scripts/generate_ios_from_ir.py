@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.18.0"
+GENERATOR_VERSION = "1.19.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -224,6 +224,47 @@ def font_design(value: Any) -> str:
     if "rounded" in family:
         return "rounded"
     return "default"
+
+
+def ios_native_font_name(family: Any, weight: Any, style: Any) -> str | None:
+    normalized = re.sub(r"\s+", " ", str(family or "").strip().strip("'\"").lower())
+    numeric_weight = int(number(weight, 400))
+    italic = str(style or "normal").lower() in {"italic", "oblique"}
+    bold = numeric_weight >= 600
+    names = {
+        "arial": ("ArialMT", "Arial-BoldMT", "Arial-ItalicMT", "Arial-BoldItalicMT"),
+        "helvetica": ("Helvetica", "Helvetica-Bold", "Helvetica-Oblique", "Helvetica-BoldOblique"),
+        "helvetica neue": ("HelveticaNeue", "HelveticaNeue-Bold", "HelveticaNeue-Italic", "HelveticaNeue-BoldItalic"),
+        "courier new": ("CourierNewPSMT", "CourierNewPS-BoldMT", "CourierNewPS-ItalicMT", "CourierNewPS-BoldItalicMT"),
+        "times new roman": ("TimesNewRomanPSMT", "TimesNewRomanPS-BoldMT", "TimesNewRomanPS-ItalicMT", "TimesNewRomanPS-BoldItalicMT"),
+        "georgia": ("Georgia", "Georgia-Bold", "Georgia-Italic", "Georgia-BoldItalic"),
+        "menlo": ("Menlo-Regular", "Menlo-Bold", "Menlo-Italic", "Menlo-BoldItalic"),
+    }
+    variants = names.get(normalized)
+    if not variants:
+        return None
+    return variants[3 if bold and italic else 1 if bold else 2 if italic else 0]
+
+
+def font_contract(node: dict[str, Any], style: dict[str, Any]) -> dict[str, Any]:
+    resolution = (node.get("content") or {}).get("fontResolution") or {}
+    resolved_family = str(resolution.get("resolvedFamily") or "").strip()
+    resolution_status = str(resolution.get("status") or "legacy-unresolved")
+    family_for_design = resolved_family or style.get("fontFamily")
+    native_name = (
+        ios_native_font_name(resolved_family, style.get("fontWeight"), style.get("fontStyle"))
+        if resolution_status == "system-local"
+        else None
+    )
+    return {
+        "family": str(style.get("fontFamily") or ""),
+        "resolvedFamily": resolved_family or None,
+        "resolutionStatus": resolution_status,
+        "failedFamilies": resolution.get("failedFamilies") or [],
+        "design": font_design(family_for_design),
+        "nativeName": native_name,
+        "style": str(style.get("fontStyle") or "normal"),
+    }
 
 
 def gradient_colors(value: Any) -> list[str]:
@@ -513,6 +554,7 @@ def rich_text_runs(
             continue
         run_node = context.nodes.get(str(item.get("nodeId") or "")) or node
         style = run_node.get("style") or {}
+        font = font_contract(run_node, style)
         foreground = color_string(style.get("color"))
         background = color_string(style.get("backgroundColor"))
         colors = gradient_colors(style.get("backgroundImage"))
@@ -524,9 +566,13 @@ def rich_text_runs(
             "text": text,
             "fontSize": min(max(number(style.get("fontSize"), 16) * context.design_scale, 8), 72),
             "fontWeight": str(style.get("fontWeight") or "400"),
-            "fontFamily": str(style.get("fontFamily") or ""),
-            "fontDesign": font_design(style.get("fontFamily")),
-            "fontStyle": str(style.get("fontStyle") or "normal"),
+            "fontFamily": font["family"],
+            "fontResolvedFamily": font["resolvedFamily"],
+            "fontResolutionStatus": font["resolutionStatus"],
+            "fontFailedFamilies": font["failedFamilies"],
+            "fontDesign": font["design"],
+            "fontNativeName": font["nativeName"],
+            "fontStyle": font["style"],
             "foreground": foreground,
             "background": background,
             "lineHeight": scaled_css_value(style.get("lineHeight"), context.design_scale) or None,
@@ -1034,6 +1080,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     border_style = str(border_styles[border_index] or "solid") if border_index < len(border_styles) else "solid"
     gradient = gradient_spec(style.get("backgroundImage"))
     shadow = shadow_spec(style.get("boxShadow"), context.design_scale)
+    font = font_contract(node, style)
     if context.bottom_bar_placement == "safe-area-inset" and semantic == "scroll":
         padding[2] = 0
     radii = style.get("cornerRadii") or [0]
@@ -1231,9 +1278,13 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         "style": {
             "fontSize": min(max(number(style.get("fontSize"), 16) * context.design_scale, 8), 72),
             "fontWeight": str(style.get("fontWeight") or "400"),
-            "fontFamily": str(style.get("fontFamily") or ""),
-            "fontDesign": font_design(style.get("fontFamily")),
-            "fontStyle": str(style.get("fontStyle") or "normal"),
+            "fontFamily": font["family"],
+            "fontResolvedFamily": font["resolvedFamily"],
+            "fontResolutionStatus": font["resolutionStatus"],
+            "fontFailedFamilies": font["failedFamilies"],
+            "fontDesign": font["design"],
+            "fontNativeName": font["nativeName"],
+            "fontStyle": font["style"],
             "lineHeight": scaled_css_value(style.get("lineHeight"), context.design_scale) or None,
             "letterSpacing": scaled_css_value(style.get("letterSpacing"), context.design_scale),
             "foreground": color_string(style.get("color")),
@@ -1853,7 +1904,11 @@ struct HTMLToIOSRichTextRunSpec: Codable {{
     let fontSize: Double?
     let fontWeight: String?
     let fontFamily: String?
+    let fontResolvedFamily: String?
+    let fontResolutionStatus: String?
+    let fontFailedFamilies: [String]?
     let fontDesign: String?
+    let fontNativeName: String?
     let fontStyle: String?
     let foreground: String?
     let background: String?
@@ -1865,7 +1920,11 @@ struct HTMLToIOSStyleSpec: Codable {{
     let fontSize: Double?
     let fontWeight: String?
     let fontFamily: String?
+    let fontResolvedFamily: String?
+    let fontResolutionStatus: String?
+    let fontFailedFamilies: [String]?
     let fontDesign: String?
+    let fontNativeName: String?
     let fontStyle: String?
     let lineHeight: Double?
     let letterSpacing: Double?
@@ -1965,12 +2024,17 @@ private func htmlToIOSFontDesign(_ raw: String?) -> Font.Design {
     }
 }
 
-private func htmlToIOSFont(size: Double, weight: String?, design: String?, style: String?) -> Font {
+private func htmlToIOSFont(size: Double, weight: String?, design: String?, nativeName: String?, style: String?) -> Font {
+    if let nativeName, !nativeName.isEmpty {
+        let font = Font.custom(nativeName, fixedSize: size)
+        return style == "italic" || style == "oblique" ? font.italic() : font
+    }
     let font = Font.system(size: size, weight: htmlToIOSFontWeight(weight), design: htmlToIOSFontDesign(design))
     return style == "italic" || style == "oblique" ? font.italic() : font
 }
 
-private func htmlToIOSUIFontLineHeight(size: Double, weight: String?, design: String?, style: String?) -> CGFloat {
+private func htmlToIOSUIFontLineHeight(size: Double, weight: String?, design: String?, nativeName: String?, style: String?) -> CGFloat {
+    if let nativeName, let font = UIFont(name: nativeName, size: size) { return font.lineHeight }
     let value = Int(weight ?? "400") ?? 400
     let uiWeight: UIFont.Weight
     if value >= 900 { uiWeight = .black }
@@ -2174,6 +2238,7 @@ private struct HTMLToIOSRichTextView: View {
             size: run.fontSize ?? style.fontSize ?? 16,
             weight: run.fontWeight ?? style.fontWeight,
             design: run.fontDesign ?? style.fontDesign,
+            nativeName: run.fontNativeName ?? style.fontNativeName,
             style: run.fontStyle ?? style.fontStyle
         )
         result.foregroundColor = Color(htmlToIOS: run.foreground ?? style.foreground)
@@ -2456,11 +2521,12 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
             size: fontSize,
             weight: style.fontWeight,
             design: style.fontDesign,
+            nativeName: style.fontNativeName,
             style: style.fontStyle
         )
         let lineBoxLeading = calibratesTextLineBox ? max((style.lineHeight ?? Double(nativeLineHeight)) - Double(nativeLineHeight), 0) : 0
         let typography = content
-            .font(htmlToIOSFont(size: fontSize, weight: style.fontWeight, design: style.fontDesign, style: style.fontStyle))
+            .font(htmlToIOSFont(size: fontSize, weight: style.fontWeight, design: style.fontDesign, nativeName: style.fontNativeName, style: style.fontStyle))
             .foregroundStyle(foreground)
             .multilineTextAlignment(alignment)
             .lineLimit(style.textLineLimit)
@@ -3544,7 +3610,11 @@ final class HTMLToIOSNodeRenderer {
                 fontSize: spec.style.fontSize,
                 fontWeight: spec.style.fontWeight,
                 fontFamily: spec.style.fontFamily,
+                fontResolvedFamily: spec.style.fontResolvedFamily,
+                fontResolutionStatus: spec.style.fontResolutionStatus,
+                fontFailedFamilies: spec.style.fontFailedFamilies,
                 fontDesign: spec.style.fontDesign,
+                fontNativeName: spec.style.fontNativeName,
                 fontStyle: spec.style.fontStyle,
                 foreground: spec.style.foreground,
                 background: nil,
@@ -3559,6 +3629,7 @@ final class HTMLToIOSNodeRenderer {
                 size: size,
                 weight: run.fontWeight ?? spec.style.fontWeight,
                 design: run.fontDesign ?? spec.style.fontDesign,
+                nativeName: run.fontNativeName ?? spec.style.fontNativeName,
                 style: run.fontStyle ?? spec.style.fontStyle
             )
             let targetLineHeight = run.lineHeight ?? spec.style.lineHeight
@@ -3605,7 +3676,8 @@ final class HTMLToIOSNodeRenderer {
         return .ultraLight
     }
 
-    private func nativeFont(size: Double, weight: String?, design: String?, style: String?) -> UIFont {
+    private func nativeFont(size: Double, weight: String?, design: String?, nativeName: String?, style: String?) -> UIFont {
+        if let nativeName, let font = UIFont(name: nativeName, size: size) { return font }
         var descriptor = UIFont.systemFont(ofSize: size, weight: fontWeight(weight)).fontDescriptor
         let systemDesign: UIFontDescriptor.SystemDesign? = design == "monospaced" ? .monospaced : (design == "serif" ? .serif : (design == "rounded" ? .rounded : nil))
         if let systemDesign, let designed = descriptor.withDesign(systemDesign) { descriptor = designed }

@@ -35,6 +35,8 @@
 4. 字体缺失或许可不明时回退到最接近系统字体，并在差异报告中标记。
 5. 可变字体需要检查 iOS 支持和 weight axis；不能把所有 weight 映射到同一个文件。
 
+`document.fonts.check()` 对包含 generic fallback 的完整字体栈可能返回 true，即使首选远程字体从未加载。必须结合 `FontFaceSet` 中实际 face 状态与逐候选 Canvas 字形宽度探测确认最终解析字体。浏览器宿主的本地字体不等于 iOS 可用字体；只有核验过的 iOS 内置 PostScript name 或已接入并注册的字体文件才能直接生成 native font name。
+
 浏览器与 iOS 的字体 rasterization 不完全一致。验收重点包括字号、字重、行高、baseline、换行位置和文本容器尺寸，像素比较应允许少量抗锯齿差异。
 
 ## 许可与网络

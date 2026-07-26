@@ -475,6 +475,71 @@ async function main() {
         if (!style || style.display === "none" || style.content === "none" || style.content === "normal") return null;
         return { content: style.content, style: styleObject(style) };
       };
+      const genericFontFamilies = new Set([
+        "serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui",
+        "ui-serif", "ui-sans-serif", "ui-monospace", "ui-rounded", "emoji", "math", "fangsong",
+      ]);
+      const normalizeFontFamily = (value) => String(value || "").trim().replace(/^['"]|['"]$/g, "").toLowerCase();
+      const fontFamilies = (value) => String(value || "").split(",").map((item) => normalizeFontFamily(item)).filter(Boolean);
+      const loadedFontFaces = new Map();
+      if (document.fonts) {
+        for (const face of Array.from(document.fonts)) {
+          const family = normalizeFontFamily(face.family);
+          if (!family) continue;
+          const records = loadedFontFaces.get(family) || [];
+          records.push({ status: face.status, style: face.style, weight: face.weight, stretch: face.stretch });
+          loadedFontFaces.set(family, records);
+        }
+      }
+      const fontAvailabilityCache = new Map();
+      const fontProbeContext = document.createElement("canvas").getContext("2d");
+      const fontProbeText = "mmmmmmmmWWWWiiii0123456789汉字";
+      const namedFontAvailable = (family) => {
+        if (!fontProbeContext) return false;
+        if (fontAvailabilityCache.has(family)) return fontAvailabilityCache.get(family);
+        const escaped = family.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        const differsFrom = (fallback) => {
+          fontProbeContext.font = `72px ${fallback}`;
+          const baseline = fontProbeContext.measureText(fontProbeText).width;
+          fontProbeContext.font = `72px "${escaped}", ${fallback}`;
+          const candidate = fontProbeContext.measureText(fontProbeText).width;
+          return Math.abs(candidate - baseline) > 0.1;
+        };
+        const available = differsFrom("monospace") || differsFrom("serif");
+        fontAvailabilityCache.set(family, available);
+        return available;
+      };
+      const resolveFontFamily = (style) => {
+        const requestedFamilies = fontFamilies(style.fontFamily);
+        const failedFamilies = [];
+        for (let index = 0; index < requestedFamilies.length; index += 1) {
+          const family = requestedFamilies[index];
+          if (genericFontFamilies.has(family)) {
+            return {
+              requestedFamilies,
+              resolvedFamily: family,
+              status: failedFamilies.length ? "generic-fallback" : "generic-family",
+              failedFamilies,
+              confidence: failedFamilies.length ? 0.9 : 1,
+            };
+          }
+          const faces = loadedFontFaces.get(family) || [];
+          if (faces.some((face) => face.status === "loaded")) {
+            return { requestedFamilies, resolvedFamily: family, status: "loaded-web-font", failedFamilies, confidence: 1 };
+          }
+          if (namedFontAvailable(family)) {
+            return { requestedFamilies, resolvedFamily: family, status: "system-local", failedFamilies, confidence: 0.85 };
+          }
+          failedFamilies.push(family);
+        }
+        return {
+          requestedFamilies,
+          resolvedFamily: "sans-serif",
+          status: "unresolved-fallback",
+          failedFamilies,
+          confidence: 0.55,
+        };
+      };
       const textMetricsObject = (element, style) => {
         const ownText = directText(element);
         const textTag = /^(a|button|label|legend|li|p|span|strong|em|small|h[1-6]|td|th|textarea)$/i.test(element.tagName);
@@ -561,12 +626,8 @@ async function main() {
             || joinedWithoutWhitespace === renderedWithoutWhitespace
           )
         ) ? candidateLineTexts : [];
-        let fontLoaded = null;
-        try {
-          fontLoaded = document.fonts ? document.fonts.check(`${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`) : null;
-        } catch (_) {
-          fontLoaded = null;
-        }
+        const fontResolution = resolveFontFamily(style);
+        const fontLoaded = fontResolution.status !== "unresolved-fallback";
         const canvas = document.createElement("canvas");
         const context = canvas.getContext("2d");
         let fontMetrics = null;
@@ -588,6 +649,7 @@ async function main() {
           lineRects: lines,
           lineTexts,
           fontLoaded,
+          fontResolution,
           fontMetrics,
           firstBaselineY: lines.length ? lines[0].top + ascent : null,
           lastBaselineY: lines.length ? lines[lines.length - 1].top + ascent : null,

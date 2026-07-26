@@ -2,7 +2,7 @@
 
 高保真转换必须基于浏览器真实渲染结果。源码分析用于补充语义和交互，不代替 computed style 与实际几何信息。
 
-`render-tree-1.2` 额外包含 `textMetrics`、`assetDetails` 和 `document.loadedFonts`。文字 Range 行框用于 `text-calibration.md`，内联 SVG markup 和资源 URL 用于 `resource-conversion.md`。
+`render-tree-1.2` 额外包含 `textMetrics`、`assetDetails` 和 `document.loadedFonts`。每个文字节点的 `textMetrics.fontResolution` 必须逐候选记录请求字体、最终解析字体、失败候选、状态和置信度；不能把整个 fallback stack 的 `document.fonts.check()` 真值当成首选 Web Font 已加载。文字 Range 行框用于 `text-calibration.md`，内联 SVG markup 和资源 URL 用于 `resource-conversion.md`。
 
 ## 运行方式
 

@@ -1230,6 +1230,45 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn('if value >= 800 { return .heavy }', runtime)
             self.assertIn('case "monospaced": return .monospaced', runtime)
 
+    def test_resolved_font_contract_uses_generic_fallback_and_safe_ios_native_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("home")
+            root_node = payload["screens"][0]["nodes"][0]
+            fallback = node("home.fallback", root_node["id"], "text", "Fallback")
+            fallback["style"]["fontFamily"] = '"Missing Font", monospace'
+            fallback["content"]["fontResolution"] = {
+                "resolvedFamily": "monospace",
+                "status": "generic-fallback",
+                "failedFamilies": ["missing font"],
+            }
+            local = node("home.local", root_node["id"], "text", "Local")
+            local["style"].update({"fontFamily": "Arial", "fontWeight": "700", "fontStyle": "italic"})
+            local["content"]["fontResolution"] = {
+                "resolvedFamily": "arial",
+                "status": "system-local",
+                "failedFamilies": [],
+            }
+            payload["screens"][0]["nodes"].extend([fallback, local])
+            path = root / "home.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            out_dir = root / "out"
+            self.run_generator([path], out_dir)
+            generated = json.loads((out_dir / PAYLOAD).read_text(encoding="utf-8"))
+            by_id = {item["id"]: item for item in generated["screens"][0]["root"]["children"]}
+            self.assertEqual(by_id[fallback["id"]]["style"]["fontDesign"], "monospaced")
+            self.assertEqual(by_id[fallback["id"]]["style"]["fontResolutionStatus"], "generic-fallback")
+            self.assertEqual(by_id[fallback["id"]]["style"]["fontFailedFamilies"], ["missing font"])
+            self.assertIsNone(by_id[fallback["id"]]["style"]["fontNativeName"])
+            self.assertEqual(by_id[local["id"]]["style"]["fontNativeName"], "Arial-BoldItalicMT")
+            runtime = (out_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn("Font.custom(nativeName, fixedSize: size)", runtime)
+
+            uikit_dir = root / "uikit"
+            self.run_generator([path], uikit_dir, ui_stack="uikit")
+            uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn("UIFont(name: nativeName, size: size)", uikit_runtime)
+
 
     def test_computed_flex_direction_overrides_absolute_layout_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

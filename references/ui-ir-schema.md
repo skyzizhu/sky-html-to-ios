@@ -259,6 +259,7 @@ UI IR 是浏览器渲染结果与原生代码之间的稳定中间层。不要�
 - `placeholder`、`value`
 - `accessibilityLabel`
 - `lines`: 已知的行数限制
+- `fontResolution`: 请求字体序列、最终解析字体、解析状态、失败候选和置信度
 - `isDecorative`: 是否为纯装饰
 
 ## Interaction

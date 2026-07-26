@@ -20,6 +20,8 @@ python3 scripts/build_text_calibration.py render-tree.json \
 - 富文本节点、字体文件需求和 fallback 风险
 - iOS 测量结果需要提供的字段
 
+字体解析状态区分 `loaded-web-font`、`system-local`、`generic-family`、`generic-fallback` 和 `unresolved-fallback`。`generic-fallback` 表示前置命名字体加载失败后浏览器实际落到 system-ui/serif/monospace 等通用族；它不是“Web Font 已加载”，也不应触发字体文件接入。`system-local` 只证明当前浏览器宿主可用，仍须核对目标 iOS SDK 是否存在对应字体。
+
 ## iOS 实现顺序
 
 1. 先接入正确字体文件和所有使用到的 weight；许可不明时停止嵌入并标记 fallback。
@@ -31,7 +33,7 @@ python3 scripts/build_text_calibration.py render-tree.json \
 
 SwiftUI `lineSpacing` 不是 CSS `line-height`；UIKit 使用 `NSParagraphStyle.minimumLineHeight/maximumLineHeight` 时要同时处理 baseline offset。中英文混排、Emoji、JetBrains Mono 等等宽字体和不同 weight 必须分别验证。
 
-生成器必须保留字体候选、generic family、style 和 100–900 weight，不能只留下字号。无法合法嵌入来源 Web Font 时，按最终可用语义选择原生 fallback：`monospace` → monospaced system design，`serif` → serif system design，普通 `sans-serif/system-ui` → default system design，并在报告中保留 fallback 风险。`800/900`、`100/200/300` 不得分别压成统一 bold 或 regular。
+生成器必须保留字体候选、resolved family、resolution status、失败候选、generic family、style 和 100–900 weight，不能只留下字号。无法合法嵌入来源 Web Font 时，按最终可用语义选择原生 fallback：`monospace` → monospaced system design，`serif` → serif system design，普通 `sans-serif/system-ui` → default system design，并在报告中保留 fallback 风险。只有经过白名单核验的 iOS 内置字体才可写入 `fontNativeName`；未知宿主字体继续使用 system design。`800/900`、`100/200/300` 不得分别压成统一 bold 或 regular。
 
 SwiftUI 多行文字的额外间距按 `CSS line-height - native UIFont.lineHeight` 计算，并把剩余 leading 对称分配到首尾行框；禁止继续使用 `line-height - font-size`。UIKit 使用目标 line height 固定 paragraph 的 minimum/maximum line height，并按原生字体 line height 计算 baseline offset。未显式给出 line-height 时沿用原生字体度量，不制造额外 leading。
 

@@ -72,9 +72,19 @@ def main() -> int:
         style = node.get("style") or {}
         families = family_names(style.get("fontFamily"))
         primary = families[0] if families else ""
-        if primary in SYSTEM_FONTS:
+        resolution = metrics.get("fontResolution") or {}
+        resolution_status = resolution.get("status")
+        if resolution_status == "loaded-web-font":
+            font_status = "web-font-loaded-needs-ios-file"
+        elif resolution_status == "system-local":
+            font_status = "system-local-needs-ios-availability-check"
+        elif resolution_status in {"generic-family", "generic-fallback"}:
+            font_status = "ios-system-font" if resolution_status == "generic-family" else "browser-generic-fallback"
+        elif resolution_status == "unresolved-fallback":
+            font_status = "fallback-risk"
+        elif primary in SYSTEM_FONTS:
             font_status = "ios-system-font"
-        elif primary in loaded_names or metrics.get("fontLoaded") is True:
+        elif primary in loaded_names:
             font_status = "web-font-loaded-needs-ios-file"
         else:
             font_status = "fallback-risk"
@@ -90,6 +100,10 @@ def main() -> int:
             "font": {
                 "cssFamilies": families,
                 "status": font_status,
+                "resolvedFamily": resolution.get("resolvedFamily"),
+                "resolutionStatus": resolution_status,
+                "failedFamilies": resolution.get("failedFamilies") or [],
+                "resolutionConfidence": resolution.get("confidence"),
                 "sourceSizePx": font_size,
                 "targetSizePt": round(font_size * scale, 3),
                 "weight": style.get("fontWeight"),
@@ -134,6 +148,8 @@ def main() -> int:
             "textNodes": len(items),
             "richTextNodes": sum(item["richText"] for item in items),
             "fontFileRequired": sum(item["font"]["status"] == "web-font-loaded-needs-ios-file" for item in items),
+            "browserFallbacks": sum(item["font"]["status"] == "browser-generic-fallback" for item in items),
+            "systemLocalChecks": sum(item["font"]["status"] == "system-local-needs-ios-availability-check" for item in items),
             "fallbackRisks": sum(item["font"]["status"] == "fallback-risk" for item in items),
         },
     }
