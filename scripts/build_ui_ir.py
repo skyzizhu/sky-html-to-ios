@@ -586,6 +586,10 @@ def native_action(transition: dict, state_by_id: dict[str, dict], resolved_actio
         "toggle-expanded": "toggle-state",
         "update-selection": "toggle-state",
         "update-local-state": "toggle-state",
+        "reveal-swipe-actions": "toggle-state",
+        "present-overlay": "overlay",
+        "alert": "present-alert",
+        "popover": "present-popover",
         "open-url": "open-url",
     }
     if action in mapping:
@@ -829,6 +833,7 @@ def normalize_dynamic_contracts(
             "targetNodeIds": selector_to_node_ids.get(selector, []) if selector else [],
             "classes": state.get("classes") or [],
             "confidence": state.get("confidence", 0.5),
+            "visualRepresentation": state.get("visualRepresentation"),
         })
     return interactions, states, warnings
 

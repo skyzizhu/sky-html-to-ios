@@ -116,9 +116,11 @@ HTML 可以引用本地 CSS、JavaScript、图片、SVG 和字体。远程资源
 - 扫描页面入口、页面容器和可见状态；
 - 构建 `html-route-graph.json`；
 - 构建 `interaction-state-graph.json`；
+- 自动识别同一页面的菜单、sheet、alert、overlay、局部展开和 Cell 左滑等重复状态画板；
+- 将状态画板归属到唯一原生页面，保留触发入口与视觉参考，不额外生成 Screen 或 ViewController；
 - 区分页面跳转、局部状态、弹层和外部链接；
 - 保留 prerequisite interaction sequence；
-- 对低置信度路由生成待确认项，不擅自猜测。
+- 对 owner 得分接近或低置信度路由给出警告，不擅自猜测；可用 `data-ios-state-owner` 明确归属。
 
 ### 3. 工程发现
 
@@ -830,7 +832,7 @@ Skill 可以处理普通 HTML，但结构和语义越清楚，自动还原越稳
 
 - SwiftUI 真实工程构建；
 - UIKit 真实工程构建；
-- 当前开发版审计通过 86 项自动化测试；
+- 当前开发版审计通过 90 项自动化测试；
 - UI IR、工程决策、命名和生成器测试；
 - 多页面和交互状态测试；
 - 视觉差异和节点几何测试；

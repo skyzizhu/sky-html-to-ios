@@ -70,6 +70,86 @@ def render_node(
 
 
 class BuildUIIRTests(unittest.TestCase):
+    def test_visual_artboard_state_contract_survives_into_ui_ir(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            nodes = [
+                render_node("app", None, "main", {"x": 0, "y": 0, "width": 393, "height": 852}),
+                render_node("open", "app", "button", {"x": 320, "y": 20, "width": 44, "height": 44}, dom_id="open"),
+            ]
+            render_tree = {
+                "schemaVersion": "render-tree-1.2",
+                "source": {"kind": "html-file", "entry": "/tmp/example.html"},
+                "document": {"viewport": {"width": 393, "height": 852}},
+                "nodes": nodes,
+                "interactions": [],
+                "phoneCandidates": [],
+            }
+            interaction_graph = {
+                "schemaVersion": "interaction-state-graph-1.0",
+                "source": {"fingerprint": "fixture"},
+                "screens": [{"id": "home"}],
+                "states": [{
+                    "id": "home.menu.1",
+                    "ownerScreenId": "home",
+                    "kind": "overlay",
+                    "targetSelector": "#home-menu",
+                    "classes": [],
+                    "confidence": 0.91,
+                    "visualRepresentation": {
+                        "screenId": "home-menu",
+                        "sourceSelector": "#home-menu",
+                        "presentationStyle": "menu",
+                    },
+                }],
+                "interactions": [{
+                    "id": "interaction-1",
+                    "sourceSelector": "#open",
+                    "sourceScreenId": "home",
+                    "trigger": "tap",
+                    "confidence": 0.91,
+                }],
+                "transitions": [{
+                    "id": "transition-1",
+                    "interactionId": "interaction-1",
+                    "sourceScreenId": "home",
+                    "targetStateId": "home.menu.1",
+                    "trigger": "tap",
+                    "kind": "presentation",
+                    "recommendedNativeAction": "present-overlay",
+                    "confidence": 0.91,
+                    "requiresOverride": False,
+                }],
+                "unresolved": [],
+                "warnings": [],
+                "summary": {
+                    "screens": 1, "states": 1, "interactions": 1, "transitions": 1,
+                    "automaticTransitions": 0, "runtimeVerified": 0, "unresolved": 0,
+                },
+            }
+            source = root / "render-tree.json"
+            graph = root / "interaction-state-graph.json"
+            output = root / "ui-ir.json"
+            source.write_text(json.dumps(render_tree), encoding="utf-8")
+            graph.write_text(json.dumps(interaction_graph), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), str(source), "--out", str(output),
+                "--root-runtime-id", "app", "--screen-id", "home",
+                "--interaction-graph", str(graph),
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            generated = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(generated["states"][0]["id"], "home.menu.1")
+            self.assertEqual(
+                generated["states"][0]["visualRepresentation"]["screenId"],
+                "home-menu",
+            )
+            self.assertEqual(generated["interactions"][0]["action"], "overlay")
+            self.assertEqual(
+                generated["interactions"][0]["payload"]["transitions"][0]["targetStateId"],
+                "home.menu.1",
+            )
+
     def test_scroll_axis_text_lines_and_horizontal_carousel_survive_ir_conversion(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

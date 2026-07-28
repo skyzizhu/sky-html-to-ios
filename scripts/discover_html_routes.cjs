@@ -5,6 +5,7 @@ const fs = require("fs");
 const http = require("http");
 const path = require("path");
 const { fileURLToPath, pathToFileURL } = require("url");
+const { classifyScreenRepresentations } = require("./artboard_state_classifier.cjs");
 
 function parseArgs(argv) {
   const result = { timeout: 15000, maxPages: 40, allowRemote: false };
@@ -131,9 +132,11 @@ async function main() {
         const discovered = await page.evaluate(() => {
           const cssPath = (element) => {
             if (element.id) return `#${CSS.escape(element.id)}`;
-            for (const attribute of ["data-ios-screen", "data-ios-node-id", "data-page", "data-screen", "data-route", "aria-controls", "data-ios-action"]) {
+            for (const attribute of ["data-ios-screen", "data-ios-node-id", "data-ios-target", "data-page", "data-screen", "data-route", "aria-controls", "data-ios-action"]) {
               const value = element.getAttribute(attribute);
-              if (value != null) return `${element.tagName.toLowerCase()}[${attribute}=${JSON.stringify(value)}]`;
+              if (value == null) continue;
+              const candidate = `${element.tagName.toLowerCase()}[${attribute}=${JSON.stringify(value)}]`;
+              if (document.querySelectorAll(candidate).length === 1) return candidate;
             }
             const base = `${element.tagName.toLowerCase()}${element.classList.length ? `.${Array.from(element.classList).slice(0, 2).map(CSS.escape).join(".")}` : ""}`;
             const matches = Array.from(document.querySelectorAll(base));
@@ -152,7 +155,73 @@ async function main() {
           const explicit = Array.from(document.querySelectorAll("[data-ios-action]")).map((element) => ({
             selector: cssPath(element), action: element.getAttribute("data-ios-action"), target: element.getAttribute("data-ios-target"),
             presentationStyle: element.getAttribute("data-ios-presentation-style"),
+            sourceScreenHint: (
+              element.closest("[data-ios-screen], .page[id], [role=tabpanel][id], [data-screen-id]")?.getAttribute("data-ios-screen")
+              || element.closest("[data-ios-screen], .page[id], [role=tabpanel][id], [data-screen-id]")?.id
+              || element.closest("[data-ios-screen], .page[id], [role=tabpanel][id], [data-screen-id]")?.getAttribute("data-screen-id")
+              || null
+            ),
           }));
+          const visualSnapshot = (root) => {
+            const rootRect = root.getBoundingClientRect();
+            const allElements = [root, ...root.querySelectorAll("*")];
+            const visibleElements = allElements.filter((element) => {
+              const style = getComputedStyle(element);
+              const rect = element.getBoundingClientRect();
+              return (
+                style.display !== "none"
+                && style.visibility !== "hidden"
+                && Number(style.opacity || 1) > 0.01
+                && rect.width > 0
+                && rect.height > 0
+              );
+            });
+            const elements = visibleElements.length >= 3 ? visibleElements : allElements;
+            const depth = (element) => {
+              let value = 0;
+              let current = element;
+              while (current && current !== root) {
+                value += 1;
+                current = current.parentElement;
+              }
+              return value;
+            };
+            const structureTokens = elements.map((element) => {
+              const classes = Array.from(element.classList)
+                .filter((name) => !/^(active|current|open|opened|show|shown|selected|expanded|visible)$/i.test(name))
+                .slice(0, 4)
+                .sort();
+              const semantic = element.getAttribute("data-ios-component")
+                || element.getAttribute("role")
+                || element.getAttribute("type")
+                || "";
+              return `${depth(element)}:${element.tagName.toLowerCase()}:${semantic}:${classes.join(".")}`;
+            });
+            const textTokens = elements
+              .filter((element) => element.children.length === 0)
+              .map((element) => (element.textContent || "").replace(/\d+/g, "#").replace(/\s+/g, " ").trim().toLowerCase())
+              .filter((text) => text && text.length <= 80);
+            const positionedAreaRatio = elements.reduce((maximum, element) => {
+              const style = getComputedStyle(element);
+              if (!["absolute", "fixed", "sticky"].includes(style.position)) return maximum;
+              const rect = element.getBoundingClientRect();
+              const rootArea = Math.max(rootRect.width * rootRect.height, 1);
+              return Math.max(maximum, Math.min((rect.width * rect.height) / rootArea, 1));
+            }, 0);
+            const hints = elements.flatMap((element) => [
+              element.id,
+              ...Array.from(element.classList),
+              element.getAttribute("data-ios-state-kind"),
+              element.getAttribute("data-ios-presentation-style"),
+            ]).filter(Boolean);
+            return {
+              nodeCount: elements.length,
+              structureTokens,
+              textTokens,
+              positionedAreaRatio,
+              hints: Array.from(new Set(hints)).slice(0, 120),
+            };
+          };
           const virtualTargets = new Map();
           const controls = Array.from(document.querySelectorAll("[data-page], [data-screen], [data-route], [aria-controls], [data-ios-action][data-ios-target]"));
           for (const control of controls) {
@@ -168,9 +237,22 @@ async function main() {
               title: (target.getAttribute("data-ios-screen-title") || control.textContent || target.getAttribute("aria-label") || semanticScreenId).trim().slice(0, 160),
               bodyTextLength: (target.textContent || "").trim().length,
               activationSelectors: [],
+              activationSources: [],
               containerSelector: null,
+              sourceElementId: target.id || null,
+              iosStateOwner: target.getAttribute("data-ios-state-owner"),
+              iosStateKind: target.getAttribute("data-ios-state-kind"),
+              presentationStyle: target.getAttribute("data-ios-presentation-style"),
+              visualSnapshot: visualSnapshot(target),
             };
             existing.activationSelectors.push(cssPath(control));
+            const sourceScreen = control.closest("[data-ios-screen], .page[id], [role=tabpanel][id], [data-screen-id]");
+            existing.activationSources.push({
+              selector: cssPath(control),
+              sourceScreenHint: sourceScreen
+                ? sourceScreen.getAttribute("data-ios-screen") || sourceScreen.id || sourceScreen.getAttribute("data-screen-id")
+                : null,
+            });
             const container = target.closest("[data-ios-container], .screen, .mobile, .app-screen");
             if (container) existing.containerSelector = cssPath(container);
             virtualTargets.set(semanticScreenId, existing);
@@ -185,8 +267,14 @@ async function main() {
               title: target.getAttribute("data-ios-screen-title") || target.getAttribute("aria-label") || targetId,
               bodyTextLength: (target.textContent || "").trim().length,
               activationSelectors: [],
+              activationSources: [],
               containerSelector: container ? cssPath(container) : null,
               initial: target.hasAttribute("data-ios-screen-initial"),
+              sourceElementId: target.id || null,
+              iosStateOwner: target.getAttribute("data-ios-state-owner"),
+              iosStateKind: target.getAttribute("data-ios-state-kind"),
+              presentationStyle: target.getAttribute("data-ios-presentation-style"),
+              visualSnapshot: visualSnapshot(target),
             });
           }
           return { title: document.title, links, forms, explicit, virtualScreens: Array.from(virtualTargets.values()), bodyTextLength: (document.body?.innerText || "").length };
@@ -229,11 +317,17 @@ async function main() {
             containerSelector: virtual.containerSelector,
             activation: virtual.activationSelectors.length ? { type: "click", selectors: virtual.activationSelectors } : null,
             virtualStateId: virtual.id,
+            sourceElementId: virtual.sourceElementId,
+            iosStateOwner: virtual.iosStateOwner,
+            iosStateKind: virtual.iosStateKind,
+            presentationStyle: virtual.presentationStyle,
+            visualSnapshot: virtual.visualSnapshot,
             initial: Boolean(virtual.initial),
           });
-          for (const selector of virtual.activationSelectors) rawEdges.push({
+          for (const activationSource of virtual.activationSources) rawEdges.push({
             sourceURL: actualURL,
-            sourceSelector: selector,
+            sourceSelector: activationSource.selector,
+            sourceScreenHint: activationSource.sourceScreenHint,
             action: "activate-prototype-screen",
             targetHint: virtual.id,
             discoveryOnly: true,
@@ -258,7 +352,7 @@ async function main() {
           if (sameOrigin && action === "push" && !visited.has(targetURL.href)) queue.push(targetURL.href);
         }
         for (const form of discovered.forms) rawEdges.push({ sourceURL: actualURL, sourceSelector: form.selector, action: "submit", targetURL: form.action, method: form.method, confidence: 0.95 });
-        for (const item of discovered.explicit) rawEdges.push({ sourceURL: actualURL, sourceSelector: item.selector, action: item.action, targetHint: item.target, presentationStyle: item.presentationStyle, confidence: 1 });
+        for (const item of discovered.explicit) rawEdges.push({ sourceURL: actualURL, sourceSelector: item.selector, sourceScreenHint: item.sourceScreenHint, action: item.action, targetHint: item.target, presentationStyle: item.presentationStyle, confidence: 1 });
       } catch (error) {
         warnings.push(`Unable to inspect route ${normalizedURL}: ${error.message}`);
       } finally {
@@ -271,15 +365,26 @@ async function main() {
     if (server) await new Promise((resolve) => server.close(resolve));
   }
   if (queue.length) warnings.push(`Route discovery stopped at --max-pages ${args.maxPages}.`);
+  const representationClassification = classifyScreenRepresentations(screens);
+  warnings.push(...representationClassification.warnings);
+  const visualStates = representationClassification.visualStates;
   const screenByHint = new Map();
   for (const screen of screens) {
-    screenByHint.set(screen.id, screen.id);
-    screenByHint.set(screen.route, screen.id);
-    if (screen.rootSelector) screenByHint.set(screen.rootSelector, screen.id);
-    if (screen.virtualStateId) screenByHint.set(screen.virtualStateId, screen.id);
-    if (screen.title) screenByHint.set(screen.title, screen.id);
+    const nativeScreenId = screen.nativeOwnerScreenId || screen.id;
+    screenByHint.set(screen.id, nativeScreenId);
+    screenByHint.set(screen.route, nativeScreenId);
+    if (screen.rootSelector) screenByHint.set(screen.rootSelector, nativeScreenId);
+    if (screen.virtualStateId) screenByHint.set(screen.virtualStateId, nativeScreenId);
+    if (screen.title) screenByHint.set(screen.title, nativeScreenId);
   }
-  const edges = rawEdges.map((edge, index) => {
+  const mappedEdges = rawEdges.map((edge) => {
+    const representation = edge.targetHint
+      ? screens.find((screen) =>
+          screen.id === edge.targetHint
+          || screen.virtualStateId === edge.targetHint
+          || screen.route === edge.targetHint
+        )
+      : null;
     const targetScreenId = edge.targetURL
       ? idByURL.get(edge.targetURL) || null
       : screenByHint.get(edge.targetHint) || null;
@@ -292,26 +397,50 @@ async function main() {
       ? new URL(edge.targetURL).hash || null
       : null;
     const externalURL = edge.action === "open-url" ? edge.targetURL || edge.targetHint || null : null;
-    const sourceRoute = screens.find((screen) => screen.id === idByURL.get(edge.sourceURL))?.route || null;
+    const sourceScreenId = screenByHint.get(edge.sourceScreenHint) || idByURL.get(edge.sourceURL) || null;
+    const sourceRoute = screens.find((screen) => screen.id === sourceScreenId)?.route || null;
     const targetRoute = screens.find((screen) => screen.id === targetScreenId)?.route || null;
-    const { sameOrigin, ...publicEdge } = edge;
+    const { sameOrigin, sourceScreenHint, ...publicEdge } = edge;
+    const stateRepresentation = representation?.stateRepresentation || null;
+    const stateAction = stateRepresentation
+      ? stateRepresentation.kind === "presentation"
+        ? `present-${stateRepresentation.presentationStyle || "overlay"}`
+        : stateRepresentation.localEffect === "swipe-actions"
+          ? "reveal-swipe-actions"
+          : "update-local-state"
+      : null;
     return {
-      id: `route-${index + 1}`,
-      sourceScreenId: idByURL.get(edge.sourceURL) || null,
+      sourceScreenId,
       sourceRoute,
       targetScreenId,
+      targetStateId: representation?.stateRepresentation?.id || null,
       targetRoute,
       unresolvedTarget,
       targetAnchor,
       externalURL,
       ...publicEdge,
+      action: stateAction || publicEdge.action,
+      discoveryOnly: stateRepresentation ? false : publicEdge.discoveryOnly,
     };
   });
+  const seenEdges = new Set();
+  const edges = mappedEdges
+    .filter((edge) => {
+      const key = JSON.stringify([
+        edge.sourceScreenId, edge.sourceSelector, edge.action, edge.targetScreenId,
+        edge.targetStateId, edge.targetAnchor, edge.externalURL,
+      ]);
+      if (seenEdges.has(key)) return false;
+      seenEdges.add(key);
+      return true;
+    })
+    .map((edge, index) => ({ id: `route-${index + 1}`, ...edge }));
   const output = {
     schemaVersion: "html-route-graph-1.0",
     source: args.html ? { kind: "html-project", entry: path.resolve(args.html), root: localRoot } : { kind: "url", entry: args.url },
     entryScreenId: idByURL.get(entryURL) || screens[0]?.id || null,
     screens,
+    visualStates,
     edges,
     warnings: Array.from(new Set(warnings)),
   };

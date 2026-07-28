@@ -344,6 +344,8 @@ UI IR 是浏览器渲染结果与原生代码之间的稳定中间层。不要�
 
 `visualStates` 至少包含 `initial`，并记录 triggerInteractionId、interactionSequence、scroll、required 和来源。长页面与可观察的弹层/切换状态由 builder 自动补充；隐藏控件状态必须通过 prerequisite sequence 到达。
 
+当 HTML 使用并排画板表达同一页面的菜单、sheet、overlay、展开态或 Cell 左滑态时，`states[].visualRepresentation` 记录原始 `screenId`、`sourceSelector`、presentation/local-effect 类型与归并证据。该画板只作为 owner screen 的状态内容和视觉基线，不进入独立页面生成。
+
 ## Asset
 
 - `id`、`kind`、`source`

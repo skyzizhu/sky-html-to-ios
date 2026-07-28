@@ -74,6 +74,32 @@ class HTMLAuthoringContractTests(unittest.TestCase):
         self.assertIn("EMPTY_DATA_SOURCE", codes)
         self.assertIn("INVALID_ENUM", codes)
 
+    def test_state_artboard_owner_contract_is_validated(self) -> None:
+        result, report = self.run_validator("""
+        <main data-ios-app-root>
+          <section data-ios-screen="home">
+            <button data-ios-action="toggle-state" data-ios-target="home-menu">Menu</button>
+          </section>
+          <section data-ios-screen="home-menu"
+                   data-ios-state-owner="home"
+                   data-ios-state-kind="menu"></section>
+        </main>
+        """)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(report["summary"]["errors"], 0)
+
+        result, report = self.run_validator("""
+        <main data-ios-app-root>
+          <section data-ios-screen="home-menu"
+                   data-ios-state-owner="missing"
+                   data-ios-state-kind="unknown-kind"></section>
+        </main>
+        """)
+        self.assertEqual(result.returncode, 1)
+        codes = {item["code"] for item in report["issues"]}
+        self.assertIn("UNKNOWN_STATE_OWNER", codes)
+        self.assertIn("INVALID_ENUM", codes)
+
 
 if __name__ == "__main__":
     unittest.main()

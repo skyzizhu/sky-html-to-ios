@@ -417,6 +417,7 @@ async function main() {
     const selectors = Array.from(new Set([
       ...staticIndex.listeners.map((item) => item.sourceSelector),
       ...staticIndex.listeners.flatMap((item) => collectEffects(item.handler, staticIndex, knownScreenHints).map((effect) => effect.targetSelector)),
+      ...(routeGraph?.edges || []).map((item) => item.targetStateId ? item.sourceSelector : null),
     ].filter((selector) => selector && !selector.startsWith("::"))));
     const metadataBySelector = new Map(Object.entries(await page.evaluate((selectors) => {
       const result = {};
@@ -424,7 +425,7 @@ async function main() {
         try {
           const element = document.querySelector(selector);
           if (!element) continue;
-          const screen = element.closest(".page[id], [role=tabpanel][id], [data-screen-id]");
+          const screen = element.closest("[data-ios-screen], .page[id], [role=tabpanel][id], [data-screen-id]");
           result[selector] = {
             id: element.id || null,
             tag: element.tagName.toLowerCase(),
@@ -432,7 +433,9 @@ async function main() {
             href: element.getAttribute("href"),
             className: typeof element.className === "string" ? element.className : "",
             text: (element.textContent || "").trim().slice(0, 180),
-            screenHint: screen ? screen.id || screen.getAttribute("data-screen-id") : null,
+            screenHint: screen
+              ? screen.getAttribute("data-ios-screen") || screen.id || screen.getAttribute("data-screen-id")
+              : null,
             ancestorSelectors: Array.from(function* () {
               let current = element;
               while (current && current !== document.documentElement) {
@@ -451,6 +454,81 @@ async function main() {
     const transitions = [];
     const unresolved = [];
     const stateByKey = new Map();
+    const routeStateByID = new Map((routeGraph?.visualStates || []).map((item) => [item.id, item]));
+    for (const representation of routeStateByID.values()) {
+      const nativeKind = representation.kind === "presentation"
+        ? representation.presentationStyle === "sheet" ? "sheet"
+          : representation.presentationStyle === "popover" ? "popover-overlay"
+            : representation.presentationStyle === "alert" ? "dialog"
+              : representation.presentationStyle === "overlay" ? "full-screen-overlay"
+                : "overlay"
+        : representation.localEffect === "swipe-actions" ? "swipe-actions"
+          : "local-state";
+      states.push({
+        id: representation.id,
+        ownerScreenId: representation.ownerScreenId,
+        kind: nativeKind,
+        targetSelector: representation.sourceSelector,
+        targetElementId: null,
+        classes: [],
+        confidence: representation.confidence,
+        visualRepresentation: {
+          screenId: representation.representationScreenId,
+          sourceSelector: representation.sourceSelector,
+          presentationStyle: representation.presentationStyle,
+          localEffect: representation.localEffect,
+          evidence: representation.evidence || [],
+        },
+      });
+      stateByKey.set(
+        `${representation.ownerScreenId}|${representation.sourceSelector}|${nativeKind}`,
+        representation.id,
+      );
+    }
+    for (const edge of routeGraph?.edges || []) {
+      if (!edge.targetStateId || !routeStateByID.has(edge.targetStateId) || !edge.sourceSelector) continue;
+      if (staticIndex.listeners.some((listener) => listener.sourceSelector === edge.sourceSelector)) continue;
+      const representation = routeStateByID.get(edge.targetStateId);
+      const sourceMetadata = metadataBySelector.get(edge.sourceSelector);
+      const sourceScreenId = screenByHint.get(sourceMetadata?.screenHint) || representation.ownerScreenId;
+      const interactionId = `interaction-${interactions.length + 1}`;
+      const presentation = representation.kind === "presentation";
+      const recommendedNativeAction = presentation
+        ? representation.presentationStyle === "sheet" ? "sheet"
+          : representation.presentationStyle === "popover" ? "popover"
+            : representation.presentationStyle === "alert" ? "alert"
+              : "present-overlay"
+        : representation.localEffect === "swipe-actions" ? "reveal-swipe-actions"
+          : "update-local-state";
+      interactions.push({
+        id: interactionId,
+        sourceSelector: edge.sourceSelector,
+        sourceScope: null,
+        sourceScreenId,
+        sourceText: sourceMetadata?.text || edge.label || null,
+        trigger: representation.localEffect === "swipe-actions" ? "swipe" : "tap",
+        classification: presentation ? "presentation" : "state-change",
+        safety: { runtimeProbe: "skipped", reason: "route-state-representation-contract" },
+        astEvidence: { registration: null, effects: [], routeEdgeId: edge.id },
+        runtimeEvidence: null,
+        confidence: Math.min(1, Number(representation.confidence || 0.7)),
+      });
+      transitions.push({
+        id: `transition-${transitions.length + 1}`,
+        interactionId,
+        sourceScreenId,
+        targetStateId: representation.id,
+        trigger: representation.localEffect === "swipe-actions" ? "swipe" : "tap",
+        kind: presentation ? "presentation" : "local-state",
+        webAction: edge.action,
+        recommendedNativeAction,
+        nativeActionCandidates: [recommendedNativeAction],
+        schedule: null,
+        confidence: Math.min(1, Number(representation.confidence || 0.7)),
+        evidence: representation.evidence || [],
+        requiresOverride: false,
+      });
+    }
     const listenerRecords = staticIndex.listeners.map((listener) => ({
       listener,
       sourceMetadata: metadataBySelector.get(listener.sourceSelector),

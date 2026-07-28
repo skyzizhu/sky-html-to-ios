@@ -711,7 +711,7 @@ async function main() {
           "data-ios-toolbar-placement", "data-ios-back-button",
           "data-ios-tab-id", "data-ios-tab-title", "data-ios-icon", "data-ios-selected-icon",
           "data-ios-badge", "data-ios-tab-role", "data-ios-reselect", "data-ios-tab-visibility",
-          "data-ios-state", "data-ios-state-kind", "data-ios-visible-when",
+          "data-ios-state", "data-ios-state-owner", "data-ios-state-kind", "data-ios-visible-when",
           "data-ios-visual-state", "data-ios-required-state", "data-ios-scroll-root",
           "data-ios-animation", "data-ios-duration-ms", "data-ios-delay-ms", "data-ios-easing",
           "data-ios-repeat", "data-ios-reduced-motion",

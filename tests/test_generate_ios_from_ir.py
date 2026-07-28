@@ -160,6 +160,27 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                                     "flexShrink": 1,
                                     "resistsHorizontalCompression": False,
                                 } for index in range(6)],
+                            }, {
+                                "containerNodeId": root_node["id"],
+                                "axis": "vertical",
+                                "sourceChildNodeIds": ["home.list", "home.primary-action"],
+                                "orderedChildNodeIds": ["home.list", "home.primary-action"],
+                                "reordersSourceChildren": False,
+                                "alignment": "stretch",
+                                "distribution": "normal",
+                                "wraps": False,
+                                "gap": 12,
+                                "childSizing": [{
+                                    "nodeId": "home.primary-action",
+                                    "widthPolicy": "fixed",
+                                    "heightPolicy": "fixed",
+                                    "measuredWidth": 180,
+                                    "measuredHeight": 44,
+                                    "aspectRatio": 4.0909,
+                                    "flexGrow": 0,
+                                    "flexShrink": 0,
+                                    "resistsHorizontalCompression": True,
+                                }],
                             }],
                         },
                         "reusableContent": {
@@ -221,6 +242,11 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("configureTypedComponents", controller)
             self.assertIn("registerTableCell", controller)
             self.assertIn("HTMLToIOSHomeLeafPrimaryActionView", controller)
+            uikit_leaf = (out / "Home/Views/HTMLToIOSHomeLeafPrimaryActionView.swift").read_text(encoding="utf-8")
+            self.assertIn("final class HTMLToIOSHomeLeafPrimaryActionView: UIControl", uikit_leaf)
+            self.assertIn("widthAnchor.constraint(equalToConstant: 180.0)", uikit_leaf)
+            self.assertIn("heightAnchor.constraint(equalToConstant: 44.0)", uikit_leaf)
+            self.assertIn("setContentCompressionResistancePriority(.required", uikit_leaf)
 
             swiftui_out = root / "SwiftUI" / "Generated" / "HTMLToIOS"
             self.run_generator(
@@ -230,6 +256,11 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             item_path = swiftui_out / "Home/Cells/HTMLToIOSHomeSection1ItemView.swift"
             self.assertTrue(item_path.is_file())
             self.assertTrue((swiftui_out / "Home/Views/HTMLToIOSHomeLeafPrimaryActionView.swift").is_file())
+            swiftui_leaf = (swiftui_out / "Home/Views/HTMLToIOSHomeLeafPrimaryActionView.swift").read_text(encoding="utf-8")
+            self.assertIn("width: CGFloat(180.0)", swiftui_leaf)
+            self.assertIn("height: CGFloat(44.0)", swiftui_leaf)
+            self.assertIn(".fixedSize(horizontal: false", swiftui_leaf)
+            self.assertIn(".layoutPriority(2)", swiftui_leaf)
             item_view = item_path.read_text(encoding="utf-8")
             self.assertIn("let registry: HTMLToIOSTypedViewRegistry", item_view)
             self.assertIn("bypassTypedNodeID: spec.id", item_view)

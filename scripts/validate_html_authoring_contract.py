@@ -46,6 +46,11 @@ TAB_ROLES = {"normal", "search"}
 TAB_RESELECT = {"keep", "pop-to-root", "scroll-to-top"}
 TAB_VISIBILITY = {"always", "automatic", "hide-on-push"}
 DATA_STATE_ROLES = {"loading", "content", "empty", "error"}
+STATE_KINDS = {
+    "boolean", "enum", "value", "loading", "content", "error", "empty",
+    "menu", "sheet", "alert", "popover", "overlay", "swipe-actions",
+    "revealed-content",
+}
 PAGINATION_MODES = {"none", "page", "cursor", "infinite"}
 BOOLEAN_ATTRIBUTES = {
     "data-ios-app-root", "data-ios-backdrop-dismiss", "data-ios-ignore", "data-ios-interactive-dismiss",
@@ -147,6 +152,7 @@ def validate(path: Path) -> dict:
         enum_check(issues, attrs, line, "data-ios-reselect", TAB_RESELECT)
         enum_check(issues, attrs, line, "data-ios-tab-visibility", TAB_VISIBILITY)
         enum_check(issues, attrs, line, "data-ios-state-role", DATA_STATE_ROLES)
+        enum_check(issues, attrs, line, "data-ios-state-kind", STATE_KINDS)
         enum_check(issues, attrs, line, "data-ios-pagination", PAGINATION_MODES)
         if "data-ios-data-source" in attrs and not str(attrs.get("data-ios-data-source") or "").strip():
             issues.append(issue("EMPTY_DATA_SOURCE", "error", "data-ios-data-source must be a stable non-empty identifier", line, "data-ios-data-source"))
@@ -191,6 +197,23 @@ def validate(path: Path) -> dict:
             parsed = urlparse(target)
             if not parsed.scheme and normalized not in known_targets:
                 issues.append(issue("UNKNOWN_ACTION_TARGET", "error", f"Target {target!r} does not match a screen or element ID", line, "data-ios-target"))
+        state_owner = str(attrs.get("data-ios-state-owner") or "").strip()
+        if state_owner and state_owner not in screen_counts:
+            issues.append(issue(
+                "UNKNOWN_STATE_OWNER",
+                "error",
+                f"State owner {state_owner!r} does not match a data-ios-screen",
+                line,
+                "data-ios-state-owner",
+            ))
+        if state_owner and state_owner == str(attrs.get("data-ios-screen") or "").strip():
+            issues.append(issue(
+                "SELF_STATE_OWNER",
+                "error",
+                "A state representation must reference another owner screen",
+                line,
+                "data-ios-state-owner",
+            ))
 
     if not screens:
         issues.append(issue("NO_EXPLICIT_SCREENS", "warning", "No data-ios-screen annotations; screen discovery will use runtime inference", 1, "data-ios-screen"))

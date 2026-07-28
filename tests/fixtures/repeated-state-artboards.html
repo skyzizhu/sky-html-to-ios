@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { display: flex; gap: 24px; margin: 0; font: 16px sans-serif; }
+    .page { position: relative; width: 393px; min-width: 393px; height: 852px; overflow: hidden; }
+    header, footer { height: 64px; }
+    .row { height: 56px; }
+    .menu { position: absolute; inset: 72px 16px auto auto; width: 180px; height: 140px; }
+    .actions { position: absolute; right: 0; top: 64px; width: 88px; height: 56px; }
+  </style>
+</head>
+<body data-ios-app-root>
+  <main class="page" data-ios-screen="home" data-ios-screen-initial>
+    <header>
+      <h1>Home</h1>
+      <button data-ios-action="toggle-state" data-ios-target="home-menu">More</button>
+      <button data-ios-action="toggle-state" data-ios-target="home-swipe">Reveal</button>
+    </header>
+    <section><div class="row">First item</div><div class="row">Second item</div></section>
+    <footer>Home Profile</footer>
+  </main>
+  <main class="page" data-ios-screen="home-menu"
+        data-ios-state-owner="home" data-ios-state-kind="menu">
+    <header><h1>Home</h1></header>
+    <section><div class="row">First item</div><div class="row">Second item</div></section>
+    <footer>Home Profile</footer>
+    <aside class="menu"><button>Edit</button><button>Settings</button></aside>
+  </main>
+  <main class="page" data-ios-screen="home-swipe"
+        data-ios-state-owner="home" data-ios-state-kind="swipe-actions">
+    <header><h1>Home</h1></header>
+    <section><div class="row">First item</div><div class="row">Second item</div></section>
+    <footer>Home Profile</footer>
+    <button class="actions">Delete</button>
+  </main>
+  <main class="page" data-ios-screen="search">
+    <header><h1>Search</h1></header>
+    <input type="search" placeholder="Search">
+  </main>
+</body>
+</html>

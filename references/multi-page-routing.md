@@ -37,6 +37,29 @@ route discovery 阶段不任意点击普通按钮，不提交表单，也不执�
 
 本地临时服务器 URL 只用于提取；生成代码和验收记录应优先使用 `route`、`localPath` 和 screen ID。
 
+## 重复画板与同页状态
+
+高保真 HTML 经常把同一个页面的多个状态并排展示，例如：首页初始态、点击更多后的菜单态、弹出 sheet 后的状态、列表 Cell 左滑后的操作态。它们不是多个业务页面，必须在生成 Controller/Screen 前完成归并。
+
+发现器按以下优先级判断：
+
+1. `data-ios-state-owner` 明确指定所属 screen 时，以显式契约为准。
+2. 比较页面骨架保留率、结构 token、多重文本重合、新增节点比例、绝对定位覆盖面积及 menu/sheet/swipe 等语义提示。
+3. 只有基础页面骨架高比例保留、增量区域有限且状态证据成立时，才推断为同页状态。
+4. 多个 owner 得分接近时输出警告；不得用文件顺序或标题相似度静默决定。
+
+归并后的画板使用 `kind=visual-state-representation`、`includeInNativeConversion=false`，并记录：
+
+- `nativeOwnerScreenId`：唯一原生页面所有者。
+- `stateRepresentation.kind`：`presentation` 或 `local-effect`。
+- `presentationStyle`：menu、sheet、popover、alert、overlay。
+- `localEffect`：swipe-actions、revealed-content 或其他局部状态。
+- `representationScreenId` 与 `sourceSelector`：用于状态内容提取和视觉基线。
+
+带 `targetStateId` 的入口边进入 interaction graph。菜单、sheet、popover、alert 映射为原生 presentation；Cell 左滑优先映射到 SwiftUI swipe actions 或 UIKit contextual actions；局部展开、选择和内容切换映射为页面内状态。不得为这些状态额外生成 ViewController，也不得把整个状态画板作为新页面 push。
+
+自动推断只负责消除明显重复。以下情况不得合并：业务标题相似但信息架构不同、列表与详情共享大量样式、相同壳层下主内容已替换、无法确认 owner 的独立画板。此时保留为独立 screen 或要求显式契约。
+
 ## 原生映射
 
 为每个 screen 独立提取 render tree 和 UI IR，并保持 route graph screen ID 一致。然后按工程已有架构映射：
