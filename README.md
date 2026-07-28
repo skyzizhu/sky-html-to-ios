@@ -12,6 +12,7 @@ Convert runnable, high-fidelity mobile HTML prototypes into compilable, maintain
 - [Design Goals](#design-goals)
 - [Inputs and Outputs](#inputs-and-outputs)
 - [Core Capabilities](#core-capabilities)
+- [Six-Layer Native Architecture](#six-layer-native-architecture)
 - [Supported Views and Controls](#supported-views-and-controls)
 - [Navigation and Presentation](#navigation-and-presentation)
 - [Layout and Device Adaptation](#layout-and-device-adaptation)
@@ -139,6 +140,19 @@ The intermediate representation stores:
 - asset references and SDK availability.
 
 UI IR must pass `validate_ui_ir.py` before generation. Unresolved critical interactions block production generation.
+
+## Six-Layer Native Architecture
+
+Code generation does not translate the DOM directly into a flat view tree. `native-architecture-plan-1.1` makes six decisions in order:
+
+1. **Application Container**: existing Router/Coordinator, `NavigationStack`, `UINavigationController`, `TabView`, or `UITabBarController`.
+2. **Screen Container**: SwiftUI `View`, `UIViewController`, or a justified custom/child controller.
+3. **Screen Regions**: system/custom top bar, content, bottom bar, floating region, overlay, and presentation ownership.
+4. **Content Container**: static View/Stack, `ScrollView`/`UIScrollView`, `List`/`UITableView`, lazy Grid/`UICollectionView`, or compositional collection layout.
+5. **Reusable Section and Item**: sections, headers, footers, item templates, Cell strategy, order, and scroll-axis ownership.
+6. **Leaf Component**: the final `UIView`, `UIImageView`, `UILabel`, `UIButton`, input, status control, Shape, Layer, or project component with mapping evidence.
+
+Small fixed groups remain static layouts. Long homogeneous rows use Table/Lazy containers; grids, carousels, data tables, and heterogeneous sections use Collection layouts. A Table or Collection owns its scroll axis and is not wrapped in another same-axis root scroll view.
 
 ## Supported Views and Controls
 
@@ -526,7 +540,7 @@ High-risk inputs include runtime-generated DOM, closed Shadow DOM, cross-origin 
 The first usable release has passed:
 
 - real SwiftUI and UIKit builds;
-- 82 automated tests in the current release audit;
+- 85 automated tests in the current development audit;
 - UI IR, decision, naming, generator, route, and interaction tests;
 - visual-difference and geometry tests;
 - real Simulator responsive matrices;

@@ -73,6 +73,8 @@
 
 UIKit 实现优先考虑 diffable data source、cell/supplementary registration 和 compositional layout，但必须沿用项目已有数据源方式；不要为了使用新 API 重写现有模块。
 
+生成前先读取 `six-layer-native-architecture.md`。Table/Collection 是内容层滚动所有者，页面根不得再套同轴 `UIScrollView`。每个 Section、Cell template 和叶子 View/Control 必须在架构计划中可追溯到来源节点。
+
 ## Bars、菜单与系统反馈
 
 | 语义 | SwiftUI | UIKit |

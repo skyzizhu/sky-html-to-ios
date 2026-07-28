@@ -88,6 +88,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
         expect_success: bool = True,
         ui_stack: str = "swiftui",
         naming_plan: Path | None = None,
+        architecture_plan: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         command = ["python3", str(SCRIPT)]
         for path in paths:
@@ -95,12 +96,68 @@ class GenerateIOSFromIRTests(unittest.TestCase):
         command.extend(["--out-dir", str(out_dir), "--ui-stack", ui_stack])
         if naming_plan:
             command.extend(["--naming-plan", str(naming_plan)])
+        if architecture_plan:
+            command.extend(["--architecture-plan", str(architecture_plan)])
         if out_dir.parts[-2:] != ("Generated", "HTMLToIOS"):
             command.append("--allow-nonstandard-output")
         result = subprocess.run(command, text=True, capture_output=True, check=False)
         if expect_success and result.returncode != 0:
             self.fail(result.stderr or result.stdout)
         return result
+
+    def test_six_layer_architecture_drives_native_container_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            ir_path = root / "home.json"
+            payload = ir("home")
+            root_node = payload["screens"][0]["nodes"][0]
+            list_node = node("home.list", root_node["id"], "list")
+            payload["screens"][0]["nodes"].append(list_node)
+            for index in range(6):
+                payload["screens"][0]["nodes"].append(
+                    node(f"home.row.{index}", list_node["id"], "list-item", f"Row {index}")
+                )
+            ir_path.write_text(json.dumps(payload), encoding="utf-8")
+            architecture = {
+                "schemaVersion": "native-architecture-plan-1.1",
+                "invariants": {
+                    "safeAreaNeverSubtractedFromWidthOrHeight": True,
+                    "sixLayerArchitectureComplete": True,
+                },
+                "screens": [{
+                    "screenId": "home",
+                    "safeArea": {"owner": "system", "subtractFromContainerDimensions": False},
+                    "scroll": {"contentInsetAdjustment": "automatic", "subtractSafeAreaFromFrame": False},
+                    "layers": {
+                        "applicationContainer": {"kind": "navigation"},
+                        "screenContainer": {"kind": "screen"},
+                        "screenRegions": {},
+                        "contentContainer": {
+                            "nodeId": "home.list", "kind": "table-view", "scrollAxis": "vertical",
+                            "usesCellReuse": True,
+                            "nodeStrategies": [{"nodeId": "home.list", "kind": "table-view"}],
+                        },
+                        "reusableContent": {"sections": [], "usesReuse": True},
+                        "leafComponents": [],
+                    },
+                }],
+            }
+            architecture_path = root / "architecture.json"
+            architecture_path.write_text(json.dumps(architecture), encoding="utf-8")
+            out = root / "Generated" / "HTMLToIOS"
+            self.run_generator(
+                [ir_path], out, ui_stack="uikit", architecture_plan=architecture_path,
+            )
+            generated = json.loads((out / PAYLOAD).read_text(encoding="utf-8"))["screens"][0]
+            generated_list = generated["root"]["children"][0]
+            self.assertEqual(generated["contentContainer"]["kind"], "table-view")
+            self.assertEqual(generated_list["nativeContainerKind"], "table-view")
+            runtime = (out / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn("HTMLToIOSGeneratedTableView", runtime)
+            self.assertIn("HTMLToIOSGeneratedCompositionalCollectionView", runtime)
+            self.assertIn("UICollectionViewCompositionalLayout", runtime)
+            self.assertIn('spec.nativeContainerKind == "table-view"', runtime)
+            self.assertIn("let usesOuterScroll = screen.contentContainer.kind == \"scroll-view\"", runtime)
 
     def test_generated_swiftui_and_uikit_sources_typecheck_when_xcode_is_available(self) -> None:
         if shutil.which("xcrun") is None:

@@ -12,6 +12,7 @@
 - [核心目标](#核心目标)
 - [支持的输入与输出](#支持的输入与输出)
 - [主要能力](#主要能力)
+- [六层原生架构](#六层原生架构)
 - [控件与视图支持](#控件与视图支持)
 - [导航、弹层与页面容器](#导航弹层与页面容器)
 - [布局与 UI 适配](#布局与-ui-适配)
@@ -148,6 +149,19 @@ UI IR 保存：
 - SDK availability 和降级信息。
 
 生成代码前必须通过 `validate_ui_ir.py`。存在未解决的关键交互时，正式生成会停止。
+
+## 六层原生架构
+
+代码生成不会把 DOM 直接翻译成扁平 View 树。`native-architecture-plan-1.1` 按顺序完成六层决策：
+
+1. **Application Container**：现有 Router/Coordinator、`NavigationStack`、`UINavigationController`、`TabView` 或 `UITabBarController`。
+2. **Screen Container**：SwiftUI `View`、`UIViewController`，或具备生命周期证据的自定义/Child Controller。
+3. **Screen Regions**：系统/自定义顶部栏、内容区、底部栏、浮动区、Overlay 和 Presentation 所有权。
+4. **Content Container**：静态 View/Stack、`ScrollView`/`UIScrollView`、`List`/`UITableView`、Lazy Grid/`UICollectionView` 或组合布局。
+5. **Reusable Section and Item**：Section、Header、Footer、Item Template、Cell 策略、顺序和滚动轴所有权。
+6. **Leaf Component**：最终的 `UIView`、`UIImageView`、`UILabel`、`UIButton`、输入控件、状态控件、Shape、Layer 或项目组件，并保留映射证据。
+
+少量固定内容使用静态布局；长单列同构内容使用 Table/Lazy 容器；网格、轮播、数据表和异构 Section 使用 Collection。Table/Collection 自己拥有滚动轴，不再套同轴页面根 ScrollView。
 
 ## 控件与视图支持
 
@@ -808,7 +822,7 @@ Skill 可以处理普通 HTML，但结构和语义越清楚，自动还原越稳
 
 - SwiftUI 真实工程构建；
 - UIKit 真实工程构建；
-- 当前发布审计通过 82 项自动化测试；
+- 当前开发版审计通过 85 项自动化测试；
 - UI IR、工程决策、命名和生成器测试；
 - 多页面和交互状态测试；
 - 视觉差异和节点几何测试；

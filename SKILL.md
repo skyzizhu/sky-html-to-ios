@@ -235,7 +235,7 @@ python3 "$SKILL_ROOT/scripts/build_ui_ir.py" render-tree.json \
 
 ### 6. 规划原生结构
 
-读取 `references/common-mapping-rules.md`、`references/control-mapping-matrix.md`、`references/native-component-catalog.md`、`references/interaction-rules.md`、`references/navigation-presentation-containment.md`、`references/page-regions-and-system-chrome.md`、`references/custom-component-fallback.md`、`references/motion-and-effects.md`、`references/edge-case-policy.md`、`references/multi-page-routing.md`、`references/project-component-discovery.md`、`references/text-calibration.md`、`references/form-and-dynamic-data.md` 和 `references/responsive-auto-layout.md`，再按技术栈读取：
+读取 `references/six-layer-native-architecture.md`、`references/common-mapping-rules.md`、`references/control-mapping-matrix.md`、`references/native-component-catalog.md`、`references/interaction-rules.md`、`references/navigation-presentation-containment.md`、`references/page-regions-and-system-chrome.md`、`references/custom-component-fallback.md`、`references/motion-and-effects.md`、`references/edge-case-policy.md`、`references/multi-page-routing.md`、`references/project-component-discovery.md`、`references/text-calibration.md`、`references/form-and-dynamic-data.md` 和 `references/responsive-auto-layout.md`，再按技术栈读取：
 
 - SwiftUI：`references/swiftui-rules.md`
 - UIKit：`references/uikit-rules.md`
@@ -250,7 +250,7 @@ python3 "$SKILL_ROOT/scripts/build_ui_ir.py" render-tree.json \
 - 不可直接映射的 CSS → CALayer、Core Graphics 或局部 UIKit fallback
 - 系统无对应控件 → 项目组件、组合 View、自定义 UIControl/View 或在确有生命周期需要时自定义 ViewController
 
-总控必须运行 `scripts/build_native_architecture_plan.py` 生成 `native-architecture-plan.json`。它将 controller/container 所有权、导航栈、导航栏绘制、滚动行为、presentation 和 Safe Area 分开建模。系统导航栈与顶部栏是否使用系统样式是两个独立决策；滚动页面的容器宽高始终等于父容器 bounds，禁止用 `width/height - safeAreaInsets` 计算 frame。
+总控必须运行 `scripts/build_native_architecture_plan.py` 生成 `native-architecture-plan.json`。计划必须完整包含 Application Container、Screen Container、Screen Regions、Content Container、Reusable Section/Item 和 Leaf Component 六层。它将 controller/container 所有权、导航栈、导航栏绘制、滚动行为、Table/Collection/Scroll/静态容器选择、Cell 复用、叶子 View/Control、presentation 和 Safe Area 分开建模。系统导航栈与顶部栏是否使用系统样式是两个独立决策；滚动页面的容器宽高始终等于父容器 bounds，禁止用 `width/height - safeAreaInsets` 计算 frame。
 
 控件映射必须先判断语义，再选择原生控件，最后还原外观。不要仅按 HTML tag 映射，也不要为了视觉方便把 Button、输入框和选择控件退化成无语义的普通 View。
 

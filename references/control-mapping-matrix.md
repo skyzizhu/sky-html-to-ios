@@ -122,6 +122,8 @@
 | CSS Grid 卡片 | `grid` | LazyVGrid | UICollectionView | 保留列宽、gap 和自适应规则 |
 | 分组列表 | `sectioned-list` | Section + List/LazyVStack | table/collection sections | 保留 header、footer、sticky 语义 |
 
+容器选择必须写入 `native-architecture-plan-1.1` 的 `layers.contentContainer.nodeStrategies`。默认启发式为：少量固定内容使用静态布局；五个以上同构行、明确分组列表或动态重复模板使用 Table/Lazy 容器；Grid 至少四项或存在重复模板时使用 Collection；横向轮播和多列数据表使用 Collection；多个独立布局 Section 使用 compositional collection。项目已有容器规范优先于这些默认阈值。
+
 ## 7. 导航、弹层与反馈
 
 | HTML / 行为 | semanticType | SwiftUI | UIKit |

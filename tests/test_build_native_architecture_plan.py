@@ -37,6 +37,96 @@ def make_ir(screen_id: str = "home") -> dict:
 
 
 class BuildNativeArchitecturePlanTests(unittest.TestCase):
+    def test_multiple_top_level_collections_use_compositional_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = make_ir("dashboard")
+            screen = payload["screens"][0]
+            root_id = screen["rootNodeId"]
+            screen["nodes"][0]["semanticType"] = "container"
+            screen["nodes"][0]["layout"] = {"scrollAxis": "none"}
+            for section_index in range(2):
+                section_id = f"dashboard.section.{section_index}"
+                screen["nodes"].append({
+                    "id": section_id, "parentId": root_id, "semanticType": "grid",
+                    "layout": {"scrollAxis": "none"},
+                })
+                for item_index in range(4):
+                    screen["nodes"].append({
+                        "id": f"{section_id}.item.{item_index}",
+                        "parentId": section_id,
+                        "semanticType": "container",
+                    })
+            ir_path = root / "ui-ir.json"
+            output = root / "plan.json"
+            ir_path.write_text(json.dumps(payload), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), "--ir", str(ir_path), "--out", str(output), "--ui-stack", "uikit",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            content = json.loads(output.read_text(encoding="utf-8"))["screens"][0]["layers"]["contentContainer"]
+            self.assertEqual(content["kind"], "compositional-collection")
+            root_strategy = next(item for item in content["nodeStrategies"] if item["nodeId"] == root_id)
+            self.assertEqual(root_strategy["kind"], "compositional-collection")
+
+    def test_six_layers_classify_reusable_content_and_leaf_components(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = make_ir()
+            screen = payload["screens"][0]
+            root_id = screen["rootNodeId"]
+            screen["nodes"][0]["semanticType"] = "container"
+            screen["nodes"][0]["layout"] = {"scrollAxis": "none"}
+            list_id = "home.results"
+            screen["nodes"].append({
+                "id": list_id, "parentId": root_id, "semanticType": "list",
+                "layout": {"scrollAxis": "vertical"},
+                "nativeMapping": {"confidence": 0.96, "styleStrategy": "custom-native-view", "rationale": ["html-tag:ul"]},
+            })
+            for index in range(6):
+                item_id = f"home.result.{index}"
+                screen["nodes"].extend([
+                    {
+                        "id": item_id, "parentId": list_id, "semanticType": "list-item",
+                        "nativeMapping": {"confidence": 0.94, "styleStrategy": "custom-native-view", "rationale": ["html-tag:li"]},
+                    },
+                    {
+                        "id": f"{item_id}.image", "parentId": item_id, "semanticType": "image",
+                        "nativeMapping": {"confidence": 0.99, "styleStrategy": "project-component", "rationale": ["html-tag:img"]},
+                    },
+                    {
+                        "id": f"{item_id}.title", "parentId": item_id, "semanticType": "text",
+                        "nativeMapping": {"confidence": 0.99, "styleStrategy": "native-default", "rationale": ["html-tag:span"]},
+                    },
+                ])
+            ir_path = root / "ui-ir.json"
+            output = root / "plan.json"
+            ir_path.write_text(json.dumps(payload), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), "--ir", str(ir_path), "--out", str(output), "--ui-stack", "uikit",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            plan = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(plan["schemaVersion"], "native-architecture-plan-1.1")
+            self.assertTrue(plan["invariants"]["sixLayerArchitectureComplete"])
+            layers = plan["screens"][0]["layers"]
+            self.assertEqual(
+                set(layers),
+                {
+                    "applicationContainer", "screenContainer", "screenRegions",
+                    "contentContainer", "reusableContent", "leafComponents",
+                },
+            )
+            strategy = next(
+                item for item in layers["contentContainer"]["nodeStrategies"]
+                if item["nodeId"] == list_id
+            )
+            self.assertEqual(strategy["kind"], "table-view")
+            self.assertTrue(strategy["usesReuse"])
+            leaves = {item["nodeId"]: item for item in layers["leafComponents"]}
+            self.assertEqual(leaves["home.result.0.image"]["uiKitType"], "UIImageView")
+            self.assertEqual(leaves["home.result.0.title"]["uiKitType"], "UILabel")
+
     def test_scroll_frame_never_subtracts_safe_area(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.29.0"
+GENERATOR_VERSION = "1.30.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -97,8 +97,9 @@ def load_architecture_plan(path: Path | None) -> dict[str, dict[str, Any]]:
     if path is None:
         return {}
     data = json.loads(path.read_text(encoding="utf-8"))
-    if data.get("schemaVersion") != "native-architecture-plan-1.0":
-        raise ValueError(f"{path}: expected native-architecture-plan-1.0")
+    schema_version = data.get("schemaVersion")
+    if schema_version not in {"native-architecture-plan-1.0", "native-architecture-plan-1.1"}:
+        raise ValueError(f"{path}: expected native-architecture-plan-1.0 or native-architecture-plan-1.1")
     if not (data.get("invariants") or {}).get("safeAreaNeverSubtractedFromWidthOrHeight"):
         raise ValueError(f"{path}: Safe Area dimension invariant is missing")
     screens = data.get("screens") or []
@@ -112,6 +113,15 @@ def load_architecture_plan(path: Path | None) -> dict[str, dict[str, Any]]:
             raise ValueError(f"{path}: {screen_id} attempts to subtract Safe Area from container dimensions")
         if scroll.get("subtractSafeAreaFromFrame") is not False:
             raise ValueError(f"{path}: {screen_id} attempts to subtract Safe Area from a scroll frame")
+        if schema_version == "native-architecture-plan-1.1":
+            layers = screen.get("layers") or {}
+            required = {
+                "applicationContainer", "screenContainer", "screenRegions",
+                "contentContainer", "reusableContent", "leafComponents",
+            }
+            missing = sorted(required - set(layers))
+            if missing:
+                raise ValueError(f"{path}: {screen_id} is missing architecture layers: {', '.join(missing)}")
     return result
 
 
@@ -533,6 +543,7 @@ class ScreenBuildContext:
     motions: dict[str, list[dict[str, Any]]]
     detached_root_ids: set[str]
     bottom_bar_placement: str
+    native_container_kinds: dict[str, str]
 
 
 def rich_text_runs(
@@ -1419,6 +1430,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     payload = {
         "id": node_id,
         "semantic": semantic,
+        "nativeContainerKind": context.native_container_kinds.get(node_id),
         "text": text,
         "placeholder": placeholder,
         "textBehavior": text_behavior,
@@ -1545,6 +1557,15 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
 def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None) -> dict[str, Any]:
     screen = ir["screens"][0]
     screen_id = str(screen.get("id") or "screen")
+    architecture = architecture or {}
+    layers = architecture.get("layers") if isinstance(architecture.get("layers"), dict) else {}
+    content_container = layers.get("contentContainer") if isinstance(layers.get("contentContainer"), dict) else {}
+    node_strategies = content_container.get("nodeStrategies") if isinstance(content_container.get("nodeStrategies"), list) else []
+    native_container_kinds = {
+        str(item.get("nodeId") or ""): str(item.get("kind") or "")
+        for item in node_strategies
+        if isinstance(item, dict) and item.get("nodeId") and item.get("kind")
+    }
     nodes_list = screen.get("nodes") or []
     nodes = {str(node["id"]): node for node in nodes_list}
     children: dict[str | None, list[str]] = {}
@@ -1893,6 +1914,7 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
         },
         detached_root_ids=detached_root_ids,
         bottom_bar_placement=bottom_bar_placement,
+        native_container_kinds=native_container_kinds,
     )
     root = node_payload(context, root_id) or {
         "id": root_id,
@@ -1974,7 +1996,6 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
                 })
                 break
 
-    architecture = architecture or {}
     safe_area = architecture.get("safeArea") if isinstance(architecture.get("safeArea"), dict) else {}
     scroll_plan = architecture.get("scroll") if isinstance(architecture.get("scroll"), dict) else {}
     safe_area_payload = {
@@ -1992,6 +2013,12 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
         "showsNavigationBar": navigation_style == "native",
         "sourceStatusBarHeight": visible_source_status_bar_height if aligns_to_source_status_bar else None,
         "safeArea": safe_area_payload,
+        "contentContainer": {
+            "nodeId": str(content_container.get("nodeId") or root_id),
+            "kind": str(content_container.get("kind") or "scroll-view"),
+            "scrollAxis": str(content_container.get("scrollAxis") or "vertical"),
+            "usesCellReuse": bool(content_container.get("usesCellReuse")),
+        },
         "navigation": navigation,
         "tabContainer": tab_container,
         "root": root,
@@ -2033,6 +2060,7 @@ struct HTMLToIOSScreenSpec: Codable, Identifiable {{
     let showsNavigationBar: Bool
     let sourceStatusBarHeight: Double?
     let safeArea: HTMLToIOSSafeAreaSpec
+    let contentContainer: HTMLToIOSContentContainerSpec
     let navigation: HTMLToIOSNavigationSpec
     let root: HTMLToIOSNodeSpec
     let topBar: HTMLToIOSNodeSpec?
@@ -2040,6 +2068,13 @@ struct HTMLToIOSScreenSpec: Codable, Identifiable {{
     let bottomBarPlacement: String
     let presentations: [HTMLToIOSPresentationSpec]
     let automaticActions: [HTMLToIOSActionSpec]
+}}
+
+struct HTMLToIOSContentContainerSpec: Codable {{
+    let nodeId: String
+    let kind: String
+    let scrollAxis: String
+    let usesCellReuse: Bool
 }}
 
 struct HTMLToIOSSafeAreaSpec: Codable {{
@@ -2169,6 +2204,7 @@ struct HTMLToIOSDynamicContentItemSpec: Codable, Identifiable {{
 struct HTMLToIOSNodeSpec: Codable, Identifiable {{
     let id: String
     let semantic: String
+    let nativeContainerKind: String?
     let text: String
     let placeholder: String
     let textBehavior: HTMLToIOSTextBehaviorSpec?
@@ -3663,7 +3699,27 @@ struct HTMLToIOSNativeNodeView: View {
     }
 
     @ViewBuilder private var childContent: some View {
-        if spec.axis == "horizontal" {
+        if spec.nativeContainerKind == "compositional-collection" {
+            LazyVStack(alignment: horizontalAlignment, spacing: contentSpacing) {
+                dynamicOrDistributedContent
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        } else if spec.nativeContainerKind == "table-view" {
+            LazyVStack(alignment: horizontalAlignment, spacing: contentSpacing) {
+                dynamicOrDistributedContent
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        } else if spec.nativeContainerKind == "collection-view", effectiveScrollAxis == "horizontal" {
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: verticalAlignment, spacing: contentSpacing) {
+                    dynamicOrOrderedContent
+                }
+            }
+        } else if spec.nativeContainerKind == "collection-view" {
+            LazyVGrid(columns: gridColumns, spacing: spec.style.spacing ?? 0) {
+                dynamicOrOrderedContent
+            }
+        } else if spec.axis == "horizontal" {
             HStack(alignment: verticalAlignment, spacing: contentSpacing) { dynamicOrDistributedContent }
                 .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: horizontalFrameAlignment)
         } else if spec.axis == "grid" {
@@ -3844,22 +3900,32 @@ struct HTMLToIOSGeneratedScrollContent: View {
     @ObservedObject var store: HTMLToIOSGeneratedStore
     let screen: HTMLToIOSScreenSpec
 
-    var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.vertical) {
-                HTMLToIOSNativeNodeView(store: store, spec: scrollRoot)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .id(screen.root.id)
-            }
-            .clipped()
-            .accessibilityIdentifier(screen.root.id)
-            .background {
-                Color(htmlToIOS: screen.root.style.background)
-                    .ignoresSafeArea()
-            }
-            .onChange(of: store.tabScrollToTopNonce) { _ in
-                guard store.selectedTab == store.tabScrollToTopID else { return }
-                withAnimation { proxy.scrollTo(screen.root.id, anchor: .top) }
+    @ViewBuilder var body: some View {
+        if ["static-view", "static-grid", "static-list"].contains(screen.contentContainer.kind) {
+            HTMLToIOSNativeNodeView(store: store, spec: screen.root)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .accessibilityIdentifier(screen.root.id)
+                .background {
+                    Color(htmlToIOS: screen.root.style.background)
+                        .ignoresSafeArea()
+                }
+        } else {
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    HTMLToIOSNativeNodeView(store: store, spec: scrollRoot)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .id(screen.root.id)
+                }
+                .clipped()
+                .accessibilityIdentifier(screen.root.id)
+                .background {
+                    Color(htmlToIOS: screen.root.style.background)
+                        .ignoresSafeArea()
+                }
+                .onChange(of: store.tabScrollToTopNonce) { _ in
+                    guard store.selectedTab == store.tabScrollToTopID else { return }
+                    withAnimation { proxy.scrollTo(screen.root.id, anchor: .top) }
+                }
             }
         }
     }
@@ -4323,6 +4389,163 @@ final class HTMLToIOSStatefulControl: UIControl {
     }
 }
 
+private final class HTMLToIOSGeneratedTableCell: UITableViewCell {
+    static let reuseIdentifier = "HTMLToIOSGeneratedTableCell"
+
+    func install(_ generatedView: UIView) {
+        contentView.subviews.forEach { $0.removeFromSuperview() }
+        generatedView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(generatedView)
+        NSLayoutConstraint.activate([
+            generatedView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            generatedView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            generatedView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            generatedView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+        ])
+    }
+}
+
+private final class HTMLToIOSGeneratedTableView: UITableView, UITableViewDataSource {
+    private let itemSpecs: [HTMLToIOSNodeSpec]
+    private let render: (HTMLToIOSNodeSpec) -> UIView
+
+    init(itemSpecs: [HTMLToIOSNodeSpec], render: @escaping (HTMLToIOSNodeSpec) -> UIView) {
+        self.itemSpecs = itemSpecs
+        self.render = render
+        super.init(frame: .zero, style: .plain)
+        dataSource = self
+        separatorStyle = .none
+        rowHeight = UITableView.automaticDimension
+        estimatedRowHeight = 72
+        backgroundColor = .clear
+        register(HTMLToIOSGeneratedTableCell.self, forCellReuseIdentifier: HTMLToIOSGeneratedTableCell.reuseIdentifier)
+    }
+
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { itemSpecs.count }
+
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(
+            withIdentifier: HTMLToIOSGeneratedTableCell.reuseIdentifier,
+            for: indexPath
+        ) as! HTMLToIOSGeneratedTableCell
+        cell.selectionStyle = .none
+        cell.backgroundColor = .clear
+        cell.install(render(itemSpecs[indexPath.row]))
+        return cell
+    }
+}
+
+private final class HTMLToIOSGeneratedCollectionCell: UICollectionViewCell {
+    static let reuseIdentifier = "HTMLToIOSGeneratedCollectionCell"
+
+    func install(_ generatedView: UIView) {
+        contentView.subviews.forEach { $0.removeFromSuperview() }
+        generatedView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(generatedView)
+        NSLayoutConstraint.activate([
+            generatedView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            generatedView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            generatedView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            generatedView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+        ])
+    }
+}
+
+private final class HTMLToIOSGeneratedCollectionView: UICollectionView, UICollectionViewDataSource {
+    private let itemSpecs: [HTMLToIOSNodeSpec]
+    private let render: (HTMLToIOSNodeSpec) -> UIView
+
+    init(spec: HTMLToIOSNodeSpec, render: @escaping (HTMLToIOSNodeSpec) -> UIView) {
+        self.itemSpecs = spec.children
+        self.render = render
+        let layout = UICollectionViewFlowLayout()
+        layout.scrollDirection = (spec.style.scrollAxis == "horizontal" || spec.semantic == "carousel") ? .horizontal : .vertical
+        layout.minimumLineSpacing = spec.style.spacing ?? 0
+        layout.minimumInteritemSpacing = spec.style.spacing ?? 0
+        layout.estimatedItemSize = UICollectionViewFlowLayout.automaticSize
+        super.init(frame: .zero, collectionViewLayout: layout)
+        dataSource = self
+        backgroundColor = .clear
+        showsHorizontalScrollIndicator = layout.scrollDirection == .horizontal
+        showsVerticalScrollIndicator = layout.scrollDirection == .vertical
+        register(HTMLToIOSGeneratedCollectionCell.self, forCellWithReuseIdentifier: HTMLToIOSGeneratedCollectionCell.reuseIdentifier)
+    }
+
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int { itemSpecs.count }
+
+    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        let cell = collectionView.dequeueReusableCell(
+            withReuseIdentifier: HTMLToIOSGeneratedCollectionCell.reuseIdentifier,
+            for: indexPath
+        ) as! HTMLToIOSGeneratedCollectionCell
+        cell.install(render(itemSpecs[indexPath.item]))
+        return cell
+    }
+}
+
+private final class HTMLToIOSGeneratedCompositionalCollectionView: UICollectionView, UICollectionViewDataSource {
+    private let sectionSpecs: [HTMLToIOSNodeSpec]
+    private let render: (HTMLToIOSNodeSpec) -> UIView
+
+    init(spec: HTMLToIOSNodeSpec, render: @escaping (HTMLToIOSNodeSpec) -> UIView) {
+        self.sectionSpecs = spec.children
+        self.render = render
+        let sections = spec.children
+        let layout = UICollectionViewCompositionalLayout { sectionIndex, _ in
+            guard sections.indices.contains(sectionIndex) else { return nil }
+            let sectionSpec = sections[sectionIndex]
+            let horizontal = sectionSpec.semantic == "carousel" || sectionSpec.style.scrollAxis == "horizontal"
+            let columns = horizontal ? 1 : max(sectionSpec.style.gridColumnCount ?? 1, 1)
+            let estimatedWidth = CGFloat(max(sectionSpec.style.preferredWidth ?? 160, 44))
+            let estimatedHeight = CGFloat(max(sectionSpec.style.preferredHeight ?? 72, 44))
+            let spacing = CGFloat(sectionSpec.style.spacing ?? 0)
+            let itemWidth: NSCollectionLayoutDimension = horizontal
+                ? .estimated(estimatedWidth)
+                : .fractionalWidth(1.0 / CGFloat(columns))
+            let itemSize = NSCollectionLayoutSize(
+                widthDimension: itemWidth,
+                heightDimension: .estimated(estimatedHeight)
+            )
+            let item = NSCollectionLayoutItem(layoutSize: itemSize)
+            let groupSize = NSCollectionLayoutSize(
+                widthDimension: horizontal ? .estimated(estimatedWidth) : .fractionalWidth(1),
+                heightDimension: .estimated(estimatedHeight)
+            )
+            let group = NSCollectionLayoutGroup.horizontal(layoutSize: groupSize, subitems: [item])
+            group.interItemSpacing = .fixed(spacing)
+            let section = NSCollectionLayoutSection(group: group)
+            section.interGroupSpacing = spacing
+            if horizontal { section.orthogonalScrollingBehavior = .continuous }
+            return section
+        }
+        super.init(frame: .zero, collectionViewLayout: layout)
+        dataSource = self
+        backgroundColor = .clear
+        register(HTMLToIOSGeneratedCollectionCell.self, forCellWithReuseIdentifier: HTMLToIOSGeneratedCollectionCell.reuseIdentifier)
+    }
+
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+    func numberOfSections(in collectionView: UICollectionView) -> Int { sectionSpecs.count }
+
+    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        guard sectionSpecs.indices.contains(section) else { return 0 }
+        return max(sectionSpecs[section].children.count, 1)
+    }
+
+    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        let cell = collectionView.dequeueReusableCell(
+            withReuseIdentifier: HTMLToIOSGeneratedCollectionCell.reuseIdentifier,
+            for: indexPath
+        ) as! HTMLToIOSGeneratedCollectionCell
+        let section = sectionSpecs[indexPath.section]
+        let item = section.children.indices.contains(indexPath.item) ? section.children[indexPath.item] : section
+        cell.install(render(item))
+        return cell
+    }
+}
+
 final class HTMLToIOSNodeRenderer {
     typealias ActionHandler = (HTMLToIOSActionSpec?) -> Void
     private let actionHandler: ActionHandler
@@ -4336,7 +4559,13 @@ final class HTMLToIOSNodeRenderer {
     func makeView(_ spec: HTMLToIOSNodeSpec) -> UIView {
         let view: UIView
         let effectiveScrollAxis = state.scrollAxisOverrides[spec.id] ?? spec.style.scrollAxis ?? "none"
-        if effectiveScrollAxis != "none" && spec.semantic != "carousel" && spec.semantic != "scroll" {
+        if spec.nativeContainerKind == "compositional-collection" {
+            view = HTMLToIOSGeneratedCompositionalCollectionView(spec: spec, render: makeView)
+        } else if spec.nativeContainerKind == "table-view" {
+            view = HTMLToIOSGeneratedTableView(itemSpecs: spec.children, render: makeView)
+        } else if spec.nativeContainerKind == "collection-view" {
+            view = HTMLToIOSGeneratedCollectionView(spec: spec, render: makeView)
+        } else if effectiveScrollAxis != "none" && spec.semantic != "carousel" && spec.semantic != "scroll" {
             view = makeScrollContainer(spec)
         } else {
           switch spec.semantic {
@@ -5377,23 +5606,38 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
         generatedScrollView = nil; generatedTopBar = nil; generatedBottomBar = nil
         view.subviews.forEach { $0.removeFromSuperview() }
         let renderer = HTMLToIOSNodeRenderer(state: generatedState, actionHandler: { [weak self] action in self?.perform(action) })
-        let scroll = UIScrollView(); let content = wrapGeneratedContent(renderer.makeView(screen.root))
-        scroll.isDirectionalLockEnabled = true
-        scroll.alwaysBounceHorizontal = false
-        scroll.showsHorizontalScrollIndicator = false
-        scroll.backgroundColor = view.backgroundColor
-        scroll.contentInsetAdjustmentBehavior = screen.safeArea.contentInsetAdjustment == "never" ? .never : .automatic
-        scroll.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(scroll); scroll.addSubview(content)
-        generatedScrollView = scroll
-        var constraints = [
-            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: view.topAnchor), scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            content.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
-            content.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
-            content.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
-            content.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor)
-        ]
+        let content = wrapGeneratedContent(renderer.makeView(screen.root))
+        let usesOuterScroll = screen.contentContainer.kind == "scroll-view"
+        var constraints: [NSLayoutConstraint] = []
+        if !usesOuterScroll {
+            view.addSubview(content)
+            constraints.append(contentsOf: [
+                content.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                content.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                content.topAnchor.constraint(equalTo: view.topAnchor),
+                content.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            ])
+        } else {
+            let scroll = UIScrollView()
+            scroll.isDirectionalLockEnabled = true
+            scroll.alwaysBounceHorizontal = false
+            scroll.showsHorizontalScrollIndicator = false
+            scroll.backgroundColor = view.backgroundColor
+            scroll.contentInsetAdjustmentBehavior = screen.safeArea.contentInsetAdjustment == "never" ? .never : .automatic
+            scroll.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(scroll)
+            scroll.addSubview(content)
+            generatedScrollView = scroll
+            constraints.append(contentsOf: [
+                scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                scroll.topAnchor.constraint(equalTo: view.topAnchor), scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+                content.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+                content.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+                content.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+                content.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+                content.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor)
+            ])
+        }
         if let topBar = screen.topBar {
             let top = renderer.makeView(topBar)
             view.addSubview(top)
@@ -5423,14 +5667,15 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
         }
         NSLayoutConstraint.activate(constraints)
         view.layoutIfNeeded()
-        if let sourceStatusBarHeight = screen.sourceStatusBarHeight, sourceStatusBarHeight > 0 {
+        if let scroll = generatedScrollView,
+           let sourceStatusBarHeight = screen.sourceStatusBarHeight, sourceStatusBarHeight > 0 {
             let topCalibration = CGFloat(sourceStatusBarHeight) - view.safeAreaInsets.top
             scroll.contentInset.top = topCalibration
             scroll.verticalScrollIndicatorInsets.top = max(CGFloat(sourceStatusBarHeight), 0)
         }
-        if let previousOffset {
+        if let scroll = generatedScrollView, let previousOffset {
             scroll.setContentOffset(previousOffset, animated: false)
-        } else {
+        } else if let scroll = generatedScrollView {
             scroll.setContentOffset(
                 CGPoint(x: 0, y: -scroll.adjustedContentInset.top),
                 animated: false
@@ -5695,6 +5940,7 @@ final class HTMLToIOSGeneratedCoordinator: NSObject, UITabBarControllerDelegate 
                     showsNavigationBar: false,
                     sourceStatusBarHeight: nil,
                     safeArea: HTMLToIOSSafeAreaSpec(owner: "system", contentInsetAdjustment: "automatic", containerWidthPolicy: "full-parent-bounds", containerHeightPolicy: "full-parent-bounds", subtractFromContainerDimensions: false),
+                    contentContainer: HTMLToIOSContentContainerSpec(nodeId: presentation.node.id, kind: "static-view", scrollAxis: "none", usesCellReuse: false),
                     navigation: HTMLToIOSNavigationSpec(style: "hidden", title: "", titleMode: "inline", scrollEdgeAppearance: "automatic", backButton: "system", toolbarItems: []),
                     root: presentation.node,
                     topBar: nil,
