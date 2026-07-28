@@ -26,7 +26,10 @@ function overlap(leftValues, rightValues) {
 
 function explicitStateKind(screen) {
   const value = String(screen.iosStateKind || screen.presentationStyle || "").toLowerCase();
-  if (/swipe|reveal|cell-action/.test(value)) return { kind: "local-effect", localEffect: "swipe-actions" };
+  if (/swipe|cell-action/.test(value)) return { kind: "local-effect", localEffect: "swipe-actions" };
+  if (/revealed-content|expand|collapse|accordion/.test(value)) {
+    return { kind: "local-effect", localEffect: "revealed-content" };
+  }
   if (/sheet/.test(value)) return { kind: "presentation", presentationStyle: "sheet" };
   if (/popover/.test(value)) return { kind: "presentation", presentationStyle: "popover" };
   if (/alert|dialog/.test(value)) return { kind: "presentation", presentationStyle: "alert" };

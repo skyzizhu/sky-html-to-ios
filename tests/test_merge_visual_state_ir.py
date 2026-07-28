@@ -138,6 +138,7 @@ class MergeVisualStateIRTests(unittest.TestCase):
             node("changed.title", "changed.root", "heading", 20, 20, 100, 28, "Home"),
         ]
         variant_nodes[1]["style"]["color"] = "rgb(255, 0, 0)"
+        owner["screens"][0]["nodes"][2]["iosHints"] = {"state-removable": "true"}
         delta = MODULE.merge_state(owner, ir("home-changed", variant_nodes), "home.state.1")
         replacement = next(
             item for item in delta["operations"]
@@ -227,7 +228,7 @@ class MergeVisualStateIRTests(unittest.TestCase):
         owner = ir("home", self.base_nodes(), state_kind="local-state")
         owner["interactions"] = [{
             "id": "show-state",
-            "sourceNodeId": "home.row",
+            "sourceNodeId": "home.title",
             "payload": {
                 "transitions": [{
                     "targetStateId": "home.state.1",
@@ -243,6 +244,33 @@ class MergeVisualStateIRTests(unittest.TestCase):
             if item["kind"] == "remove-subtree"
         }
         self.assertNotIn("home.row", removed_ids)
+        self.assertIn("home.row", delta["suppressedRemovalNodeIds"])
+        self.assertTrue(owner["stateDeltaReviews"][0]["requiresHumanReview"])
+
+    def test_swipe_delta_infers_contextual_target_from_geometry(self) -> None:
+        owner = ir("home", self.base_nodes(), state_kind="swipe-actions")
+        owner["interactions"] = [{
+            "id": "reveal",
+            "sourceNodeId": "home.title",
+            "trigger": "swipe",
+            "payload": {
+                "transitions": [{
+                    "targetStateId": "home.state.1",
+                    "action": "reveal-swipe-actions",
+                }],
+            },
+        }]
+        variant_nodes = self.base_nodes() + [
+            node("state.delete", "home.root", "button", 285, 80, 88, 56, "Delete"),
+        ]
+        delta = MODULE.merge_state(owner, ir("home-actions", variant_nodes), "home.state.1")
+        self.assertEqual(delta["nativeStrategy"], "contextual-item-actions")
+        self.assertEqual(delta["contextualTargetNodeId"], "home.row")
+        self.assertGreater(delta["contextualTargetConfidence"], 0.5)
+        self.assertEqual(
+            delta["contextualActionRootNodeIds"],
+            ["state.home.state.1.state.delete"],
+        )
 
 
 if __name__ == "__main__":

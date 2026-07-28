@@ -254,6 +254,72 @@ class VisualValidationTests(unittest.TestCase):
                 "type": "exists", "accessibilityIdentifier": "home.sheet",
             })
 
+    def test_manifest_uses_swipe_for_contextual_state_strategy(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = {
+                "schemaVersion": "1.2",
+                "source": {"entry": str(root / "prototype.html"), "viewport": {"width": 393, "height": 852}},
+                "target": {"viewportPt": {"width": 393, "height": 852}},
+                "screens": [{
+                    "id": "home", "rootNodeId": "home.root", "sourceSelector": "#home",
+                    "systemChrome": {}, "regions": {},
+                    "nodes": [
+                        node("home.root", None, "container", [0, 0, 393, 852]),
+                        node("home.row", "home.root", "list-item", [20, 100, 353, 56], "Document"),
+                        {
+                            **node("state.home.actions.delete", "home.root", "button", [285, 100, 88, 56], "Delete"),
+                            "state": {"initiallyVisible": False},
+                            "iosHints": {"state-owner": "home.actions"},
+                        },
+                    ],
+                }],
+                "states": [{
+                    "id": "home.actions",
+                    "kind": "expansion",
+                    "targetNodeIds": ["home.root"],
+                    "visualRepresentation": {"sourceSelector": "[data-ios-screen='home-actions']"},
+                    "stateDelta": {
+                        "nativeStrategy": "contextual-item-actions",
+                        "contextualTargetNodeId": "home.row",
+                        "contextualActionRootNodeIds": ["state.home.actions.delete"],
+                    },
+                }],
+                "interactions": [{
+                    "id": "reveal-actions",
+                    "sourceNodeId": "home.row",
+                    "target": "home.actions",
+                }],
+                "visualStates": [{
+                    "id": "after-swipe",
+                    "required": True,
+                    "interactionSequence": ["reveal-actions"],
+                }],
+            }
+            source, output = root / "ui-ir.json", root / "visual-manifest.json"
+            source.write_text(json.dumps(payload), encoding="utf-8")
+            subprocess.run(
+                [sys.executable, str(MANIFEST_SCRIPT), str(source), "--out", str(output)],
+                text=True, capture_output=True, check=True,
+            )
+            action = json.loads(output.read_text(encoding="utf-8"))["states"][0]["iosActions"][0]
+            self.assertEqual(action["type"], "swipe-left")
+            self.assertEqual(action["accessibilityIdentifier"], "home.row")
+            self.assertEqual(action["assertion"], {
+                "type": "exists",
+                "accessibilityIdentifier": "home.actions.contextual.1",
+            })
+            state_manifest = json.loads(output.read_text(encoding="utf-8"))["states"][0]
+            self.assertEqual(state_manifest["htmlRootSelector"], "[data-ios-screen='home-actions']")
+            self.assertFalse(any(item.get("interactionId") for item in state_manifest["htmlActions"]))
+            self.assertIn(
+                "state.home.actions.delete",
+                {item["nodeId"] for item in state_manifest["validationRegions"] if item.get("nodeId")},
+            )
+            prepare_source = PREPARE_IOS_TESTS_SCRIPT.read_text(encoding="utf-8")
+            self.assertIn('when "swipe-left", "swipe-right"', prepare_source)
+            self.assertIn("candidate.swipeLeft(velocity: .slow)", prepare_source)
+
     def test_manifest_replays_render_tree_activation_settle_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -425,7 +491,19 @@ class VisualValidationTests(unittest.TestCase):
                     "toleranceProfile": "structure",
                     "rect": [0, 0, 80, 20],
                 }],
-                "states": [{"id": "initial", "required": True}],
+                "states": [{
+                    "id": "initial",
+                    "required": True,
+                    "validationRegions": [{
+                        "id": "node.state-specific",
+                        "nodeId": "state-specific",
+                        "category": "control",
+                        "criticality": "high",
+                        "toleranceProfile": "control",
+                        "rect": [10, 20, 40, 30],
+                    }],
+                    "geometryNodes": [{"nodeId": "state-specific"}],
+                }],
             }
             manifest_path = root / "manifest.json"
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -442,6 +520,13 @@ class VisualValidationTests(unittest.TestCase):
             self.assertLess(bundle["summary"]["fidelityPercent"], 100)
             self.assertFalse(bundle["summary"]["exactFidelityAchieved"])
             self.assertIn("critical-region-mismatch", {item["gate"] for item in bundle["states"][0]["gateFailures"]})
+            state_validation = json.loads(
+                (out_dir / "initial" / "state-validation.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                state_validation["validationRegions"][0]["id"],
+                "node.state-specific",
+            )
 
     def test_review_bundle_applies_manifest_comparison_masks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

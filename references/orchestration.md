@@ -97,6 +97,7 @@ python3 "$SKILL_ROOT/scripts/run_html_to_ios.py" \
 - `responsive-layout.json`
 - `scroll-region-behavior.json`
 - `visual-state-manifest.json`
+- `state-delta-review.json`
 - `visual-states/html/captures.json` 与同名状态截图
 - `visual-states/ios/captures.json` 与同名逻辑尺寸截图
 - `visual-review/review-bundle.json`、逐状态 diff/overlay/comparison/regions
@@ -133,7 +134,7 @@ python3 "$SKILL_ROOT/scripts/run_html_to_ios.py" \
 - `failed`：输入、工具、生成、工程接入或构建失败。
 - `planned`：`--dry-run` 只输出工程决策，不写文件。
 
-`qualityGates` 独立记录 UI IR、文本标定、响应式分析、滚动行为、原生架构计划、HTML 基准、构建、iOS 状态截图和 visual diff。`iosStateCapture` 或 `visualDiff` 不是 `passed` 时，只能声称已完成对应前置阶段，不能声称高保真验收通过。
+`qualityGates` 独立记录 UI IR、状态差分复核、文本标定、响应式分析、滚动行为、原生架构计划、HTML 基准、构建、iOS 状态截图和 visual diff。`stateDeltaReview` 为 `review-required` 时必须先核对归属和差分；`iosStateCapture` 或 `visualDiff` 不是 `passed` 时，只能声称已完成对应前置阶段，不能声称高保真验收通过。
 
 ## 安全约束
 

@@ -124,6 +124,18 @@ process.stdout.write(JSON.stringify(classifier.classifyScreenRepresentations(inp
         self.assertTrue(classified["stateRepresentation"]["explicit"])
         self.assertEqual(classified["stateRepresentation"]["confidence"], 1)
 
+    def test_explicit_revealed_content_is_not_misclassified_as_swipe_actions(self) -> None:
+        owner = screen("home", ["0:main::screen", "1:section::content"], ["home"])
+        variant = screen("home-expanded", ["0:main::screen", "1:section::content", "2:aside::panel"], ["home", "details"])
+        variant.update({
+            "iosStateOwner": "home",
+            "iosStateKind": "revealed-content",
+        })
+        result = self.classify([owner, variant])
+        state = result["screens"][1]["stateRepresentation"]
+        self.assertEqual(state["kind"], "local-effect")
+        self.assertEqual(state["localEffect"], "revealed-content")
+
 
 if __name__ == "__main__":
     unittest.main()

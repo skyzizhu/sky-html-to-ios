@@ -25,8 +25,14 @@ def numeric(value, default: float = 0.0) -> float:
         return default
 
 
-def build_geometry_nodes(screen: dict) -> list[dict]:
+def build_geometry_nodes(screen: dict, active_state: dict | None = None) -> list[dict]:
     nodes = {str(node["id"]): node for node in screen.get("nodes") or []}
+    active_state_id = str((active_state or {}).get("id") or "")
+    removed_node_ids = {
+        str(item.get("targetNodeId"))
+        for item in ((active_state or {}).get("stateDelta") or {}).get("operations") or []
+        if item.get("kind") in {"remove-subtree", "replace-subtree"} and item.get("targetNodeId")
+    }
     child_counts: dict[str, int] = {}
     for node in screen.get("nodes") or []:
         parent_id = str(node.get("parentId") or "")
@@ -36,12 +42,19 @@ def build_geometry_nodes(screen: dict) -> list[dict]:
     def initially_visible(node: dict) -> bool:
         visited: set[str] = set()
         current = node
+        state_owned = False
         while current:
             current_id = str(current.get("id") or "")
             if current_id in visited:
                 return False
             visited.add(current_id)
-            if (current.get("state") or {}).get("initiallyVisible") is False:
+            if current_id in removed_node_ids:
+                return False
+            if active_state_id and str(
+                (current.get("iosHints") or {}).get("state-owner") or ""
+            ) == active_state_id:
+                state_owned = True
+            if (current.get("state") or {}).get("initiallyVisible") is False and not state_owned:
                 return False
             current = nodes.get(str(current.get("parentId") or ""))
         return True
@@ -62,8 +75,19 @@ def build_geometry_nodes(screen: dict) -> list[dict]:
     ]
 
 
-def build_validation_regions(screen: dict, target_viewport: dict, design_scale: float = 1.0) -> list[dict]:
+def build_validation_regions(
+    screen: dict,
+    target_viewport: dict,
+    design_scale: float = 1.0,
+    active_state: dict | None = None,
+) -> list[dict]:
     nodes = {str(node["id"]): node for node in screen.get("nodes") or []}
+    active_state_id = str((active_state or {}).get("id") or "")
+    removed_node_ids = {
+        str(item.get("targetNodeId"))
+        for item in ((active_state or {}).get("stateDelta") or {}).get("operations") or []
+        if item.get("kind") in {"remove-subtree", "replace-subtree"} and item.get("targetNodeId")
+    }
     root = nodes.get(str(screen.get("rootNodeId") or "")) or {}
     root_rect = (root.get("layout") or {}).get("rect") or {}
     root_x = numeric(root_rect.get("x"))
@@ -76,12 +100,19 @@ def build_validation_regions(screen: dict, target_viewport: dict, design_scale: 
     def initially_visible(node: dict) -> bool:
         visited: set[str] = set()
         current = node
+        state_owned = False
         while current:
             current_id = str(current.get("id") or "")
             if current_id in visited:
                 return False
             visited.add(current_id)
-            if (current.get("state") or {}).get("initiallyVisible") is False:
+            if current_id in removed_node_ids:
+                return False
+            if active_state_id and str(
+                (current.get("iosHints") or {}).get("state-owner") or ""
+            ) == active_state_id:
+                state_owned = True
+            if (current.get("state") or {}).get("initiallyVisible") is False and not state_owned:
                 return False
             current = nodes.get(str(current.get("parentId") or ""))
         return True
@@ -222,6 +253,8 @@ def main() -> int:
             html_actions.append({"type": "scroll", "selector": screen.get("sourceSelector"), "position": scroll})
             ios_actions.append({"type": "scroll", "accessibilityIdentifier": screen.get("rootNodeId"), "position": scroll})
         sequence = state.get("interactionSequence") or ([state.get("triggerInteractionId")] if state.get("triggerInteractionId") else [])
+        active_state = None
+        html_root_selector = None
         for interaction_id in sequence:
             interaction = interactions.get(interaction_id)
             if not interaction:
@@ -233,7 +266,32 @@ def main() -> int:
             if interaction.get("sourceNodeId"):
                 ios_action = {"type": "tap", "accessibilityIdentifier": interaction.get("sourceNodeId"), "interactionId": interaction_id}
                 target_state = states_by_id.get(str(interaction.get("target") or "")) or {}
+                if target_state:
+                    active_state = target_state
+                    html_root_selector = (
+                        (target_state.get("visualRepresentation") or {}).get("sourceSelector")
+                        or html_root_selector
+                    )
                 target_kind = str(target_state.get("kind") or "")
+                state_delta = target_state.get("stateDelta") or {}
+                if state_delta.get("nativeStrategy") == "contextual-item-actions":
+                    contextual_target = str(state_delta.get("contextualTargetNodeId") or "")
+                    contextual_actions = [
+                        str(item)
+                        for item in state_delta.get("contextualActionRootNodeIds") or []
+                        if str(item)
+                    ]
+                    if contextual_target:
+                        ios_action = {
+                            "type": "swipe-left",
+                            "accessibilityIdentifier": contextual_target,
+                            "interactionId": interaction_id,
+                        }
+                        if contextual_actions:
+                            ios_action["assertion"] = {
+                                "type": "exists",
+                                "accessibilityIdentifier": f"{target_state.get('id')}.contextual.1",
+                            }
                 if any(token in target_kind for token in ("sheet", "modal", "popover", "overlay", "alert", "dialog")):
                     target_ids = [str(item) for item in target_state.get("targetNodeIds") or [] if str(item)]
                     if target_ids:
@@ -263,7 +321,12 @@ def main() -> int:
                             break
                         current = str((nodes.get(current) or {}).get("parentId") or "")
                 ios_actions.append(ios_action)
-        states.append({
+        if html_root_selector:
+            html_actions = [
+                item for item in html_actions
+                if not item.get("interactionId")
+            ]
+        state_payload = {
             "id": state["id"],
             "name": state.get("name") or state["id"],
             "required": state.get("required", True),
@@ -272,7 +335,17 @@ def main() -> int:
             "iosActions": ios_actions,
             "animationProgress": state.get("animationProgress"),
             "interactionSequence": sequence,
-        })
+            "htmlRootSelector": html_root_selector,
+            "activeStateId": (active_state or {}).get("id"),
+            "geometryNodes": build_geometry_nodes(screen, active_state),
+            "validationRegions": build_validation_regions(
+                screen,
+                target_viewport,
+                numeric(target.get("scale"), 1),
+                active_state,
+            ),
+        }
+        states.append(state_payload)
 
     manifest = {
         "schemaVersion": "visual-state-manifest-1.0",

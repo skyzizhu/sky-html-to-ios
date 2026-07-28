@@ -2,6 +2,8 @@
 
 视觉验收必须在对应逻辑 viewport、方向、外观和稳定数据状态下进行。HTML 位于固定展示板时允许源 viewport 与目标 viewport 不同，但归一化过程必须显式记录。
 
+同一业务页面的状态画板必须逐状态验收。manifest 中每个状态保留自己的 `htmlRootSelector`、`activeStateId`、`geometryNodes` 和 `validationRegions`；当状态画板本身是确定性静态表示时，HTML 截图直接裁切该画板，不再重复执行可能不存在的网页交互。iOS 侧仍执行 tap、swipe、dismiss 等原生动作并验证目标 accessibility identifier。
+
 ## 基准
 
 - 响应式 HTML viewport 与 iOS 目标逻辑尺寸一致；固定展示板保留 source viewport，并单独归一化 app root。

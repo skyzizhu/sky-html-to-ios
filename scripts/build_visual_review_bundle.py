@@ -60,10 +60,43 @@ def main() -> int:
             })
             continue
         state_out = args.out_dir / state_id
+        state_out.mkdir(parents=True, exist_ok=True)
+        def merged_contract_items(key: str) -> list[dict]:
+            state_items = state.get(key)
+            if key == "geometryNodes" and state_items is not None:
+                return state_items
+            if key == "validationRegions" and any(
+                item.get("id") == "screen.viewport"
+                for item in (state_items or [])
+            ):
+                return state_items
+            merged = []
+            seen = set()
+            for item in [
+                *(state_items or []),
+                *(manifest.get(key) or []),
+            ]:
+                identity = str(item.get("id") or item.get("nodeId") or "")
+                if identity and identity in seen:
+                    continue
+                if identity:
+                    seen.add(identity)
+                merged.append(item)
+            return merged
+
+        state_validation = {
+            "validationRegions": merged_contract_items("validationRegions"),
+            "geometryNodes": merged_contract_items("geometryNodes"),
+        }
+        state_validation_path = state_out / "state-validation.json"
+        state_validation_path.write_text(
+            json.dumps(state_validation, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
         command = [
             sys.executable, str(visual_diff), str(html_image), str(ios_image),
             "--out-dir", str(state_out), "--threshold", str(args.threshold),
-            "--regions-json", str(args.manifest),
+            "--regions-json", str(state_validation_path),
         ]
         for mask in manifest.get("comparisonMasks") or []:
             rect = mask.get("rect") if isinstance(mask, dict) else mask
@@ -78,7 +111,7 @@ def main() -> int:
             geometry_command = [
                 sys.executable,
                 str(Path(__file__).with_name("compare_node_geometry.py")),
-                str(args.manifest),
+                str(state_validation_path),
                 str(geometry_source),
                 "--out",
                 str(geometry_out),

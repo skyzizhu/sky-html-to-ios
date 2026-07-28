@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.34.0"
+GENERATOR_VERSION = "1.35.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -541,6 +541,7 @@ class ScreenBuildContext:
     selection_bindings: dict[str, dict[str, Any]]
     selection_count_bindings: dict[str, dict[str, Any]]
     motions: dict[str, list[dict[str, Any]]]
+    contextual_actions: dict[str, list[dict[str, Any]]]
     detached_root_ids: set[str]
     bottom_bar_placement: str
     native_container_kinds: dict[str, str]
@@ -1025,7 +1026,8 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     parent_state_id = context.expansion_states.get(parent_id)
     node_rect = (node.get("layout") or {}).get("rect") or {}
     expansion_content = bool(
-        parent_state_id
+        not presentation
+        and parent_state_id
         and (
             (node.get("state") or {}).get("initiallyVisible") is False
             or number(node_rect.get("height")) <= 0
@@ -1533,6 +1535,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         "assetName": asset.get("iosName") if is_foreground_asset else None,
         "backgroundAssetName": asset.get("iosName") if asset_kind == "css-background" else None,
         "accessibilityLabel": compact_text(content.get("accessibilityLabel"), 120) or None,
+        "contextualActions": context.contextual_actions.get(node_id) or [],
         "visibleWhenStateID": None,
         "selectionStateID": selection.get("stateID"),
         "isInitiallySelected": selection.get("initiallySelected"),
@@ -1700,6 +1703,85 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
                     if node_action.get("targetNodeID") and node_action.get("targetNodeID") != source_id:
                         node_action["localEffect"] = "remove"
                 actions[source_id] = node_action
+
+    contextual_actions: dict[str, list[dict[str, Any]]] = {}
+    contextual_root_ids: set[str] = set()
+    for state in states_by_id.values():
+        delta = state.get("stateDelta") or {}
+        if delta.get("nativeStrategy") != "contextual-item-actions":
+            continue
+        target_node_id = str(delta.get("contextualTargetNodeId") or "")
+        root_ids = [
+            str(item)
+            for item in delta.get("contextualActionRootNodeIds") or []
+            if str(item) in nodes
+        ]
+        if not target_node_id or target_node_id not in nodes or not root_ids:
+            continue
+        contextual_root_ids.update(root_ids)
+        action_node_ids = []
+        for contextual_root_id in root_ids:
+            pending = [contextual_root_id]
+            candidates = []
+            visited: set[str] = set()
+            while pending:
+                candidate_id = pending.pop(0)
+                if candidate_id in visited:
+                    continue
+                visited.add(candidate_id)
+                candidate = nodes.get(candidate_id) or {}
+                if str(candidate.get("semanticType") or "") in {
+                    "button",
+                    "icon-button",
+                    "link",
+                    "menu-item",
+                }:
+                    candidates.append(candidate_id)
+                pending.extend(children.get(candidate_id) or [])
+            action_node_ids.extend(candidates or [contextual_root_id])
+        contextual_items = []
+        for index, action_node_id in enumerate(dict.fromkeys(action_node_ids)):
+            action_node = nodes[action_node_id]
+            action_text = compact_text((action_node.get("content") or {}).get("text"), 80)
+            destructive = bool(re.search(
+                r"delete|remove|trash|destructive|删除|移除|清空",
+                " ".join([
+                    action_text,
+                    str((action_node.get("source") or {}).get("selector") or ""),
+                    str((action_node.get("source") or {}).get("domId") or ""),
+                ]),
+                re.IGNORECASE,
+            ))
+            contextual_items.append({
+                "id": f"{state.get('id')}.contextual.{index + 1}",
+                "title": action_text or "Action",
+                "systemImage": system_image_name(action_node, nodes.get(str(action_node.get("parentId") or ""))),
+                "tint": color_string((action_node.get("style") or {}).get("backgroundColor")),
+                "role": "destructive" if destructive else "normal",
+                "edge": "trailing",
+                "allowsFullSwipe": destructive and len(action_node_ids) == 1,
+                "action": actions.get(action_node_id) or {
+                    "interactionID": None,
+                    "action": "none",
+                    "target": None,
+                    "targetScreenID": None,
+                    "targetStateID": None,
+                    "delayMilliseconds": 0,
+                    "sourceNodeID": action_node_id,
+                    "targetNodeID": target_node_id,
+                    "stateKind": "contextual-item-actions",
+                    "selectionMode": "multiple",
+                    "localEffect": None,
+                    "deltaRemoveNodeIDs": [],
+                    "feedbackText": None,
+                    "feedbackDurationMilliseconds": None,
+                    "initiallySelected": None,
+                    "selectionCountInitial": None,
+                    "selectionCountTotal": None,
+                    "contentVariant": None,
+                },
+            })
+        contextual_actions[target_node_id] = contextual_items
 
     selection_bindings: dict[str, dict[str, Any]] = {}
     for state in states_by_id.values():
@@ -1875,8 +1957,10 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
             fixed = layout.get("position") in {"absolute", "fixed", "sticky"}
             top_score = (2 if fixed else 0) + (2 if semantic in {"header", "navigation", "navigation-bar"} else 0)
             bottom_score = (2 if fixed else 0) + (2 if semantic in {"footer", "navigation", "tab-bar"} else 0)
-            if re.search(r"nav|header|top.?bar|app.?bar|toolbar", hint): top_score += 1.5
-            if re.search(r"bottom|footer|tab.?bar|actions?|toolbar|dock", hint): bottom_score += 1.5
+            if re.search(r"nav|header|top.?bar|app.?bar|toolbar", hint):
+                top_score += 1.5
+            if re.search(r"bottom|footer|tab.?bar|actions?|toolbar|dock", hint):
+                bottom_score += 1.5
             if y <= root_height * 0.13 and top_score >= 2:
                 edge_candidates["top"].append((top_score, node_id))
             if y + height >= root_height * 0.965 and y >= root_height * 0.62 and bottom_score >= 2:
@@ -1894,7 +1978,7 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
         if bottom_bar_id
         else "none"
     )
-    detached_root_ids = set(presentation_root_ids)
+    detached_root_ids = set(presentation_root_ids) | contextual_root_ids
     if top_bar_id:
         detached_root_ids.add(top_bar_id)
     if bottom_bar_id:
@@ -1920,6 +2004,7 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
             ]
             for node_id in nodes
         },
+        contextual_actions=contextual_actions,
         detached_root_ids=detached_root_ids,
         bottom_bar_placement=bottom_bar_placement,
         native_container_kinds=native_container_kinds,
@@ -1936,6 +2021,7 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
         "action": None,
         "style": {},
         "accessibilityLabel": None,
+        "contextualActions": [],
         "motions": [],
     }
     root["style"]["cornerRadius"] = 0
@@ -2195,6 +2281,17 @@ struct HTMLToIOSActionSpec: Codable {{
     let contentVariant: HTMLToIOSContentVariantSpec?
 }}
 
+struct HTMLToIOSContextualActionSpec: Codable, Identifiable {{
+    let id: String
+    let title: String
+    let systemImage: String?
+    let tint: String?
+    let role: String
+    let edge: String
+    let allowsFullSwipe: Bool
+    let action: HTMLToIOSActionSpec
+}}
+
 struct HTMLToIOSContentVariantSpec: Codable {{
     let targetNodeID: String
     let items: [HTMLToIOSDynamicContentItemSpec]
@@ -2236,6 +2333,7 @@ struct HTMLToIOSNodeSpec: Codable, Identifiable {{
     let assetName: String?
     let backgroundAssetName: String?
     let accessibilityLabel: String?
+    let contextualActions: [HTMLToIOSContextualActionSpec]
     let visibleWhenStateID: String?
     let selectionStateID: String?
     let isInitiallySelected: Bool?
@@ -3258,6 +3356,78 @@ struct HTMLToIOSTypedViewRegistry {
     ) -> AnyView?
 }
 
+private struct HTMLToIOSContextualActionsModifier: ViewModifier {
+    let actions: [HTMLToIOSContextualActionSpec]
+    @ObservedObject var store: HTMLToIOSGeneratedStore
+    @State private var fallbackRevealed = false
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if actions.isEmpty {
+            content
+        } else {
+            contextualBody(content)
+        }
+    }
+
+    private func contextualBody(_ content: Content) -> some View {
+        ZStack(alignment: .trailing) {
+            if fallbackRevealed {
+                HStack(spacing: 0) {
+                    ForEach(actions.filter { $0.edge != "leading" }) { item in
+                        contextualButton(item)
+                            .frame(minWidth: 72, maxHeight: .infinity)
+                    }
+                }
+                .transition(.move(edge: .trailing))
+            }
+            content
+                .offset(x: fallbackRevealed ? -CGFloat(actions.filter { $0.edge != "leading" }.count * 72) : 0)
+                .swipeActions(
+                    edge: .trailing,
+                    allowsFullSwipe: actions.filter { $0.edge != "leading" }.contains { $0.allowsFullSwipe }
+                ) {
+                    ForEach(actions.filter { $0.edge != "leading" }) { item in
+                        contextualButton(item)
+                    }
+                }
+                .swipeActions(
+                    edge: .leading,
+                    allowsFullSwipe: actions.filter { $0.edge == "leading" }.contains { $0.allowsFullSwipe }
+                ) {
+                    ForEach(actions.filter { $0.edge == "leading" }) { item in
+                        contextualButton(item)
+                    }
+                }
+        }
+        .clipped()
+        .contentShape(Rectangle())
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 18)
+                .onEnded { value in
+                    if value.translation.width < -18, !actions.isEmpty {
+                        withAnimation(.easeOut(duration: 0.2)) { fallbackRevealed = true }
+                    } else if value.translation.width > 18 {
+                        withAnimation(.easeOut(duration: 0.2)) { fallbackRevealed = false }
+                    }
+                }
+        )
+    }
+
+    @ViewBuilder private func contextualButton(_ item: HTMLToIOSContextualActionSpec) -> some View {
+        Button(role: item.role == "destructive" ? .destructive : nil) {
+            store.perform(item.action)
+        } label: {
+            if let systemImage = item.systemImage {
+                Label(item.title, systemImage: systemImage)
+            } else {
+                Text(item.title)
+            }
+        }
+        .tint(item.tint.map { Color(htmlToIOS: $0) } ?? (item.role == "destructive" ? .red : .accentColor))
+        .accessibilityIdentifier(item.id)
+    }
+}
+
 struct HTMLToIOSNativeNodeView: View {
     @ObservedObject var store: HTMLToIOSGeneratedStore
     let spec: HTMLToIOSNodeSpec
@@ -3286,9 +3456,16 @@ struct HTMLToIOSNativeNodeView: View {
             if spec.id != bypassTypedNodeID,
                let registry = typedRegistry,
                let typed = registry.build(spec.id, store, spec, registry) {
-                typed
+                typed.modifier(HTMLToIOSContextualActionsModifier(
+                    actions: spec.contextualActions,
+                    store: store
+                ))
             } else {
                 interactiveContent
+                    .modifier(HTMLToIOSContextualActionsModifier(
+                        actions: spec.contextualActions,
+                        store: store
+                    ))
                     .transition(.asymmetric(insertion: .opacity, removal: .move(edge: .trailing).combined(with: .opacity)))
             }
         }
@@ -4687,7 +4864,9 @@ final class HTMLToIOSNodeRenderer {
 
     func makeView(_ spec: HTMLToIOSNodeSpec, bypassingTypedNodeID: String? = nil) -> UIView {
         if spec.id != bypassingTypedNodeID, let builder = typedViewBuilders[spec.id] {
-            return builder(spec, self)
+            let typedView = builder(spec, self)
+            installContextualActions(spec.contextualActions, on: typedView)
+            return typedView
         }
         let view: UIView
         let effectiveScrollAxis = state.scrollAxisOverrides[spec.id] ?? spec.style.scrollAxis ?? "none"
@@ -4968,7 +5147,52 @@ final class HTMLToIOSNodeRenderer {
             || (spec.visibleWhenStateID != nil && !state.flags.contains(spec.visibleWhenStateID!))
         renderedView.accessibilityIdentifier = spec.id
         renderedView.accessibilityLabel = spec.accessibilityLabel ?? (spec.text.isEmpty ? nil : spec.text)
+        installContextualActions(spec.contextualActions, on: renderedView)
         return renderedView
+    }
+
+    private func installContextualActions(_ actions: [HTMLToIOSContextualActionSpec], on view: UIView) {
+        guard !actions.isEmpty else { return }
+        view.isUserInteractionEnabled = true
+        let actionStack = UIStackView()
+        actionStack.axis = .horizontal
+        actionStack.spacing = 0
+        actionStack.translatesAutoresizingMaskIntoConstraints = false
+        actionStack.isHidden = true
+        actionStack.accessibilityIdentifier = "\(view.accessibilityIdentifier ?? "node").contextual-actions"
+        for item in actions {
+            var configuration = UIButton.Configuration.filled()
+            configuration.title = item.title
+            if let systemImage = item.systemImage {
+                configuration.image = UIImage(systemName: systemImage)
+                configuration.imagePadding = 6
+            }
+            configuration.baseBackgroundColor = UIColor(htmlToIOS: item.tint)
+                ?? (item.role == "destructive" ? .systemRed : .systemBlue)
+            configuration.baseForegroundColor = .white
+            let button = UIButton(configuration: configuration)
+            button.accessibilityIdentifier = item.id
+            button.addAction(UIAction { [actionHandler] _ in
+                actionHandler(item.action)
+            }, for: .touchUpInside)
+            button.widthAnchor.constraint(greaterThanOrEqualToConstant: 72).isActive = true
+            actionStack.addArrangedSubview(button)
+        }
+        view.addSubview(actionStack)
+        NSLayoutConstraint.activate([
+            actionStack.topAnchor.constraint(equalTo: view.topAnchor),
+            actionStack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            actionStack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        let reveal = HTMLToIOSClosureSwipeGestureRecognizer(direction: .left) { [weak actionStack, weak view] in
+            actionStack?.isHidden = false
+            if let actionStack { view?.bringSubviewToFront(actionStack) }
+        }
+        let hide = HTMLToIOSClosureSwipeGestureRecognizer(direction: .right) { [weak actionStack] in
+            actionStack?.isHidden = true
+        }
+        view.addGestureRecognizer(reveal)
+        view.addGestureRecognizer(hide)
     }
 
     private func wrapInMargins(_ view: UIView, spec: HTMLToIOSNodeSpec) -> UIView {
@@ -5683,6 +5907,17 @@ private final class HTMLToIOSClosureTapGestureRecognizer: UITapGestureRecognizer
     init(_ action: @escaping () -> Void) {
         self.action = action
         super.init(target: nil, action: nil)
+        addTarget(self, action: #selector(invoke))
+    }
+    @objc func invoke() { action() }
+}
+
+private final class HTMLToIOSClosureSwipeGestureRecognizer: UISwipeGestureRecognizer {
+    private let action: () -> Void
+    init(direction: UISwipeGestureRecognizer.Direction, _ action: @escaping () -> Void) {
+        self.action = action
+        super.init(target: nil, action: nil)
+        self.direction = direction
         addTarget(self, action: #selector(invoke))
     }
     @objc func invoke() { action() }

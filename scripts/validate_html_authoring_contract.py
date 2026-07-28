@@ -131,6 +131,18 @@ def validate(path: Path) -> dict:
                 line,
                 "data-ios-state-key",
             ))
+        state_removable = str(attrs.get("data-ios-state-removable") or "").strip()
+        if state_removable and state_removable.lower() not in {"true", "false", "1", "0", "yes", "no"} and not re.fullmatch(
+            r"[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*",
+            state_removable,
+        ):
+            issues.append(issue(
+                "INVALID_STATE_REMOVABLE",
+                "error",
+                "data-ios-state-removable must be a boolean or stable state identifier",
+                line,
+                "data-ios-state-removable",
+            ))
         if attrs.get("data-ios-tab-id"):
             tab_id = str(attrs["data-ios-tab-id"])
             if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", tab_id):
@@ -176,7 +188,7 @@ def validate(path: Path) -> dict:
             value = str(attrs.get(name) or "").lower()
             if name in attrs and value not in {"", "0", "1", "false", "no", "true", "yes", "none"}:
                 issues.append(issue("INVALID_BOOLEAN", "warning", f"Prefer true/false for {name}", line, name))
-        if any(name in attrs for name in ("data-ios-state", "data-ios-state-key", "data-ios-animation", "data-ios-visual-state", "data-ios-owner")):
+        if any(name in attrs for name in ("data-ios-state", "data-ios-state-key", "data-ios-state-removable", "data-ios-animation", "data-ios-visual-state", "data-ios-owner")):
             advanced_hints += 1
 
     screen_counts = Counter(item["id"] for item in screens)

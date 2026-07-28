@@ -145,7 +145,7 @@ async function main() {
       }
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       const screenshot = path.join(outDir, `${state.id}.png`);
-      const root = page.locator(manifest.rootSelector || "html");
+      const root = page.locator(state.htmlRootSelector || manifest.rootSelector || "html");
       const screenshotBuffer = await root.screenshot({ animations: state.animationProgress == null ? "disabled" : "allow" });
       const originalMetadata = await sharp(screenshotBuffer).metadata();
       const targetViewport = manifest.targetViewport || {};

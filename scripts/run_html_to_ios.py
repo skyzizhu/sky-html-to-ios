@@ -186,6 +186,7 @@ class Orchestrator:
                 "textCalibration": "pending" if args.html else "not-applicable-with-supplied-ir",
                 "responsiveAnalysis": "pending" if args.html else "not-applicable-with-supplied-ir",
                 "scrollBehaviorAnalysis": "pending" if args.html else "not-applicable-with-supplied-ir",
+                "stateDeltaReview": "pending" if args.html else "not-applicable-with-supplied-ir",
                 "nativeArchitecturePlan": "pending",
                 "projectGenerationDecision": "pending",
                 "nativeNamingPlan": "pending",
@@ -701,11 +702,13 @@ class Orchestrator:
         html_state_captures: list[str] = []
         visual_review_plans: list[dict[str, Any]] = []
         state_representation_irs: list[str] = []
+        state_delta_review_reports: list[str] = []
         self.artifacts["uiIRs"] = []
         self.artifacts["textCalibrations"] = text_calibrations
         self.artifacts["responsiveAnalyses"] = responsive_analyses
         self.artifacts["scrollBehaviorAnalyses"] = scroll_behavior_analyses
         self.artifacts["stateRepresentationIRs"] = state_representation_irs
+        self.artifacts["stateDeltaReviewReports"] = state_delta_review_reports
         if not self.args.skip_visual_baselines:
             self.artifacts["visualStateManifests"] = visual_manifests
             self.artifacts["htmlStateCaptures"] = html_state_captures
@@ -834,6 +837,35 @@ class Orchestrator:
                     merge_command.extend(["--state", state_value])
                 self.run_command(f"merge-state-representations-{screen_id}", merge_command)
                 merged_ir.replace(ir_path)
+                merged_data = json.loads(ir_path.read_text(encoding="utf-8"))
+                reviews = merged_data.get("stateDeltaReviews") or []
+                review_report = screen_dir / "state-delta-review.json"
+                review_report.write_text(
+                    json.dumps({
+                        "schemaVersion": "state-delta-review-1.0",
+                        "screenId": screen_id,
+                        "status": (
+                            "review-required"
+                            if any(item.get("requiresHumanReview") for item in reviews)
+                            else "passed"
+                        ),
+                        "reviews": reviews,
+                        "warnings": merged_data.get("warnings") or [],
+                        "summary": {
+                            "states": len(reviews),
+                            "reviewRequired": sum(
+                                bool(item.get("requiresHumanReview"))
+                                for item in reviews
+                            ),
+                        },
+                    }, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                state_delta_review_reports.append(str(review_report))
+                if any(item.get("requiresHumanReview") for item in reviews):
+                    self.report["qualityGates"]["stateDeltaReview"] = "review-required"
+                elif self.report["qualityGates"]["stateDeltaReview"] != "review-required":
+                    self.report["qualityGates"]["stateDeltaReview"] = "passed"
             self.run_command(
                 f"validate-ui-ir-{screen_id}",
                 [sys.executable, self.scripts / "validate_ui_ir.py", ir_path],
@@ -978,6 +1010,8 @@ class Orchestrator:
                     ],
                 })
                 self.report["qualityGates"]["htmlVisualBaselines"] = "captured-for-processed-screens"
+        if not state_delta_review_reports:
+            self.report["qualityGates"]["stateDeltaReview"] = "not-applicable-no-repeated-artboards"
         self.report["qualityGates"].update({
             "uiIRValidation": "passed",
             "textCalibration": "generated",

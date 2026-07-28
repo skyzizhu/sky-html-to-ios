@@ -60,6 +60,18 @@ def action_source(action)
   when "scroll"
     position = swift_string(action["position"] || "top")
     "try scrollElement(identifier: #{identifier}, position: #{position}, in: app)"
+  when "swipe-left", "swipe-right"
+    direction = action["type"] == "swipe-left" ? "left" : "right"
+    lines = ["try swipeElement(identifier: #{identifier}, direction: #{swift_string(direction)}, in: app)"]
+    assertion = action["assertion"] || {}
+    if assertion["type"] == "exists"
+      target = swift_string(assertion["accessibilityIdentifier"])
+      lines << "try assertElementPresent(identifier: #{target}, in: app)"
+    elsif assertion["type"] == "not-exists"
+      target = swift_string(assertion["accessibilityIdentifier"])
+      lines << "try assertElementAbsent(identifier: #{target}, in: app)"
+    end
+    lines.join("\n        ")
   when "fill"
     value = swift_string(action["value"] || "")
     "try fillElement(identifier: #{identifier}, value: #{value}, in: app)"
@@ -86,7 +98,10 @@ state_methods = (manifest["states"] || []).each_with_index.map do |state, index|
   SWIFT
 end.join("\n")
 
-geometry_identifiers = ((manifest["geometryNodes"] || []) + (manifest["validationRegions"] || []))
+state_geometry = (manifest["states"] || []).flat_map do |state|
+  (state["geometryNodes"] || []) + (state["validationRegions"] || [])
+end
+geometry_identifiers = ((manifest["geometryNodes"] || []) + (manifest["validationRegions"] || []) + state_geometry)
   .filter_map { |item| item["nodeId"].to_s.strip }
   .reject(&:empty?)
   .uniq
@@ -178,6 +193,16 @@ swift = <<~SWIFT
           guard position != "top" else { return }
           let repetitions = position == "bottom" ? 6 : 2
           for _ in 0..<repetitions { candidate.swipeUp(velocity: .fast) }
+      }
+
+      private func swipeElement(identifier: String, direction: String, in app: XCUIApplication) throws {
+          let candidate = try element(identifier: identifier, in: app, requireHittable: true)
+          if direction == "right" {
+              candidate.swipeRight(velocity: .slow)
+          } else {
+              candidate.swipeLeft(velocity: .slow)
+          }
+          RunLoop.current.run(until: Date().addingTimeInterval(0.25))
       }
 
       private func capture(name: String, app: XCUIApplication) {

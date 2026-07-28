@@ -19,6 +19,8 @@ description: 将可运行的移动端 HTML 高保真原型转换为可编译、�
 8. 响应式页面必须从多宽度计算结果推断原生约束；禁止用运行时整页缩放代替 Auto Layout。
 9. 视觉复刻不得破坏原生 UI 架构。页面、容器、可复用 View/Cell、状态和路由按职责分层；状态变化通过数据模型驱动 Stack/Grid/Auto Layout，不在业务页面散落截图坐标或逐状态 frame。
 10. 同一页面的重复画板必须先归并为 owner screen 的状态。去重依据是页面骨架、节点语义、文本、层级、几何与可选 `data-ios-state-key`，不能依赖 menu、sheet、Cell 左滑等案例枚举。状态画板必须生成通用 insert/remove/replace/update 差分并进入 owner 原生树，不得各自生成业务页面；归属存在歧义时使用 `data-ios-state-owner` 或旁路契约确认。
+11. 状态差分必须由通用策略执行器落到原生结构：页面内变化使用条件子树或替换节点，覆盖层使用 presentation，条目操作使用上下文操作。不得只把状态记录在报告中而不生成可触发的原生行为。
+12. 每个状态必须有独立 HTML/iOS 截图、几何区域和门禁结论。低置信度归属、被抑制的删除或目标不明确的上下文操作必须进入 `state-delta-review.json`，不得静默猜测。
 
 ## 支持范围
 
@@ -32,6 +34,7 @@ description: 将可运行的移动端 HTML 高保真原型转换为可编译、�
 - 单页或多页移动端 HTML
 - Flex、Grid、普通文档流、绝对定位和常见响应式布局
 - 文本、图片、SVG、按钮、输入框、列表、滚动、Tab、弹窗和基础动画
+- 同页重复画板归并、局部增删/替换/属性态、条目左滑操作和原生 Sheet/Overlay 状态
 - CSS transition/keyframes、伪元素、常见遮罩滤镜和多状态视觉验收
 - 页面 push、sheet、full-screen cover、overlay、back、dismiss 和外部链接
 - pop/pop-to-root、popover、alert、Tab/Split/Page 容器和 child ViewController containment

@@ -119,6 +119,8 @@ HTML 可以引用本地 CSS、JavaScript、图片、SVG 和字体。远程资源
 - 自动识别同一页面的菜单、sheet、alert、overlay、局部展开和 Cell 左滑等重复状态画板；
 - 为状态画板建立独立 IR，并生成通用的新增、删除、替换、样式/内容和几何差分，不依赖案例名称枚举；
 - 将增量原生子树合并到唯一 owner 页面，不额外生成业务 Screen 或 ViewController；
+- 将差分执行为原生条件子树、节点替换、Presentation 或条目上下文操作；操作按钮可以嵌套在状态子树的任意层级；
+- 保护交互源节点及其祖先，抑制证据不足的误删除，并通过 `state-delta-review.json` 输出需人工核对的归属和策略；
 - 区分页面跳转、局部状态、弹层和外部链接；
 - 保留 prerequisite interaction sequence；
 - 对 owner 得分接近或低置信度路由给出警告，不擅自猜测；可用 `data-ios-state-owner` 明确归属。
@@ -498,6 +500,8 @@ Web Font 无法合法嵌入时会使用明确 fallback，并在报告中记录�
 
 视觉验证可以在 0%、50%、100% 或关键帧采样。只有存在确定性原生采样钩子时，动画帧才作为 required gate。
 
+同一业务页面的重复状态画板会逐状态独立截图。每个状态拥有自己的 HTML 根选择器、原生激活状态、几何节点和校验区域；iOS 端仍执行真实的点击、左滑或 Presentation 动作。
+
 不自动向工程增加 Lottie、GSAP 等 Web 依赖。项目已有依赖或用户明确同意时才复用。
 
 ## 工程识别与代码结构
@@ -778,6 +782,7 @@ Skill 可以处理普通 HTML，但结构和语义越清楚，自动还原越稳
 | `screens/<id>/responsive-layout.json` | 响应式分析 |
 | `screens/<id>/scroll-region-behavior.json` | 滚动区域行为 |
 | `screens/<id>/visual-state-manifest.json` | 状态截图契约 |
+| `screens/<id>/state-delta-review.json` | 状态归属、策略置信度、受保护节点和被抑制删除 |
 | `screens/<id>/visual-states/html/` | HTML 状态截图 |
 | `screens/<id>/visual-states/ios/` | iOS 状态截图与几何 |
 | `screens/<id>/visual-review/` | diff、overlay、heatmap 和报告 |
@@ -833,7 +838,7 @@ Skill 可以处理普通 HTML，但结构和语义越清楚，自动还原越稳
 
 - SwiftUI 真实工程构建；
 - UIKit 真实工程构建；
-- 当前开发版审计通过 100 项自动化测试；
+- 当前开发版审计通过 107 项自动化测试；
 - UI IR、工程决策、命名和生成器测试；
 - 多页面和交互状态测试；
 - 视觉差异和节点几何测试；

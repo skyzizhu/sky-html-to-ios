@@ -114,6 +114,8 @@ The default deployment target is iOS 16 and can be configured. Newer APIs requir
 - Deduplicates repeated artboards that represent one screen with a menu, sheet, alert, overlay, expanded region, or revealed swipe actions.
 - Builds a separate state IR and computes generic insert, remove, replace, style/content, and geometry deltas without relying on a list of named examples.
 - Associates each state artboard with one native owner screen and merges its incremental native subtree instead of generating another business screen or view controller.
+- Executes deltas through native conditional subtrees, replacements, presentations, or contextual item actions; action buttons may be nested at any depth inside the state subtree.
+- Protects interaction sources and ancestors from accidental removal, suppresses ambiguous deletions, and emits `state-delta-review.json` when evidence needs human review.
 - Separates navigation, local state, overlays, modal presentation, and external links.
 - Preserves prerequisite action sequences.
 - Reports close owner matches and low-confidence transitions instead of inventing behavior; `data-ios-state-owner` can make ownership deterministic.
@@ -411,6 +413,8 @@ The validation pipeline:
 
 Quality checks cover image dimensions, global mismatch, mean absolute difference, critical regions, text edges, vertical drift, node geometry, capture coverage, unintended overflow, scroll-axis ownership, responsive layout, required states, and actual presentation visibility.
 
+Repeated-state artboards are captured independently. Each state carries its own HTML root selector, active native state, geometry nodes, and validation regions, while iOS capture executes the real tap, swipe, or presentation action.
+
 Geometry instrumentation expands the accessibility tree only under generated UI-test launch arguments and does not alter normal production accessibility.
 
 | Mode | Behavior |
@@ -526,6 +530,7 @@ Reports are written under `<workspace>/.html-to-ios/`.
 | `screens/<id>/responsive-layout.json` | Responsive analysis |
 | `screens/<id>/scroll-region-behavior.json` | Scroll behavior |
 | `screens/<id>/visual-state-manifest.json` | Required states |
+| `screens/<id>/state-delta-review.json` | State ownership, strategy confidence, protected nodes, and suppressed deletions |
 | `screens/<id>/visual-review/` | Diffs, overlays, heatmaps, and reports |
 
 ## Scope and Limitations
@@ -551,7 +556,7 @@ High-risk inputs include runtime-generated DOM, closed Shadow DOM, cross-origin 
 The first usable release has passed:
 
 - real SwiftUI and UIKit builds;
-- 100 automated tests in the current development audit;
+- 107 automated tests in the current development audit;
 - UI IR, decision, naming, generator, route, and interaction tests;
 - visual-difference and geometry tests;
 - real Simulator responsive matrices;

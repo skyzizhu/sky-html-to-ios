@@ -105,6 +105,73 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.fail(result.stderr or result.stdout)
         return result
 
+    def test_contextual_state_delta_generates_native_swipe_actions_for_both_stacks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            ir_path = root / "home.json"
+            payload = ir("home")
+            root_node = payload["screens"][0]["nodes"][0]
+            row = node("home.row", root_node["id"], "list-item", "Document")
+            action_container = node("state.home.actions.container", root_node["id"], "group")
+            action_wrapper = node(
+                "state.home.actions.wrapper", action_container["id"], "group"
+            )
+            action_node = node(
+                "state.home.actions.delete", action_wrapper["id"], "button", "Delete"
+            )
+            action_container["state"] = {"initiallyVisible": False}
+            action_wrapper["state"] = {"initiallyVisible": False}
+            action_node["state"] = {"initiallyVisible": False}
+            for action_part in (action_container, action_wrapper, action_node):
+                action_part["iosHints"] = {"state-owner": "home.actions"}
+            action_node["style"]["backgroundColor"] = "rgb(255, 59, 48)"
+            payload["screens"][0]["nodes"].extend(
+                [row, action_container, action_wrapper, action_node]
+            )
+            interaction = transition("reveal-actions", "reveal-swipe-actions", "home.actions")
+            interaction["trigger"] = "swipe"
+            interaction["sourceNodeId"] = "home.row"
+            interaction["sourceNodeIds"] = ["home.row"]
+            payload["interactions"] = [interaction]
+            payload["states"] = [{
+                "id": "home.actions",
+                "ownerScreenId": "home",
+                "kind": "expansion",
+                "targetNodeIds": [root_node["id"]],
+                "confidence": 1,
+                "stateDelta": {
+                    "schemaVersion": "visual-state-delta-1.0",
+                    "nativeStrategy": "contextual-item-actions",
+                    "confidence": 1,
+                    "operations": [{
+                        "kind": "insert-subtree",
+                        "generatedRootNodeId": action_container["id"],
+                        "targetParentNodeId": root_node["id"],
+                    }],
+                    "contextualTargetNodeId": "home.row",
+                    "contextualTargetConfidence": 1,
+                    "contextualActionRootNodeIds": [action_container["id"]],
+                    "suppressedRemovalNodeIds": [],
+                    "triggers": ["swipe"],
+                },
+            }]
+            ir_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            for ui_stack in ("swiftui", "uikit"):
+                out_dir = root / ui_stack / "Generated" / "HTMLToIOS"
+                self.run_generator([ir_path], out_dir, ui_stack=ui_stack)
+                generated_payload = json.loads((out_dir / PAYLOAD).read_text(encoding="utf-8"))
+                generated_row = generated_payload["screens"][0]["root"]["children"][0]
+                self.assertEqual(generated_row["id"], "home.row")
+                self.assertEqual(generated_row["contextualActions"][0]["title"], "Delete")
+                runtime = (out_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+                if ui_stack == "swiftui":
+                    self.assertIn("HTMLToIOSContextualActionsModifier", runtime)
+                    self.assertIn(".swipeActions(", runtime)
+                else:
+                    self.assertIn("HTMLToIOSClosureSwipeGestureRecognizer", runtime)
+                    self.assertIn("installContextualActions", runtime)
+
     def test_six_layer_architecture_drives_native_container_generation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

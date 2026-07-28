@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Visual state matrix</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; display: flex; gap: 24px; flex-wrap: wrap; background: #dfe3ea; font: 16px -apple-system, BlinkMacSystemFont, sans-serif; }
+    .screen { position: relative; width: 393px; height: 852px; overflow: hidden; background: #f7f8fb; color: #171923; }
+    header { height: 72px; padding: 18px 20px; display: flex; align-items: center; justify-content: space-between; background: white; }
+    header h1 { margin: 0; font-size: 22px; }
+    .toolbar { display: flex; gap: 8px; }
+    button { min-height: 36px; padding: 8px 12px; border: 0; border-radius: 8px; background: #eceef4; color: #242735; }
+    .content { padding: 18px; display: grid; gap: 12px; }
+    .row { position: relative; min-height: 72px; padding: 14px 16px; border-radius: 10px; background: white; display: flex; align-items: center; justify-content: space-between; }
+    .title { font-weight: 650; }
+    .status { padding: 5px 9px; border-radius: 999px; background: #e9f8ef; color: #167548; font-size: 13px; }
+    .status.warning { background: #fff1d6; color: #965d00; }
+    .panel { margin: 0 18px; padding: 16px; border-radius: 10px; background: #e8eeff; color: #29468d; }
+    .sheet-scrim { position: absolute; inset: 0; background: rgba(0,0,0,.28); }
+    .sheet { position: absolute; left: 0; right: 0; bottom: 0; height: 300px; padding: 24px; border-radius: 18px 18px 0 0; background: white; }
+    .sheet h2 { margin: 0 0 12px; }
+    .actions { position: absolute; right: 18px; top: 90px; height: 72px; display: flex; }
+    .actions button { height: 72px; border-radius: 0; color: white; }
+    .archive { background: #3977d5; }
+    .delete { background: #db3c30; }
+    .detail-body { padding: 24px; }
+    .detail-body article { min-height: 240px; padding: 20px; background: white; border-radius: 10px; }
+  </style>
+</head>
+<body data-ios-app-root>
+  <main class="screen" data-ios-screen="home" data-ios-screen-initial>
+    <header data-ios-state-key="shell.header">
+      <h1 data-ios-state-key="shell.title">Documents</h1>
+      <div class="toolbar">
+        <button data-ios-node-id="home.toggle-status" data-ios-action="toggle-state" data-ios-target="home-status">Status</button>
+        <button data-ios-node-id="home.open-panel" data-ios-action="toggle-state" data-ios-target="home-panel">Panel</button>
+        <button data-ios-node-id="home.apply-filter" data-ios-action="toggle-state" data-ios-target="home-filtered">Filter</button>
+        <button data-ios-node-id="home.reveal-actions" data-ios-action="toggle-state" data-ios-target="home-actions">Actions</button>
+        <button data-ios-node-id="home.open-sheet" data-ios-action="present-sheet" data-ios-target="home-sheet">Sheet</button>
+      </div>
+    </header>
+    <section class="content" data-ios-state-key="content.list">
+      <div class="row" data-ios-state-key="document.primary">
+        <span class="title">Quarterly report</span><span class="status">Ready</span>
+      </div>
+      <div class="row" data-ios-state-key="document.secondary" data-ios-state-removable="true">
+        <span class="title">Draft notes</span><span class="status">Draft</span>
+      </div>
+    </section>
+  </main>
+
+  <main class="screen" data-ios-screen="home-status"
+        data-ios-state-owner="home" data-ios-state-kind="revealed-content">
+    <header data-ios-state-key="shell.header"><h1 data-ios-state-key="shell.title">Documents</h1></header>
+    <section class="content" data-ios-state-key="content.list">
+      <div class="row" data-ios-state-key="document.primary">
+        <span class="title">Quarterly report</span><span class="status warning">Needs review</span>
+      </div>
+      <div class="row" data-ios-state-key="document.secondary">
+        <span class="title">Draft notes</span><span class="status">Draft</span>
+      </div>
+    </section>
+  </main>
+
+  <main class="screen" data-ios-screen="home-panel"
+        data-ios-state-owner="home" data-ios-state-kind="revealed-content">
+    <header data-ios-state-key="shell.header"><h1 data-ios-state-key="shell.title">Documents</h1></header>
+    <section class="content" data-ios-state-key="content.list">
+      <div class="row" data-ios-state-key="document.primary">
+        <span class="title">Quarterly report</span><span class="status">Ready</span>
+      </div>
+      <div class="row" data-ios-state-key="document.secondary">
+        <span class="title">Draft notes</span><span class="status">Draft</span>
+      </div>
+    </section>
+    <aside class="panel"><strong>Shared with 4 people</strong><br>Updated a moment ago</aside>
+  </main>
+
+  <main class="screen" data-ios-screen="home-filtered"
+        data-ios-state-owner="home" data-ios-state-kind="revealed-content">
+    <header data-ios-state-key="shell.header"><h1 data-ios-state-key="shell.title">Documents</h1></header>
+    <section class="content" data-ios-state-key="content.list">
+      <div class="row" data-ios-state-key="document.primary">
+        <span class="title">Quarterly report</span><span class="status">Ready</span>
+      </div>
+    </section>
+  </main>
+
+  <main class="screen" data-ios-screen="home-sheet"
+        data-ios-state-owner="home" data-ios-state-kind="sheet">
+    <header data-ios-state-key="shell.header"><h1 data-ios-state-key="shell.title">Documents</h1></header>
+    <section class="content" data-ios-state-key="content.list">
+      <div class="row" data-ios-state-key="document.primary"><span class="title">Quarterly report</span><span class="status">Ready</span></div>
+      <div class="row" data-ios-state-key="document.secondary"><span class="title">Draft notes</span><span class="status">Draft</span></div>
+    </section>
+    <div class="sheet-scrim"></div>
+    <section class="sheet"><h2>Export document</h2><p>Choose a native export format.</p><button>Export PDF</button></section>
+  </main>
+
+  <main class="screen" data-ios-screen="home-actions"
+        data-ios-state-owner="home" data-ios-state-kind="swipe-actions">
+    <header data-ios-state-key="shell.header"><h1 data-ios-state-key="shell.title">Documents</h1></header>
+    <section class="content" data-ios-state-key="content.list">
+      <div class="row" data-ios-state-key="document.primary"><span class="title">Quarterly report</span><span class="status">Ready</span></div>
+      <div class="row" data-ios-state-key="document.secondary"><span class="title">Draft notes</span><span class="status">Draft</span></div>
+    </section>
+    <div class="actions"><button class="archive">Archive</button><button class="delete">Delete</button></div>
+  </main>
+
+  <main class="screen" data-ios-screen="detail">
+    <header><h1>Document details</h1><button data-ios-action="pop">Back</button></header>
+    <section class="detail-body"><article><h2>Quarterly report</h2><p>This is a separate business page, not a visual state of the list.</p></article></section>
+  </main>
+</body>
+</html>

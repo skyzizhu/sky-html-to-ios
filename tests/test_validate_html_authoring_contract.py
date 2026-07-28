@@ -116,6 +116,18 @@ class HTMLAuthoringContractTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(report["summary"]["errors"], 0)
 
+    def test_state_removable_accepts_boolean_or_state_identifier(self) -> None:
+        result, report = self.run_validator("""
+        <main data-ios-app-root>
+          <section data-ios-screen="home">
+            <div data-ios-state-removable="true">Temporary</div>
+            <div data-ios-state-removable="home.filtered">Filtered</div>
+          </section>
+        </main>
+        """)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("INVALID_STATE_REMOVABLE", {item["code"] for item in report["issues"]})
+
 
 if __name__ == "__main__":
     unittest.main()

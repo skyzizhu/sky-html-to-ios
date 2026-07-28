@@ -315,6 +315,18 @@ def validate(data):
                     or not 0 <= delta_confidence <= 1
                 ):
                     errors.append(f"{where}.stateDelta.confidence must be between 0 and 1")
+                contextual_target = state_delta.get("contextualTargetNodeId")
+                if contextual_target is not None and contextual_target not in all_ids:
+                    errors.append(f"{where}.stateDelta.contextualTargetNodeId references missing node {contextual_target}")
+                contextual_roots = state_delta.get("contextualActionRootNodeIds") or []
+                if not isinstance(contextual_roots, list):
+                    errors.append(f"{where}.stateDelta.contextualActionRootNodeIds must be an array")
+                else:
+                    for contextual_root in contextual_roots:
+                        if contextual_root not in all_ids:
+                            errors.append(
+                                f"{where}.stateDelta.contextualActionRootNodeIds references missing node {contextual_root}"
+                            )
                 operations = state_delta.get("operations")
                 if not isinstance(operations, list):
                     errors.append(f"{where}.stateDelta.operations must be an array")

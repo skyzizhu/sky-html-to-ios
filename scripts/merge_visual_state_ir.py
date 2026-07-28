@@ -39,6 +39,60 @@ def geometry_similarity(left: dict, right: dict) -> float:
     return max(0.0, 1.0 - distance / 2.5)
 
 
+def intersection_ratio(left: dict, right: dict) -> float:
+    left_rect, right_rect = rect(left), rect(right)
+    left_x, left_y = number(left_rect.get("x")), number(left_rect.get("y"))
+    right_x, right_y = number(right_rect.get("x")), number(right_rect.get("y"))
+    overlap_width = max(
+        min(left_x + number(left_rect.get("width")), right_x + number(right_rect.get("width")))
+        - max(left_x, right_x),
+        0,
+    )
+    overlap_height = max(
+        min(left_y + number(left_rect.get("height")), right_y + number(right_rect.get("height")))
+        - max(left_y, right_y),
+        0,
+    )
+    overlap = overlap_width * overlap_height
+    left_area = max(number(left_rect.get("width")) * number(left_rect.get("height")), 1)
+    right_area = max(number(right_rect.get("width")) * number(right_rect.get("height")), 1)
+    return overlap / min(left_area, right_area)
+
+
+def infer_contextual_target(owner_nodes: list[dict], action_roots: list[dict]) -> tuple[str | None, float]:
+    semantic_weight = {
+        "list-item": 4.0,
+        "cell": 4.0,
+        "row": 4.0,
+        "text": 2.2,
+        "label": 2.2,
+        "container": 1.2,
+    }
+    ranked = []
+    for candidate in owner_nodes:
+        if not candidate.get("parentId"):
+            continue
+        overlap = max((intersection_ratio(candidate, action) for action in action_roots), default=0)
+        if overlap <= 0:
+            continue
+        candidate_rect = rect(candidate)
+        area = max(number(candidate_rect.get("width")) * number(candidate_rect.get("height")), 1)
+        compactness = 1 / max(math.log10(area + 10), 1)
+        semantic = str(candidate.get("semanticType") or "")
+        action_width = max((number(rect(action).get("width")) for action in action_roots), default=0)
+        row_like_container = (
+            semantic == "container"
+            and 44 <= number(candidate_rect.get("height")) <= 180
+            and number(candidate_rect.get("width")) >= action_width * 1.25
+        )
+        score = overlap * 8 + (3.6 if row_like_container else semantic_weight.get(semantic, 0)) + compactness
+        ranked.append((score, overlap, str(candidate["id"])))
+    if not ranked:
+        return None, 0
+    ranked.sort(reverse=True)
+    return ranked[0][2], round(min(ranked[0][0] / 12, 1), 3)
+
+
 def node_score(owner: dict, variant: dict, parent_matches: dict[str, str]) -> float:
     owner_state_key = compact((owner.get("iosHints") or {}).get("state-key"))
     variant_state_key = compact((variant.get("iosHints") or {}).get("state-key"))
@@ -50,18 +104,22 @@ def node_score(owner: dict, variant: dict, parent_matches: dict[str, str]) -> fl
         return -math.inf
     owner_content, variant_content = owner.get("content") or {}, variant.get("content") or {}
     owner_text, variant_text = compact(owner_content.get("text")), compact(variant_content.get("text"))
-    if owner_text and variant_text and owner_text != variant_text:
+    variant_parent = str(variant.get("parentId") or "")
+    matched_parent = parent_matches.get(variant_parent)
+    owner_parent = str(owner.get("parentId") or "")
+    if variant_parent and matched_parent and matched_parent != owner_parent:
         return -math.inf
     score = 4 + geometry_similarity(owner, variant) * 4
     if owner_text and owner_text == variant_text:
         score += 5
+    elif owner_text and variant_text:
+        score -= 2
     elif not owner_text and not variant_text:
         score += 1
     owner_source, variant_source = owner.get("source") or {}, variant.get("source") or {}
     if owner_source.get("tag") == variant_source.get("tag"):
         score += 1
-    variant_parent = str(variant.get("parentId") or "")
-    if variant_parent and parent_matches.get(variant_parent) == str(owner.get("parentId") or ""):
+    if variant_parent and matched_parent == owner_parent:
         score += 3
     return score
 
@@ -367,7 +425,37 @@ def merge_state(owner: dict, variant: dict, state_id: str) -> dict:
         )
         if source_id
     }
-    available_removals -= protected_interaction_sources
+    protected_interaction_scope = set(protected_interaction_sources)
+    for source_id in protected_interaction_sources:
+        current = str(owner_by_id.get(source_id, {}).get("parentId") or "")
+        while current:
+            protected_interaction_scope.add(current)
+            current = str(owner_by_id.get(current, {}).get("parentId") or "")
+    transition_actions = {
+        str(transition.get("action") or "").lower()
+        for interaction in owner.get("interactions") or []
+        for transition in (interaction.get("payload") or {}).get("transitions") or []
+        if transition.get("targetStateId") == state_id
+    }
+    visual_effect = compact(((state.get("visualRepresentation") or {}).get("localEffect")))
+    removal_intent = bool(
+        any(re.search(r"remove|delete|hide|dismiss", item) for item in transition_actions)
+        or re.search(r"remove|delete|dismiss", visual_effect)
+    )
+    explicit_removals = {
+        node_id
+        for node_id in available_removals
+        if compact((owner_by_id[node_id].get("iosHints") or {}).get("state-removable"))
+        in {"1", "true", "yes", state_id.lower()}
+    }
+    protected_missing_sources = sorted(available_removals & protected_interaction_scope)
+    removal_candidates = available_removals - protected_interaction_scope
+    accepted_removals = (
+        removal_candidates
+        if removal_intent
+        else explicit_removals
+    )
+    suppressed_removals = sorted(removal_candidates - accepted_removals)
     operations = [
         {
             "kind": "insert-subtree",
@@ -394,7 +482,7 @@ def merge_state(owner: dict, variant: dict, state_id: str) -> dict:
         "changes": item["changes"],
         "reason": "property-or-layout-change",
     } for item in update_roots)
-    operations.extend({"kind": "remove-subtree", "targetNodeId": item} for item in available_removals)
+    operations.extend({"kind": "remove-subtree", "targetNodeId": item} for item in accepted_removals)
     generated_root_ids = {
         str(item.get("generatedRootNodeId"))
         for item in operations
@@ -412,6 +500,8 @@ def merge_state(owner: dict, variant: dict, state_id: str) -> dict:
         if transition.get("targetStateId") == state_id
     }
     inserted_roots = [variant_by_id[item] for item in additions]
+    contextual_target_id = None
+    contextual_target_confidence = 0.0
     if is_presentation:
         native_strategy = "detached-presentation"
     elif triggers & {"swipe", "pan", "drag"} and inserted_roots and all(
@@ -419,6 +509,10 @@ def merge_state(owner: dict, variant: dict, state_id: str) -> dict:
         for item in inserted_roots
     ):
         native_strategy = "contextual-item-actions"
+        contextual_target_id, contextual_target_confidence = infer_contextual_target(
+            owner_nodes,
+            inserted_roots,
+        )
     elif operation_kinds == {"insert-subtree"}:
         native_strategy = "conditional-subtree"
     elif operation_kinds == {"remove-subtree"}:
@@ -438,7 +532,7 @@ def merge_state(owner: dict, variant: dict, state_id: str) -> dict:
         if container is not None
         else conditional_parent_ids
         if conditional_parent_ids
-        else sorted(removals)
+        else sorted(accepted_removals)
     )
     if not is_presentation and generated_root_ids:
         state["kind"] = "expansion"
@@ -451,8 +545,53 @@ def merge_state(owner: dict, variant: dict, state_id: str) -> dict:
         "operations": operations,
         "nativeStrategy": native_strategy,
         "triggers": sorted(trigger for trigger in triggers if trigger),
+        "contextualTargetNodeId": contextual_target_id,
+        "contextualTargetConfidence": contextual_target_confidence,
+        "contextualActionRootNodeIds": sorted(
+            str(item.get("generatedRootNodeId"))
+            for item in operations
+            if native_strategy == "contextual-item-actions"
+            and item.get("kind") == "insert-subtree"
+            and item.get("generatedRootNodeId")
+        ),
+        "suppressedRemovalNodeIds": suppressed_removals,
+        "protectedInteractionSourceNodeIds": protected_missing_sources,
         "confidence": round(len(matches) / max(min(len(owner_by_id), len(variant_by_id)), 1), 3),
     }
+    requires_review = (
+        state["stateDelta"]["confidence"] < 0.65
+        or bool(suppressed_removals)
+        or (native_strategy == "contextual-item-actions" and not contextual_target_id)
+    )
+    review = {
+        "stateId": state_id,
+        "ownerScreenId": owner_screen.get("id"),
+        "representationScreenId": variant_screen.get("id"),
+        "decision": "merge-with-review" if requires_review else "merge",
+        "requiresHumanReview": requires_review,
+        "confidence": state["stateDelta"]["confidence"],
+        "nativeStrategy": native_strategy,
+        "contextualTargetNodeId": contextual_target_id,
+        "operationCounts": {
+            kind: sum(item.get("kind") == kind for item in operations)
+            for kind in ("insert-subtree", "remove-subtree", "replace-subtree")
+        },
+        "suppressedRemovalNodeIds": suppressed_removals,
+        "protectedInteractionSourceNodeIds": protected_missing_sources,
+        "reasons": [
+            f"matched {len(matches)} of {min(len(owner_by_id), len(variant_by_id))} comparable nodes",
+            f"selected native strategy {native_strategy}",
+            *(
+                [f"suppressed {len(suppressed_removals)} ambiguous removals"]
+                if suppressed_removals else []
+            ),
+        ],
+        "recommendedHints": (
+            ["data-ios-state-owner", "data-ios-state-key", "data-ios-state-removable"]
+            if requires_review else []
+        ),
+    }
+    owner.setdefault("stateDeltaReviews", []).append(review)
     if state["stateDelta"]["confidence"] < 0.65:
         owner.setdefault("warnings", []).append({
             "code": "LOW_STATE_DELTA_CONFIDENCE",
