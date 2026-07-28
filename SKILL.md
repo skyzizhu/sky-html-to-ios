@@ -290,6 +290,8 @@ python3 "$SKILL_ROOT/scripts/generate_ios_from_ir.py" \
 - 生成的 JSON 载荷必须作为 target resource 接入，不能内联成超大 Swift 字符串。
 - 通用运行时只是原生基线；发现现有 Router、Design System、Cell 或控件时，按映射计划替换为项目组件。
 - 六层架构计划必须物化为强类型页面源码：每个 screen 生成 UIContract，Section 生成独立容器，复用内容生成真实 UIKit Cell 子类或 SwiftUI Item View，并通过稳定 node ID 注册进入实际渲染链路。禁止只生成目录占位，或让一个通用 JSON NodeRenderer 独占全部页面架构。
+- 每个 screen 生成 LayoutContract，保存容器的 source/visual order、axis、alignment、distribution、wrap、gap 和子项尺寸策略。它用于关系约束和视觉校准，不得转成逐节点页面绝对 frame。
+- 叶子强类型化只覆盖输入状态所有者、显式/项目组件、特殊媒体或绘制组件，以及拥有稳定业务 ID 的交互控件。普通文本、装饰节点、SVG 内部路径、自动编号节点和已由 Cell 拥有的 item 不按一节点一文件生成。
 - 保持项目命名、目录、访问控制和状态管理风格。
 - 静态页面不强制创建 ViewModel。
 - 动态数据不是转换核心。HTML 当前可见内容只作为确定性视觉 fixture，用于还原列表、loading、empty、error 等画面；生成器不创建接口、请求层、分页器或业务 ViewModel，也不因重复列表猜测 endpoint。只有用户明确要求业务接入时，才把 `dataBinding` 交给项目数据层。

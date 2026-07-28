@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -176,6 +177,123 @@ def scroll_axis(node: dict[str, Any]) -> str:
     if vertical:
         return "vertical"
     return "none"
+
+
+def css_number(value: Any, default: float = 0.0) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    match = re.search(r"-?\d+(?:\.\d+)?", str(value or ""))
+    return float(match.group(0)) if match else default
+
+
+def layout_relation_plan(
+    nodes: dict[str, dict[str, Any]],
+    children: dict[str, list[str]],
+) -> list[dict[str, Any]]:
+    relations: list[dict[str, Any]] = []
+    for node_id, source_order in children.items():
+        parent = nodes.get(node_id)
+        child_ids = [child_id for child_id in source_order if child_id in nodes]
+        if not parent or not child_ids:
+            continue
+        semantic = str(parent.get("semanticType") or "container")
+        if semantic in {"icon", "image", "decoration", "canvas-artwork"}:
+            continue
+        style = parent.get("style") or {}
+        layout = parent.get("layout") or {}
+        mode = str(layout.get("mode") or "")
+        flex_direction = str(style.get("flexDirection") or "")
+        display = str(style.get("display") or layout.get("display") or "")
+        if mode == "absolute":
+            axis = "overlay"
+        elif "grid" in mode or display in {"grid", "inline-grid"}:
+            axis = "grid"
+        elif "row" in mode or flex_direction.startswith("row"):
+            axis = "horizontal"
+        else:
+            axis = "vertical"
+
+        def visual_key(child_id: str) -> tuple[float, float, int]:
+            rect = (nodes[child_id].get("layout") or {}).get("rect") or {}
+            source_index = child_ids.index(child_id)
+            x = css_number(rect.get("x"))
+            y = css_number(rect.get("y"))
+            if axis == "horizontal":
+                return x, y, source_index
+            if axis == "overlay":
+                return y, x, source_index
+            return y, x, source_index
+
+        visual_order = sorted(child_ids, key=visual_key)
+        measured_gaps = []
+        if axis in {"horizontal", "vertical"}:
+            origin_key = "x" if axis == "horizontal" else "y"
+            extent_key = "width" if axis == "horizontal" else "height"
+            for previous_id, current_id in zip(visual_order, visual_order[1:]):
+                previous_rect = (nodes[previous_id].get("layout") or {}).get("rect") or {}
+                current_rect = (nodes[current_id].get("layout") or {}).get("rect") or {}
+                if origin_key not in previous_rect or origin_key not in current_rect:
+                    continue
+                measured_gaps.append(max(
+                    css_number(current_rect.get(origin_key))
+                    - css_number(previous_rect.get(origin_key))
+                    - css_number(previous_rect.get(extent_key)),
+                    0,
+                ))
+        measured_gap = (
+            sorted(measured_gaps)[len(measured_gaps) // 2]
+            if measured_gaps
+            else max(css_number(style.get("gap")), 0)
+        )
+        child_sizing = []
+        for child_id in visual_order:
+            child = nodes[child_id]
+            child_style = child.get("style") or {}
+            rect = (child.get("layout") or {}).get("rect") or {}
+            width = max(css_number(rect.get("width")), 0)
+            height = max(css_number(rect.get("height")), 0)
+            flex_grow = css_number(child_style.get("flexGrow"))
+            flex_shrink = css_number(child_style.get("flexShrink"), 1)
+            width_value = str(child_style.get("width") or "")
+            height_value = str(child_style.get("height") or "")
+            child_semantic = str(child.get("semanticType") or "container")
+            width_policy = (
+                "flexible" if flex_grow > 0
+                else "fixed" if width > 0 and width_value.endswith("px")
+                else "intrinsic"
+            )
+            height_policy = (
+                "fixed" if height > 0 and height_value.endswith("px")
+                else "intrinsic"
+            )
+            child_sizing.append({
+                "nodeId": child_id,
+                "widthPolicy": width_policy,
+                "heightPolicy": height_policy,
+                "measuredWidth": width or None,
+                "measuredHeight": height or None,
+                "aspectRatio": width / height if width > 0 and height > 0 else None,
+                "flexGrow": flex_grow,
+                "flexShrink": flex_shrink,
+                "resistsHorizontalCompression": bool(
+                    flex_shrink == 0
+                    or str(child_style.get("whiteSpace") or "") == "nowrap"
+                    or child_semantic in {"icon", "image"}
+                ),
+            })
+        relations.append({
+            "containerNodeId": node_id,
+            "axis": axis,
+            "sourceChildNodeIds": child_ids,
+            "orderedChildNodeIds": visual_order,
+            "reordersSourceChildren": visual_order != child_ids,
+            "alignment": str(style.get("alignItems") or "normal"),
+            "distribution": str(style.get("justifyContent") or "normal"),
+            "wraps": str(style.get("flexWrap") or "nowrap") != "nowrap",
+            "gap": measured_gap,
+            "childSizing": child_sizing,
+        })
+    return relations
 
 
 def content_container_plan(
@@ -394,17 +512,43 @@ def leaf_component_plan(
         if style_strategy == "project-component":
             swiftui = str(mapping.get("swiftUI") or swiftui)
             uikit = str(mapping.get("uiKit") or uikit)
+        reasons = list(mapping.get("rationale") or [f"semantic:{semantic}"])
+        stable_suffix = node_id.rsplit(".", 1)[-1]
+        has_stable_business_id = not bool(re.fullmatch(r"(?:node|synthetic)-\d+", stable_suffix))
+        explicit_component = any(
+            reason.startswith(("explicit-ios-component:", "explicit-project-component:"))
+            for reason in reasons
+        )
+        interactive = bool((node.get("interactionRefs") or []) or category in {"control", "input"})
+        generation_reasons = []
+        if style_strategy == "project-component":
+            generation_reasons.append("project-component")
+        if category == "input":
+            generation_reasons.append("input-state-owner")
+        if category in {"media", "artwork", "unsupported"}:
+            generation_reasons.append("specialized-native-lifecycle")
+        if explicit_component:
+            generation_reasons.append("explicit-component-contract")
+        if interactive and category == "control" and has_stable_business_id:
+            generation_reasons.append("stable-interactive-control")
         result.append({
             "nodeId": node_id,
+            "sourceName": str(
+                (node.get("source") or {}).get("domId")
+                or (node.get("source") or {}).get("runtimeId")
+                or stable_suffix
+            ),
             "semanticType": semantic,
             "category": category,
             "swiftUIType": swiftui,
             "uiKitType": uikit,
             "styleStrategy": style_strategy,
-            "interactive": bool((node.get("interactionRefs") or []) or category in {"control", "input"}),
+            "interactive": interactive,
             "accessibilityIdentifier": node_id,
             "confidence": confidence,
-            "reasons": list(mapping.get("rationale") or [f"semantic:{semantic}"]),
+            "reasons": reasons,
+            "generateType": bool(generation_reasons),
+            "generationReasons": generation_reasons,
         })
     return result
 
@@ -464,6 +608,7 @@ def screen_plan(ir: dict[str, Any], report: dict[str, Any] | None, ui_stack: str
     if tab and bottom:
         warnings.append("Native tab ownership suppresses the page bottomBar to avoid duplicate bottom insets.")
     content_container, sections = content_container_plan(screen, nodes, children)
+    content_container["layoutRelations"] = layout_relation_plan(nodes, children)
     leaf_components = leaf_component_plan(screen, nodes, children)
     app_container_kind = "tab-navigation" if tab else "navigation"
     top_region = {

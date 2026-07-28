@@ -154,6 +154,8 @@ Code generation does not translate the DOM directly into a flat view tree. `nati
 
 Small fixed groups remain static layouts. Long homogeneous rows use Table/Lazy containers; grids, carousels, data tables, and heterogeneous sections use Collection layouts. A Table or Collection owns its scroll axis and is not wrapped in another same-axis root scroll view.
 
+Each screen also receives a typed layout contract containing visual child order, axis, alignment, distribution, wrapping, spacing, sizing policy, aspect ratio, and compression evidence. Inputs, explicit/project components, specialized media, and stable business controls become typed leaf views. Ordinary text, SVG internals, decorative nodes, and auto-numbered DOM leaves stay in the shared runtime instead of creating one Swift file per node.
+
 ## Supported Views and Controls
 
 Support levels:

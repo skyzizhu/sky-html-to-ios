@@ -117,6 +117,9 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 payload["screens"][0]["nodes"].append(
                     node(f"home.row.{index}", list_node["id"], "list-item", f"Row {index}")
                 )
+            payload["screens"][0]["nodes"].append(
+                node("home.primary-action", root_node["id"], "button", "Continue")
+            )
             ir_path.write_text(json.dumps(payload), encoding="utf-8")
             architecture = {
                 "schemaVersion": "native-architecture-plan-1.1",
@@ -136,6 +139,28 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                             "nodeId": "home.list", "kind": "table-view", "scrollAxis": "vertical",
                             "usesCellReuse": True,
                             "nodeStrategies": [{"nodeId": "home.list", "kind": "table-view"}],
+                            "layoutRelations": [{
+                                "containerNodeId": "home.list",
+                                "axis": "vertical",
+                                "sourceChildNodeIds": [f"home.row.{index}" for index in range(6)],
+                                "orderedChildNodeIds": [f"home.row.{index}" for index in range(6)],
+                                "reordersSourceChildren": False,
+                                "alignment": "stretch",
+                                "distribution": "normal",
+                                "wraps": False,
+                                "gap": 8,
+                                "childSizing": [{
+                                    "nodeId": f"home.row.{index}",
+                                    "widthPolicy": "flexible",
+                                    "heightPolicy": "intrinsic",
+                                    "measuredWidth": 393,
+                                    "measuredHeight": 100,
+                                    "aspectRatio": 3.93,
+                                    "flexGrow": 1,
+                                    "flexShrink": 1,
+                                    "resistsHorizontalCompression": False,
+                                } for index in range(6)],
+                            }],
                         },
                         "reusableContent": {
                             "sections": [{
@@ -152,7 +177,20 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                             }],
                             "usesReuse": True,
                         },
-                        "leafComponents": [],
+                        "leafComponents": [{
+                            "nodeId": "home.primary-action",
+                            "semanticType": "button",
+                            "category": "control",
+                            "swiftUIType": "Button",
+                            "uiKitType": "UIButton",
+                            "styleStrategy": "native-default",
+                            "interactive": True,
+                            "accessibilityIdentifier": "home.primary-action",
+                            "confidence": 0.98,
+                            "reasons": ["html-tag:button"],
+                            "generateType": True,
+                            "generationReasons": ["stable-interactive-control"],
+                        }],
                     },
                 }],
             }
@@ -173,11 +211,16 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn('spec.nativeContainerKind == "table-view"', runtime)
             self.assertIn("let usesOuterScroll = screen.contentContainer.kind == \"scroll-view\"", runtime)
             self.assertTrue((out / "Home/Models/HTMLToIOSHomeUIContract.swift").is_file())
+            layout_contract = out / "Home/Models/HTMLToIOSHomeLayoutContract.swift"
+            self.assertTrue(layout_contract.is_file())
+            self.assertIn("orderedChildNodeIDs", layout_contract.read_text(encoding="utf-8"))
             self.assertTrue((out / "Home/Sections/HTMLToIOSHomeSection1View.swift").is_file())
             self.assertTrue((out / "Home/Cells/HTMLToIOSHomeSection1TableViewCell.swift").is_file())
+            self.assertTrue((out / "Home/Views/HTMLToIOSHomeLeafPrimaryActionView.swift").is_file())
             controller = (out / "Home/Controllers/HTMLToIOSHomeViewController.swift").read_text(encoding="utf-8")
             self.assertIn("configureTypedComponents", controller)
             self.assertIn("registerTableCell", controller)
+            self.assertIn("HTMLToIOSHomeLeafPrimaryActionView", controller)
 
             swiftui_out = root / "SwiftUI" / "Generated" / "HTMLToIOS"
             self.run_generator(
@@ -186,12 +229,14 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertTrue((swiftui_out / "Home/Sections/HTMLToIOSHomeSection1View.swift").is_file())
             item_path = swiftui_out / "Home/Cells/HTMLToIOSHomeSection1ItemView.swift"
             self.assertTrue(item_path.is_file())
+            self.assertTrue((swiftui_out / "Home/Views/HTMLToIOSHomeLeafPrimaryActionView.swift").is_file())
             item_view = item_path.read_text(encoding="utf-8")
             self.assertIn("let registry: HTMLToIOSTypedViewRegistry", item_view)
             self.assertIn("bypassTypedNodeID: spec.id", item_view)
             content = (swiftui_out / "Home/Views/HTMLToIOSHomeContentView.swift").read_text(encoding="utf-8")
             self.assertIn("HTMLToIOSTypedViewRegistry", content)
             self.assertIn("HTMLToIOSHomeSection1ItemView", content)
+            self.assertIn("HTMLToIOSHomeLeafPrimaryActionView", content)
             if shutil.which("xcrun"):
                 sdk = subprocess.run(
                     ["xcrun", "--sdk", "iphonesimulator", "--show-sdk-path"],

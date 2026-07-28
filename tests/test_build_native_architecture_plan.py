@@ -81,6 +81,10 @@ class BuildNativeArchitecturePlanTests(unittest.TestCase):
             screen["nodes"].append({
                 "id": list_id, "parentId": root_id, "semanticType": "list",
                 "layout": {"scrollAxis": "vertical"},
+                "style": {
+                    "display": "flex", "flexDirection": "column",
+                    "alignItems": "stretch", "justifyContent": "normal", "gap": "12px",
+                },
                 "nativeMapping": {"confidence": 0.96, "styleStrategy": "custom-native-view", "rationale": ["html-tag:ul"]},
             })
             for index in range(6):
@@ -88,6 +92,8 @@ class BuildNativeArchitecturePlanTests(unittest.TestCase):
                 screen["nodes"].extend([
                     {
                         "id": item_id, "parentId": list_id, "semanticType": "list-item",
+                        "layout": {"rect": {"x": 0, "y": index * 72, "width": 320, "height": 60}},
+                        "style": {"width": "320px", "height": "60px", "flexGrow": "0", "flexShrink": "0"},
                         "nativeMapping": {"confidence": 0.94, "styleStrategy": "custom-native-view", "rationale": ["html-tag:li"]},
                     },
                     {
@@ -126,6 +132,21 @@ class BuildNativeArchitecturePlanTests(unittest.TestCase):
             leaves = {item["nodeId"]: item for item in layers["leafComponents"]}
             self.assertEqual(leaves["home.result.0.image"]["uiKitType"], "UIImageView")
             self.assertEqual(leaves["home.result.0.title"]["uiKitType"], "UILabel")
+            self.assertTrue(leaves["home.result.0.image"]["generateType"])
+            self.assertIn("project-component", leaves["home.result.0.image"]["generationReasons"])
+            self.assertFalse(leaves["home.result.0.title"]["generateType"])
+            relation = next(
+                item for item in layers["contentContainer"]["layoutRelations"]
+                if item["containerNodeId"] == list_id
+            )
+            self.assertEqual(relation["axis"], "vertical")
+            self.assertEqual(relation["gap"], 12)
+            self.assertEqual(
+                relation["orderedChildNodeIds"],
+                [f"home.result.{index}" for index in range(6)],
+            )
+            self.assertEqual(relation["childSizing"][0]["widthPolicy"], "fixed")
+            self.assertTrue(relation["childSizing"][0]["resistsHorizontalCompression"])
 
     def test_nested_horizontal_collection_is_a_typed_reusable_section(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -139,12 +160,14 @@ class BuildNativeArchitecturePlanTests(unittest.TestCase):
                 "parentId": root_id,
                 "semanticType": "carousel",
                 "layout": {"scrollAxis": "horizontal"},
+                "style": {"display": "flex", "flexDirection": "row-reverse", "gap": "10px"},
             })
             for index in range(4):
                 screen["nodes"].append({
                     "id": f"{carousel_id}.item.{index}",
                     "parentId": carousel_id,
                     "semanticType": "button",
+                    "layout": {"rect": {"x": (3 - index) * 50, "y": 0, "width": 40, "height": 32}},
                 })
             ir_path = root / "ui-ir.json"
             output = root / "plan.json"
@@ -168,6 +191,16 @@ class BuildNativeArchitecturePlanTests(unittest.TestCase):
             self.assertEqual(section["scrollAxis"], "horizontal")
             self.assertTrue(section["usesReuse"])
             self.assertEqual(section["itemCount"], 4)
+            relation = next(
+                item for item in layers["contentContainer"]["layoutRelations"]
+                if item["containerNodeId"] == carousel_id
+            )
+            self.assertTrue(relation["reordersSourceChildren"])
+            self.assertEqual(
+                relation["orderedChildNodeIds"],
+                [f"{carousel_id}.item.{index}" for index in reversed(range(4))],
+            )
+            self.assertEqual(relation["gap"], 10)
 
     def test_scroll_frame_never_subtracts_safe_area(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

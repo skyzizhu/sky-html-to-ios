@@ -18,7 +18,8 @@ Generated/HTMLToIOS/
 │   └── Runtime/
 ├── Home/
 │   ├── Models/
-│   │   └── SkyHomeUIContract.swift
+│   │   ├── SkyHomeUIContract.swift
+│   │   └── SkyHomeLayoutContract.swift
 │   ├── Screens/                 # SwiftUI
 │   │   ├── SkyHomeScreen.swift
 │   │   └── SkyHomeDetailScreen.swift
@@ -31,7 +32,8 @@ Generated/HTMLToIOS/
 │   │   └── SkyHomeSection1ItemView.swift
 │   └── Views/
 │       ├── SkyHomeContentView.swift
-│       └── SkyHomeHeaderView.swift
+│       ├── SkyHomeHeaderView.swift
+│       └── SkyHomeLeafPrimaryActionView.swift
 ├── ArticleList/
 │   ├── Screens/ | Controllers/
 │   ├── Models/
@@ -73,10 +75,10 @@ Generated/HTMLToIOS/
 - `Core/Runtime`：跨 screen 的通用渲染与状态运行时。
 - `<Module>/Screens`：SwiftUI 完整页面及页面生命周期入口。
 - `<Module>/Controllers`：UIKit 完整 ViewController；不放 Cell、Header 或局部控件。
-- `<Module>/Models`：该 screen 的稳定 node ID、Section item ID 和类型归属契约；不放网络模型。
+- `<Module>/Models`：该 screen 的稳定 node ID、Section item ID、类型归属和布局关系契约；不放网络模型。
 - `<Module>/Sections`：架构计划中每个独立内容 Section 的强类型容器。
 - `<Module>/Cells`：Table/Collection 复用 Cell，或 SwiftUI Lazy 容器中的强类型 Item View。
-- `<Module>/Views`：页面内容、Header、Control 和不属于 Cell 的局部复用组件。
+- `<Module>/Views`：页面内容、Header、Control，以及按职责筛选出的强类型叶子组件；不为普通 DOM 叶子机械生成文件。
 - `Shared/Components/`：至少被两个 screen 使用且语义稳定的组件。
 - `Shared/Styles/`：设计令牌和样式适配，不放业务状态。
 - `Resources/`：Payload、Asset Catalog、字体和本地化资源，不放 Swift。

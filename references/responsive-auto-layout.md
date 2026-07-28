@@ -59,6 +59,8 @@ NODE_PATH=<playwright-node-modules> node "$SKILL_ROOT/scripts/analyze_responsive
 
 ## 约束推断
 
+架构规划器必须将有意义容器的关系写入 `contentContainer.layoutRelations`：source/visual child order、axis、alignment、distribution、wrap、gap，以及每个子项的 fixed/intrinsic/flexible 策略、实测宽高、宽高比、flex grow/shrink 和 compression resistance。生成 `<Screen>LayoutContract.swift` 供强类型组件、视觉校准和差异定位使用。该契约表达约束关系，不允许退化成逐节点页面绝对 frame；实测宽高是基准证据，响应式父容器仍由 Auto Layout/SwiftUI Layout 决定最终尺寸。
+
 - leading、trailing 在各宽度基本不变，width 随父宽同比变化：双边 pin，不设固定宽度。
 - leading 不变且 width 不变：leading + 固定/intrinsic width。
 - trailing 不变且 width 不变：trailing + 固定/intrinsic width。

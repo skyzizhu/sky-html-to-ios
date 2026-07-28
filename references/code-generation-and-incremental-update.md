@@ -48,6 +48,7 @@ UIKit 将 `--ui-stack` 改为 `uikit`。如果所有 IR 中的 `target.uiStack` 
 - `Core/Navigation/`：App 级 Navigation/Tab 容器和页面工厂。
 - `Core/Runtime/HTMLToIOSGeneratedRuntime.swift`：SwiftUI/UIKit 原生节点、布局和交互运行时。
 - `<Module>/Models/<Prefix><Screen>UIContract.swift`：screen、Section 和 item node ID 的稳定强类型归属。
+- `<Module>/Models/<Prefix><Screen>LayoutContract.swift`：容器视觉顺序、轴向、对齐、分布、间距和子项尺寸策略。
 - `<Module>/Screens` 或 `<Module>/Controllers`：按业务模块归组的完整原生页面。
 - `<Module>/Sections`：由六层架构计划生成并实际注册到渲染链路的 Section 容器。
 - `<Module>/Cells`：真实的 `UITableViewCell`/`UICollectionViewCell` 子类，或 SwiftUI Item View。
@@ -65,6 +66,8 @@ SwiftUI 入口符号是 `HTMLToIOSGeneratedRootView`；UIKit 入口符号是 `HT
 - `native-architecture-plan-1.1` 的 `reusableContent.sections` 必须物化为 screen 专属 Section 类型，不能只停留在 JSON 报告中。
 - UIKit 的复用内容必须注册并 dequeue 生成的 Cell 子类；SwiftUI 的 Lazy 内容必须路由到生成的 Item View。
 - 页面专属类型通过稳定 node ID registry 接入通用 Runtime。Section 渲染自身时只绕过自己的注册，后代节点仍可命中 Item/Cell 注册。
+- 输入、显式项目组件、特殊媒体/绘制组件和稳定业务交互控件生成 `<Screen>Leaf<Purpose>View`；自动编号文本和装饰节点不机械拆分。
+- LayoutContract 保存约束关系和实测校准证据，不生成页面级逐节点绝对 frame。
 - 通用 Runtime 只负责跨页面的节点样式、布局、状态和交互机制；不得包含某个 screen 的名称、节点 ID 或视觉特例。
 - 静态、低复杂度区域可以继续由模块 `ContentView` 和通用叶子组件组合，不为每个 DOM 节点机械生成 Swift 类型。
 

@@ -125,6 +125,17 @@ Table/Collection 计划必须保存：
 - 不允许用截图或 WebView 代替叶子组件；
 - unsupported 节点必须显式报告。
 
+### 强类型叶子生成
+
+`leafComponents` 必须为每个候选记录 `generateType` 和 `generationReasons`。只有以下职责成立时生成 screen 专属强类型 View：
+
+- 输入控件拥有编辑、焦点或键盘状态；
+- HTML 显式声明组件，或组件发现确认复用项目组件；
+- 媒体、自定义绘制或 unsupported fallback 具有独立生命周期；
+- 交互控件同时拥有稳定业务节点 ID。
+
+普通文本、装饰节点、SVG 内部路径、自动编号节点和已经由 Section/Cell 拥有的 item 不机械拆文件。生成的组件通过稳定 node ID 注册，渲染自身时只绕过自己的注册，后代仍可继续命中其他强类型组件。
+
 ## Plan Contract
 
 `native-architecture-plan-1.1` 的每个 screen 必须包含：
@@ -138,4 +149,4 @@ layers.reusableContent
 layers.leafComponents
 ```
 
-代码生成器必须校验六层完整性，并消费 `contentContainer.nodeStrategies` 与 `reusableContent.sections`。计划中的 screen、Section、Cell/Item 必须在生成源码中可追溯，不能只由通用 JSON NodeRenderer 承担全部页面架构。缺层、重复滚动所有权或未解决的低置信度核心容器不得进入正式生成。
+代码生成器必须校验六层完整性，并消费 `contentContainer.nodeStrategies`、`contentContainer.layoutRelations`、`reusableContent.sections` 与 `leafComponents`。计划中的 screen、Section、Cell/Item 和具备独立职责的叶子组件必须在生成源码中可追溯，不能只由通用 JSON NodeRenderer 承担全部页面架构。缺层、重复滚动所有权或未解决的低置信度核心容器不得进入正式生成。
