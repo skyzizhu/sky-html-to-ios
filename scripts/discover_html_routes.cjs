@@ -253,14 +253,14 @@ async function main() {
                 ? sourceScreen.getAttribute("data-ios-screen") || sourceScreen.id || sourceScreen.getAttribute("data-screen-id")
                 : null,
             });
-            const container = target.closest("[data-ios-container], .screen, .mobile, .app-screen");
+            const container = target.closest("[data-ios-container], .screen, .page, .mobile, .app-screen");
             if (container) existing.containerSelector = cssPath(container);
             virtualTargets.set(semanticScreenId, existing);
           }
           for (const target of document.querySelectorAll("[data-ios-screen], .page[id], [role=tabpanel][id], [data-screen-id]")) {
             const targetId = target.getAttribute("data-ios-screen") || target.id || target.getAttribute("data-screen-id");
             if (!targetId || virtualTargets.has(targetId)) continue;
-            const container = target.closest("[data-ios-container], .screen, .mobile, .app-screen");
+            const container = target.closest("[data-ios-container], .screen, .page, .mobile, .app-screen");
             virtualTargets.set(targetId, {
               id: targetId,
               rootSelector: target.getAttribute("data-ios-screen") ? `[data-ios-screen="${CSS.escape(targetId)}"]` : target.id ? `#${CSS.escape(target.id)}` : cssPath(target),

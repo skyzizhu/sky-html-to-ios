@@ -100,6 +100,22 @@ class HTMLAuthoringContractTests(unittest.TestCase):
         self.assertIn("UNKNOWN_STATE_OWNER", codes)
         self.assertIn("INVALID_ENUM", codes)
 
+    def test_state_key_accepts_cross_artboard_identity_without_duplicate_node_ids(self) -> None:
+        result, report = self.run_validator("""
+        <main data-ios-app-root>
+          <section data-ios-screen="home">
+            <h1 data-ios-state-key="header.title">Home</h1>
+          </section>
+          <section data-ios-screen="home-active"
+                   data-ios-state-owner="home"
+                   data-ios-state-kind="revealed-content">
+            <h1 data-ios-state-key="header.title">Home</h1>
+          </section>
+        </main>
+        """)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(report["summary"]["errors"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

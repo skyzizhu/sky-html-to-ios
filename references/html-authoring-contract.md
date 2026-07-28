@@ -105,6 +105,7 @@
 - `data-ios-state="id"`、`data-ios-state-kind="boolean|enum|value|loading|error|empty"`。
 - `data-ios-state-owner="home"`：当前画板是 `home` 的视觉状态，不是独立页面。适用于 menu、sheet、alert、popover、overlay、Cell 左滑及局部展开等重复画板。
 - 状态画板可将 `data-ios-state-kind` 声明为 `menu|sheet|alert|popover|overlay|swipe-actions|revealed-content`；该语义用于页面去重和原生呈现选择。
+- `data-ios-state-key="content.primary"`：可选的跨画板逻辑节点标识。相同逻辑节点在 owner 与状态画板中使用同一 state key，允许 DOM ID 和 `data-ios-node-id` 保持全局唯一。它只帮助差分匹配，不决定具体原生控件。
 - `data-ios-visible-when="state=value"`：状态驱动的可见性。
 - `data-ios-visual-state="id"`：可截图验收的稳定场景。
 - `data-ios-required-state`：该场景必须进入 HTML 与 iOS 双端截图矩阵。
@@ -113,7 +114,7 @@
 
 优先声明动画意图而不是强迫 iOS 逐帧复制 CSS。`custom` 动画必须保留关键帧采样和视觉验收；系统 Reduce Motion 开启时必须提供静态或弱化路径。
 
-同一页面的多个静态展示画板应共享稳定的页面骨架和节点 ID。初始画板使用 `data-ios-screen="home"`，状态画板使用另一个唯一 `data-ios-screen`，并声明 `data-ios-state-owner="home"`。打开该状态的控件继续使用 `data-ios-action` 与 `data-ios-target` 指向状态画板。没有显式标注时技能会尝试结构推断，但显式 owner 可避免相似页面误合并。
+同一页面的多个静态展示画板应共享稳定的页面骨架。初始画板使用 `data-ios-screen="home"`，状态画板使用另一个唯一 `data-ios-screen`，并声明 `data-ios-state-owner="home"`。打开该状态的控件继续使用 `data-ios-action` 与 `data-ios-target` 指向状态画板。跨画板需要强关联的逻辑节点使用相同 `data-ios-state-key`，不要复制全局唯一的 DOM ID 或 `data-ios-node-id`。没有显式标注时技能会尝试结构、文本、层级和几何推断。
 
 ## 动态数据
 

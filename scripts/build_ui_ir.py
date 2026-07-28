@@ -1343,7 +1343,7 @@ def build_bar_contracts(
 
 
 def matches_descendant_selector(node: dict, selector: str, node_by_runtime: dict[str, dict]) -> bool:
-    if not selector or any(character in selector for character in "[],+~"):
+    if not selector or any(character in selector for character in ",+~"):
         return False
     tokens = [token for token in re.split(r"\s+|\s*>\s*", selector.strip()) if token]
     if not tokens:
@@ -1351,6 +1351,18 @@ def matches_descendant_selector(node: dict, selector: str, node_by_runtime: dict
 
     def matches_token(candidate: dict, token: str) -> bool:
         token = re.sub(r":[A-Za-z-]+(?:\([^)]*\))?", "", token)
+        attributes = candidate.get("attributes") or {}
+        attribute_matches = re.findall(
+            r"""\[\s*([A-Za-z_:][-A-Za-z0-9_:.]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\]\s]+)))?\s*\]""",
+            token,
+        )
+        for name, double_quoted, single_quoted, bare in attribute_matches:
+            if name not in attributes:
+                return False
+            expected = double_quoted or single_quoted or bare
+            if expected and str(attributes.get(name) or "") != expected:
+                return False
+        token = re.sub(r"\[[^\]]+\]", "", token)
         tag_match = re.match(r"^[A-Za-z][A-Za-z0-9-]*", token)
         if tag_match and str(candidate.get("tag") or "").lower() != tag_match.group(0).lower():
             return False
@@ -1360,7 +1372,7 @@ def matches_descendant_selector(node: dict, selector: str, node_by_runtime: dict
         classes = set(candidate.get("classNames") or [])
         if any(class_name not in classes for class_name in re.findall(r"\.([A-Za-z0-9_-]+)", token)):
             return False
-        return bool(tag_match or id_matches or re.search(r"\.[A-Za-z0-9_-]+", token))
+        return bool(tag_match or id_matches or attribute_matches or re.search(r"\.[A-Za-z0-9_-]+", token))
 
     if not matches_token(node, tokens[-1]):
         return False

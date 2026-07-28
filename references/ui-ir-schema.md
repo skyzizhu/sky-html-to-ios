@@ -344,7 +344,18 @@ UI IR 是浏览器渲染结果与原生代码之间的稳定中间层。不要�
 
 `visualStates` 至少包含 `initial`，并记录 triggerInteractionId、interactionSequence、scroll、required 和来源。长页面与可观察的弹层/切换状态由 builder 自动补充；隐藏控件状态必须通过 prerequisite sequence 到达。
 
-当 HTML 使用并排画板表达同一页面的菜单、sheet、overlay、展开态或 Cell 左滑态时，`states[].visualRepresentation` 记录原始 `screenId`、`sourceSelector`、presentation/local-effect 类型与归并证据。该画板只作为 owner screen 的状态内容和视觉基线，不进入独立页面生成。
+当 HTML 使用并排画板表达同一页面的不同状态时，`states[].visualRepresentation` 记录原始 `screenId`、`sourceSelector` 与归并证据。状态画板不会生成独立业务页面，但必须单独提取 UI IR。
+
+`states[].stateDelta` 使用 `visual-state-delta-1.0`，包含：
+
+- `operations`：规范化后的 `insert-subtree`、`remove-subtree`、`replace-subtree`。比较阶段可产生 `update-node`，但合并器必须在生成前将其物化为可切换的 `replace-subtree`，并保留 `changes` 作为差分证据。
+- `nativeStrategy`：由差分作用域与触发方式推导的 presentation、conditional subtree、replacement、property variant、contextual item actions 或 composite delta。
+- `matchedNodeCount`、owner/representation node count 与 `confidence`。
+- `triggers`：来自 interaction graph 的 tap、swipe、drag、change 等触发证据。
+
+原生生成必须消费该差分：新增节点进入 owner 原生树，presentation 节点从页面主布局中分离，局部节点由状态控制可见性，删除/替换节点进入隐藏或替换集合。文字、样式、尺寸或布局属性变化统一物化为最小受影响子树的替换状态，不能因为某个属性难以原地修改而重新生成整张业务页面。
+
+状态生成节点必须携带 owner state 标识。后续状态差分只读取基础 owner 节点，不能把已生成的其他状态子树当成新增或删除证据。条件显隐只挂在增量子树根节点，后代保留各自在状态画板中的可见性，避免深层图标、文字或控件被连带过滤。
 
 ## Asset
 

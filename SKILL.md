@@ -18,7 +18,7 @@ description: 将可运行的移动端 HTML 高保真原型转换为可编译、�
 7. 纠偏时只修改产生差异的节点或组件，避免重写无关页面。
 8. 响应式页面必须从多宽度计算结果推断原生约束；禁止用运行时整页缩放代替 Auto Layout。
 9. 视觉复刻不得破坏原生 UI 架构。页面、容器、可复用 View/Cell、状态和路由按职责分层；状态变化通过数据模型驱动 Stack/Grid/Auto Layout，不在业务页面散落截图坐标或逐状态 frame。
-10. 同一页面的重复画板必须先归并为 presentation 或 local state。菜单、sheet、Cell 左滑、展开态等不得各自生成页面；结构推断存在歧义时使用 `data-ios-state-owner` 或旁路契约确认。
+10. 同一页面的重复画板必须先归并为 owner screen 的状态。去重依据是页面骨架、节点语义、文本、层级、几何与可选 `data-ios-state-key`，不能依赖 menu、sheet、Cell 左滑等案例枚举。状态画板必须生成通用 insert/remove/replace/update 差分并进入 owner 原生树，不得各自生成业务页面；归属存在歧义时使用 `data-ios-state-owner` 或旁路契约确认。
 
 ## 支持范围
 
@@ -155,7 +155,7 @@ python3 "$SKILL_ROOT/scripts/inspect_ios_sdk.py" \
 
 先读取 `references/multi-page-routing.md`。对入口运行 `scripts/discover_html_routes.cjs`，生成 `html-route-graph.json`。静态多页、History/Hash SPA 路由、单文档中的 `.page[id]`/tabpanel/`data-page` 虚拟页面和显式 `data-ios-action` 都进入图；原型展示导航标记为 discovery-only，不误当成 App 业务导航。不任意点击可能产生副作用的按钮。每个 screen 使用同一 screen ID 单独提取 render tree，无法确认的动态边保留为 `unresolvedTarget`。
 
-随后读取 `references/dynamic-interaction-discovery.md`，运行 `scripts/discover_html_interactions.cjs` 生成 `interaction-state-graph.json` 与 `html-to-ios.overrides.json`，再运行 `scripts/validate_interaction_graph.py`。必须结合 JavaScript AST 与隔离浏览器 probe 识别 addEventListener、间接函数调用、局部状态、弹层、计时完成和动态页面跳转；不能只用正则扫描源码。并排展示的重复画板先比较页面骨架、文本、增量区域和状态语义，归并为 owner screen 的 `visual-state-representation`，其入口边转为 presentation 或 local-state；不得额外生成 Screen/ViewController。源 HTML 保持只读，歧义写入带 SHA-256 指纹的旁路覆盖文件。只向用户询问会改变原生所有权或核心流程的未解析项。
+随后读取 `references/dynamic-interaction-discovery.md`，运行 `scripts/discover_html_interactions.cjs` 生成 `interaction-state-graph.json` 与 `html-to-ios.overrides.json`，再运行 `scripts/validate_interaction_graph.py`。必须结合 JavaScript AST 与隔离浏览器 probe 识别 addEventListener、间接函数调用、局部状态、弹层、计时完成和动态页面跳转；不能只用正则扫描源码。并排展示的重复画板先比较页面骨架、文本、层级和几何，归并为 owner screen 的 `visual-state-representation`。总控随后为状态画板构建 UI IR，并运行 `scripts/merge_visual_state_ir.py` 生成通用节点差分；不得额外生成业务 Screen/ViewController。源 HTML 保持只读，歧义写入带 SHA-256 指纹的旁路覆盖文件。
 
 再读取 `references/html-extraction.md`。使用 `scripts/extract_render_tree.cjs` 在固定 viewport 中运行每个页面，输出：
 

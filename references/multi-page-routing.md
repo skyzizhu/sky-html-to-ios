@@ -48,15 +48,27 @@ route discovery 阶段不任意点击普通按钮，不提交表单，也不执�
 3. 只有基础页面骨架高比例保留、增量区域有限且状态证据成立时，才推断为同页状态。
 4. 多个 owner 得分接近时输出警告；不得用文件顺序或标题相似度静默决定。
 
-归并后的画板使用 `kind=visual-state-representation`、`includeInNativeConversion=false`，并记录：
+归并后的画板使用 `kind=visual-state-representation`、`includeInNativeConversion=false`，但不能被简单丢弃。总控必须为它单独提取状态 UI IR，再与 owner screen 建立通用差分：
+
+- `insert-subtree`：状态出现了新的原生子树。
+- `remove-subtree`：状态隐藏或移除了 owner 中的子树。
+- `replace-subtree`：同一作用域内的内容被另一棵子树替换。
+- `update-node`：比较阶段发现内容、样式或几何变化；合并阶段将其规范化为最小受影响子树的 `replace-subtree`，使 SwiftUI 与 UIKit 都能直接执行。
+
+差分算法按稳定 state key、语义、文本、层级和几何证据匹配节点，不以 menu、sheet、左滑等案例名称决定是否重复。案例名称只可作为 presentation 和交互策略的辅助语义。
+
+每个状态只能和未注入任何其他状态节点的 owner 基础树比较，禁止让状态 A 的增量参与状态 B 的差分。画板中缺少某个 owner 节点本身不足以证明删除：交互入口节点必须保留；只有明确局部作用域、重叠替换、删除触发或显式契约形成充分证据时，才生成 `remove-subtree`。这可避免遮挡、简化画板或提取差异误删基础 UI。
+
+归并结果记录：
 
 - `nativeOwnerScreenId`：唯一原生页面所有者。
 - `stateRepresentation.kind`：`presentation` 或 `local-effect`。
 - `presentationStyle`：menu、sheet、popover、alert、overlay。
 - `localEffect`：swipe-actions、revealed-content 或其他局部状态。
 - `representationScreenId` 与 `sourceSelector`：用于状态内容提取和视觉基线。
+- `stateDelta`：节点匹配覆盖率、差分操作、触发方式和建议原生策略。
 
-带 `targetStateId` 的入口边进入 interaction graph。菜单、sheet、popover、alert 映射为原生 presentation；Cell 左滑优先映射到 SwiftUI swipe actions 或 UIKit contextual actions；局部展开、选择和内容切换映射为页面内状态。不得为这些状态额外生成 ViewController，也不得把整个状态画板作为新页面 push。
+带 `targetStateId` 的入口边进入 interaction graph。原生策略由差分拓扑决定：脱离页面流且覆盖 owner 的增量使用 presentation；作用于重复条目并由横向手势触发的操作使用 contextual item actions；普通新增/删除/替换/属性变化使用页面内状态。不得为这些状态额外生成业务页面，也不得把整个状态画板作为新页面 push。
 
 自动推断只负责消除明显重复。以下情况不得合并：业务标题相似但信息架构不同、列表与详情共享大量样式、相同壳层下主内容已替换、无法确认 owner 的独立画板。此时保留为独立 screen 或要求显式契约。
 

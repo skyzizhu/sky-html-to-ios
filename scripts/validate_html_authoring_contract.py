@@ -122,6 +122,15 @@ def validate(path: Path) -> dict:
                 issues.append(issue("INVALID_MODULE_ID", "error", "data-ios-module must use lower-kebab-case", line, "data-ios-module"))
         if attrs.get("data-ios-node-id"):
             node_ids.append((str(attrs["data-ios-node-id"]), line))
+        state_key = str(attrs.get("data-ios-state-key") or "").strip()
+        if state_key and not re.fullmatch(r"[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*", state_key):
+            issues.append(issue(
+                "INVALID_STATE_KEY",
+                "error",
+                "data-ios-state-key must be a stable dotted, dashed, or underscored identifier",
+                line,
+                "data-ios-state-key",
+            ))
         if attrs.get("data-ios-tab-id"):
             tab_id = str(attrs["data-ios-tab-id"])
             if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", tab_id):
@@ -167,7 +176,7 @@ def validate(path: Path) -> dict:
             value = str(attrs.get(name) or "").lower()
             if name in attrs and value not in {"", "0", "1", "false", "no", "true", "yes", "none"}:
                 issues.append(issue("INVALID_BOOLEAN", "warning", f"Prefer true/false for {name}", line, name))
-        if any(name in attrs for name in ("data-ios-state", "data-ios-animation", "data-ios-visual-state", "data-ios-owner")):
+        if any(name in attrs for name in ("data-ios-state", "data-ios-state-key", "data-ios-animation", "data-ios-visual-state", "data-ios-owner")):
             advanced_hints += 1
 
     screen_counts = Counter(item["id"] for item in screens)

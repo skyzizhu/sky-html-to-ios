@@ -295,6 +295,44 @@ def validate(data):
             for node_id in target_node_ids:
                 if node_id not in all_ids:
                     errors.append(f"{where}.targetNodeIds references missing node {node_id}")
+        state_delta = state.get("stateDelta")
+        if state_delta is not None:
+            if not isinstance(state_delta, dict):
+                errors.append(f"{where}.stateDelta must be an object")
+            else:
+                if state_delta.get("schemaVersion") != "visual-state-delta-1.0":
+                    errors.append(f"{where}.stateDelta.schemaVersion is invalid")
+                if state_delta.get("nativeStrategy") not in {
+                    "detached-presentation", "contextual-item-actions", "conditional-subtree",
+                    "conditional-removal", "subtree-replacement", "property-variant",
+                    "composite-delta",
+                }:
+                    errors.append(f"{where}.stateDelta.nativeStrategy is invalid")
+                delta_confidence = state_delta.get("confidence")
+                if (
+                    not isinstance(delta_confidence, (int, float))
+                    or isinstance(delta_confidence, bool)
+                    or not 0 <= delta_confidence <= 1
+                ):
+                    errors.append(f"{where}.stateDelta.confidence must be between 0 and 1")
+                operations = state_delta.get("operations")
+                if not isinstance(operations, list):
+                    errors.append(f"{where}.stateDelta.operations must be an array")
+                else:
+                    allowed_delta_operations = {
+                        "insert-subtree", "remove-subtree", "replace-subtree", "update-node",
+                    }
+                    for operation_index, operation in enumerate(operations):
+                        operation_where = f"{where}.stateDelta.operations[{operation_index}]"
+                        if not isinstance(operation, dict):
+                            errors.append(f"{operation_where} must be an object")
+                            continue
+                        if operation.get("kind") not in allowed_delta_operations:
+                            errors.append(f"{operation_where}.kind is invalid")
+                        for key in ("targetNodeId", "targetParentNodeId", "generatedRootNodeId"):
+                            node_id = operation.get(key)
+                            if node_id is not None and node_id not in all_ids:
+                                errors.append(f"{operation_where}.{key} references missing node {node_id}")
         confidence = state.get("confidence")
         if not isinstance(confidence, (int, float)) or isinstance(confidence, bool) or not 0 <= confidence <= 1:
             errors.append(f"{where}.confidence must be between 0 and 1")

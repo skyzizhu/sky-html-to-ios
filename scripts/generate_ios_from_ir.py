@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.33.0"
+GENERATOR_VERSION = "1.34.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -1661,6 +1661,14 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
             for item in transitions
         )
         action["stateKind"] = state_kind
+        delta_operations = (target_state.get("stateDelta") or {}).get("operations") or []
+        action["deltaRemoveNodeIDs"] = [
+            str(item.get("targetNodeId"))
+            for item in delta_operations
+            if isinstance(item, dict)
+            and item.get("kind") in {"remove-subtree", "replace-subtree"}
+            and item.get("targetNodeId")
+        ]
         action["selectionMode"] = "exclusive" if state_kind == "selection" and duplicate_state_transitions > 1 else "multiple"
         if action.get("targetStateID") and action.get("presentation"):
             presentation_by_state[str(action["targetStateID"])] = dict(action["presentation"])
@@ -1978,7 +1986,12 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
                     number(presentation_source_rect.get("width")),
                     number(presentation_source_rect.get("height")),
                 ]
-                uses_custom_overlay = str(state.get("kind") or "") == "popover-overlay"
+                presentation_contract = presentation_by_state.get(str(state.get("id"))) or {}
+                presentation_style = str(presentation_contract.get("style") or "page-sheet")
+                uses_custom_overlay = (
+                    str(state.get("kind") or "") in {"overlay", "popover-overlay"}
+                    or presentation_style in {"in-place-overlay", "menu"}
+                )
                 if uses_custom_overlay:
                     presentation_node["style"]["fixedWidth"] = source_rect[2]
                     presentation_node["style"]["fixedHeight"] = source_rect[3]
@@ -1986,10 +1999,10 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
                     "stateID": str(state.get("id")),
                     "kind": str(state.get("kind") or "sheet"),
                     "node": presentation_node,
-                    "style": str((presentation_by_state.get(str(state.get("id"))) or {}).get("style") or "page-sheet"),
-                    "detents": (presentation_by_state.get(str(state.get("id"))) or {}).get("detents") or [],
-                    "grabberVisible": (presentation_by_state.get(str(state.get("id"))) or {}).get("grabberVisible"),
-                    "interactiveDismissDisabled": bool((presentation_by_state.get(str(state.get("id"))) or {}).get("interactiveDismissDisabled", False)),
+                    "style": presentation_style,
+                    "detents": presentation_contract.get("detents") or [],
+                    "grabberVisible": presentation_contract.get("grabberVisible"),
+                    "interactiveDismissDisabled": bool(presentation_contract.get("interactiveDismissDisabled", False)),
                     "usesCustomOverlay": uses_custom_overlay,
                     "coordinateSpace": "app-root",
                     "sourceRect": source_rect,
@@ -2173,6 +2186,7 @@ struct HTMLToIOSActionSpec: Codable {{
     let stateKind: String?
     let selectionMode: String?
     let localEffect: String?
+    let deltaRemoveNodeIDs: [String]
     let feedbackText: String?
     let feedbackDurationMilliseconds: Int?
     let initiallySelected: Bool?
@@ -2683,6 +2697,15 @@ final class HTMLToIOSGeneratedStore: ObservableObject {
         }
         let routeID = spec.targetScreenID ?? spec.target
         let stateID = spec.targetStateID ?? spec.target
+        if !spec.deltaRemoveNodeIDs.isEmpty {
+            var nextHiddenNodeIDs = hiddenNodeIDs
+            if spec.deltaRemoveNodeIDs.allSatisfy({ nextHiddenNodeIDs.contains($0) }) {
+                spec.deltaRemoveNodeIDs.forEach { nextHiddenNodeIDs.remove($0) }
+            } else {
+                spec.deltaRemoveNodeIDs.forEach { nextHiddenNodeIDs.insert($0) }
+            }
+            hiddenNodeIDs = nextHiddenNodeIDs
+        }
         switch spec.action {
         case "push":
             if let routeID, let route = HTMLToIOSGeneratedRoute(rawValue: routeID) {
@@ -2707,7 +2730,7 @@ final class HTMLToIOSGeneratedStore: ObservableObject {
             if let stateID { fullScreen = PresentedState(id: stateID) }
         case "present-popover":
             if let stateID { popover = PresentedState(id: stateID) }
-        case "present-overlay", "show-dialog":
+        case "overlay", "present-overlay", "show-dialog":
             if let stateID { overlay = PresentedState(id: stateID) }
         case "dismiss", "dismiss-sheet", "dismiss-fullscreen", "dismiss-popover", "dismiss-overlay":
             sheet = nil; fullScreen = nil; popover = nil; overlay = nil
@@ -4297,6 +4320,13 @@ final class HTMLToIOSUIKitState {
             scrollAxisOverrides[variant.targetNodeID] = variant.scrollAxisOverride
         }
         let stateID = spec.targetStateID ?? spec.target
+        if !spec.deltaRemoveNodeIDs.isEmpty {
+            if spec.deltaRemoveNodeIDs.allSatisfy({ hiddenNodeIDs.contains($0) }) {
+                spec.deltaRemoveNodeIDs.forEach { hiddenNodeIDs.remove($0) }
+            } else {
+                spec.deltaRemoveNodeIDs.forEach { hiddenNodeIDs.insert($0) }
+            }
+        }
         guard let stateID else { return }
         if spec.stateKind == "selection", let nodeID = spec.targetNodeID ?? spec.sourceNodeID {
             if spec.selectionMode == "exclusive" {
@@ -6038,7 +6068,7 @@ final class HTMLToIOSGeneratedCoordinator: NSObject, UITabBarControllerDelegate 
             }
         case "dismiss", "dismiss-sheet", "dismiss-fullscreen", "dismiss-popover", "dismiss-overlay":
             currentNavigationController?.presentedViewController?.dismiss(animated: true)
-        case "present-sheet", "present-fullscreen", "present-full-screen", "present-popover", "present-overlay", "show-dialog":
+        case "present-sheet", "present-fullscreen", "present-full-screen", "present-popover", "overlay", "present-overlay", "show-dialog":
             guard let stateID, let presentation = catalog.presentation(stateID) else { return }
             if presentation.usesCustomOverlay {
                 let controller = HTMLToIOSGeneratedCustomOverlayController(

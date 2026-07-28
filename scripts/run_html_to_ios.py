@@ -700,15 +700,28 @@ class Orchestrator:
         visual_manifests: list[str] = []
         html_state_captures: list[str] = []
         visual_review_plans: list[dict[str, Any]] = []
+        state_representation_irs: list[str] = []
         self.artifacts["uiIRs"] = []
         self.artifacts["textCalibrations"] = text_calibrations
         self.artifacts["responsiveAnalyses"] = responsive_analyses
         self.artifacts["scrollBehaviorAnalyses"] = scroll_behavior_analyses
+        self.artifacts["stateRepresentationIRs"] = state_representation_irs
         if not self.args.skip_visual_baselines:
             self.artifacts["visualStateManifests"] = visual_manifests
             self.artifacts["htmlStateCaptures"] = html_state_captures
             self.artifacts["visualReviewPlans"] = visual_review_plans
         screen_root = self.report_dir / "screens"
+        route_data = json.loads(route_graph.read_text(encoding="utf-8"))
+        route_screens = {
+            str(item.get("id")): item
+            for item in route_data.get("screens") or []
+            if isinstance(item, dict) and item.get("id")
+        }
+        visual_states_by_owner: dict[str, list[dict[str, Any]]] = {}
+        for item in route_data.get("visualStates") or []:
+            if not isinstance(item, dict) or not item.get("ownerScreenId"):
+                continue
+            visual_states_by_owner.setdefault(str(item["ownerScreenId"]), []).append(item)
         for screen in screens:
             screen_id = str(screen.get("id") or f"screen-{len(ir_paths) + 1}")
             screen_dir = screen_root / safe_app_name(screen_id).lower()
@@ -748,6 +761,79 @@ class Orchestrator:
                 "--appearance", self.args.appearance,
             ]
             self.run_command(f"build-ui-ir-{screen_id}", build_command)
+            merge_states: list[str] = []
+            for state in visual_states_by_owner.get(screen_id, []):
+                state_id = str(state.get("id") or "")
+                representation_id = str(state.get("representationScreenId") or "")
+                representation_screen = route_screens.get(representation_id) or {}
+                state_selector = str(
+                    state.get("sourceSelector")
+                    or representation_screen.get("rootSelector")
+                    or ""
+                )
+                if not state_id or not state_selector:
+                    self.warnings.append(
+                        f"Visual state {state_id or representation_id} has no extractable source selector."
+                    )
+                    continue
+                state_dir = screen_dir / "state-representations" / safe_app_name(state_id).lower()
+                state_render_tree = state_dir / "render-tree.json"
+                state_screenshot = state_dir / "html-baseline.png"
+                self.run_command(
+                    f"extract-state-representation-{state_id}",
+                    [
+                        self.node,
+                        self.scripts / "extract_render_tree.cjs",
+                        "--html", html,
+                        "--out", state_render_tree,
+                        "--screenshot", state_screenshot,
+                        "--selector", state_selector,
+                        "--width", str(self.args.width),
+                        "--height", str(self.args.height),
+                    ],
+                    environment=self.node_environment,
+                )
+                state_render_data = json.loads(state_render_tree.read_text(encoding="utf-8"))
+                state_nodes = state_render_data.get("nodes") or []
+                if not state_nodes:
+                    raise OrchestrationError(
+                        "extract-state-representation",
+                        f"Visual state {state_id} produced no render-tree nodes.",
+                    )
+                state_ir = state_dir / "ui-ir.json"
+                self.run_command(
+                    f"build-state-representation-ir-{state_id}",
+                    [
+                        sys.executable,
+                        self.scripts / "build_ui_ir.py",
+                        state_render_tree,
+                        "--out", state_ir,
+                        "--screen-id", representation_id or state_id,
+                        "--screen-name", str(representation_screen.get("title") or state_id),
+                        "--root-runtime-id", str(state_nodes[0]["runtimeId"]),
+                        "--ui-stack", ui_stack,
+                        "--sdk-report", sdk_report,
+                        "--minimum-ios", minimum_ios,
+                        "--target-width", str(self.args.width),
+                        "--target-height", str(self.args.height),
+                        "--device", self.args.device,
+                        "--appearance", self.args.appearance,
+                    ],
+                )
+                state_representation_irs.append(str(state_ir))
+                merge_states.append(f"{state_id}={state_ir}")
+            if merge_states:
+                merged_ir = screen_dir / "ui-ir-with-states.json"
+                merge_command: list[str | Path] = [
+                    sys.executable,
+                    self.scripts / "merge_visual_state_ir.py",
+                    "--owner", ir_path,
+                    "--out", merged_ir,
+                ]
+                for state_value in merge_states:
+                    merge_command.extend(["--state", state_value])
+                self.run_command(f"merge-state-representations-{screen_id}", merge_command)
+                merged_ir.replace(ir_path)
             self.run_command(
                 f"validate-ui-ir-{screen_id}",
                 [sys.executable, self.scripts / "validate_ui_ir.py", ir_path],

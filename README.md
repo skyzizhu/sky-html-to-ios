@@ -112,7 +112,8 @@ The default deployment target is iOS 16 and can be configured. Newer APIs requir
 - Scans page entries, page containers, and visible states.
 - Builds `html-route-graph.json` and `interaction-state-graph.json`.
 - Deduplicates repeated artboards that represent one screen with a menu, sheet, alert, overlay, expanded region, or revealed swipe actions.
-- Associates each state artboard with one native owner screen, preserving its trigger and visual reference instead of generating another screen or view controller.
+- Builds a separate state IR and computes generic insert, remove, replace, style/content, and geometry deltas without relying on a list of named examples.
+- Associates each state artboard with one native owner screen and merges its incremental native subtree instead of generating another business screen or view controller.
 - Separates navigation, local state, overlays, modal presentation, and external links.
 - Preserves prerequisite action sequences.
 - Reports close owner matches and low-confidence transitions instead of inventing behavior; `data-ios-state-owner` can make ownership deterministic.
@@ -550,7 +551,7 @@ High-risk inputs include runtime-generated DOM, closed Shadow DOM, cross-origin 
 The first usable release has passed:
 
 - real SwiftUI and UIKit builds;
-- 90 automated tests in the current development audit;
+- 100 automated tests in the current development audit;
 - UI IR, decision, naming, generator, route, and interaction tests;
 - visual-difference and geometry tests;
 - real Simulator responsive matrices;

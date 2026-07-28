@@ -77,6 +77,7 @@ class BuildUIIRTests(unittest.TestCase):
                 render_node("app", None, "main", {"x": 0, "y": 0, "width": 393, "height": 852}),
                 render_node("open", "app", "button", {"x": 320, "y": 20, "width": 44, "height": 44}, dom_id="open"),
             ]
+            nodes[1]["attributes"]["data-ios-target"] = "home-menu"
             render_tree = {
                 "schemaVersion": "render-tree-1.2",
                 "source": {"kind": "html-file", "entry": "/tmp/example.html"},
@@ -104,7 +105,7 @@ class BuildUIIRTests(unittest.TestCase):
                 }],
                 "interactions": [{
                     "id": "interaction-1",
-                    "sourceSelector": "#open",
+                    "sourceSelector": 'button[data-ios-target="home-menu"]',
                     "sourceScreenId": "home",
                     "trigger": "tap",
                     "confidence": 0.91,
