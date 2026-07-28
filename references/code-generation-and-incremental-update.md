@@ -47,7 +47,10 @@ UIKit 将 `--ui-stack` 改为 `uikit`。如果所有 IR 中的 `target.uiStack` 
 - `Core/Data/HTMLToIOSGeneratedData.swift`：bundle 资源加载与解码。
 - `Core/Navigation/`：App 级 Navigation/Tab 容器和页面工厂。
 - `Core/Runtime/HTMLToIOSGeneratedRuntime.swift`：SwiftUI/UIKit 原生节点、布局和交互运行时。
+- `<Module>/Models/<Prefix><Screen>UIContract.swift`：screen、Section 和 item node ID 的稳定强类型归属。
 - `<Module>/Screens` 或 `<Module>/Controllers`：按业务模块归组的完整原生页面。
+- `<Module>/Sections`：由六层架构计划生成并实际注册到渲染链路的 Section 容器。
+- `<Module>/Cells`：真实的 `UITableViewCell`/`UICollectionViewCell` 子类，或 SwiftUI Item View。
 - `<Module>/Views`：页面内容和模块内封装控件。
 - `Resources/Payload/HTMLToIOSGeneratedPayload.json`：多页面节点树、路由、状态和呈现载荷。
 - `Resources/Assets/HTMLToIOSGeneratedAssets.xcassets`：转换后的本地资源。
@@ -56,6 +59,14 @@ UIKit 将 `--ui-stack` 改为 `uikit`。如果所有 IR 中的 `target.uiStack` 
 业务模块优先读取 UI IR `screen.moduleId`；没有显式模块时只使用稳定 screen ID 前缀归组。跨模块组件进入 `Shared/Components/`；不生成空目录和空架构文件。完整命名、归属和迁移规则见 `generated-source-layout.md`。
 
 SwiftUI 入口符号是 `HTMLToIOSGeneratedRootView`；UIKit 入口符号是 `HTMLToIOSGeneratedRootViewController`。
+
+## 强类型生成边界
+
+- `native-architecture-plan-1.1` 的 `reusableContent.sections` 必须物化为 screen 专属 Section 类型，不能只停留在 JSON 报告中。
+- UIKit 的复用内容必须注册并 dequeue 生成的 Cell 子类；SwiftUI 的 Lazy 内容必须路由到生成的 Item View。
+- 页面专属类型通过稳定 node ID registry 接入通用 Runtime。Section 渲染自身时只绕过自己的注册，后代节点仍可命中 Item/Cell 注册。
+- 通用 Runtime 只负责跨页面的节点样式、布局、状态和交互机制；不得包含某个 screen 的名称、节点 ID 或视觉特例。
+- 静态、低复杂度区域可以继续由模块 `ContentView` 和通用叶子组件组合，不为每个 DOM 节点机械生成 Swift 类型。
 
 ## 增量所有权
 

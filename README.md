@@ -369,17 +369,23 @@ The workflow reuses project naming and components, respects routers and design s
         │   ├── Navigation/
         │   └── Runtime/
         ├── Home/
+        │   ├── Models/
         │   ├── Screens/ or Controllers/
+        │   ├── Sections/
+        │   ├── Cells/
         │   └── Views/
         ├── List/
+        │   ├── Models/
         │   ├── Screens/ or Controllers/
+        │   ├── Sections/
+        │   ├── Cells/
         │   └── Views/
         └── Resources/
             ├── Assets/
             └── Payload/
 ```
 
-Features own their screens and views. Shared navigation, Tab, and runtime code live under `Core`.
+Features own their screens, typed UI contracts, sections, cells, and views. The architecture plan is materialized into real Swift types: UIKit registers generated `UITableViewCell`/`UICollectionViewCell` subclasses, while SwiftUI routes reusable nodes to typed item views. Shared navigation, Tab, and cross-screen runtime mechanics live under `Core`.
 
 ### Incremental updates
 
@@ -540,7 +546,7 @@ High-risk inputs include runtime-generated DOM, closed Shadow DOM, cross-origin 
 The first usable release has passed:
 
 - real SwiftUI and UIKit builds;
-- 85 automated tests in the current development audit;
+- 86 automated tests in the current development audit;
 - UI IR, decision, naming, generator, route, and interaction tests;
 - visual-difference and geometry tests;
 - real Simulator responsive matrices;

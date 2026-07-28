@@ -137,7 +137,21 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                             "usesCellReuse": True,
                             "nodeStrategies": [{"nodeId": "home.list", "kind": "table-view"}],
                         },
-                        "reusableContent": {"sections": [], "usesReuse": True},
+                        "reusableContent": {
+                            "sections": [{
+                                "id": "home.section.0",
+                                "sourceNodeId": "home.list",
+                                "kind": "list",
+                                "scrollAxis": "vertical",
+                                "itemNodeIds": [f"home.row.{index}" for index in range(6)],
+                                "itemCount": 6,
+                                "itemTemplateNodeId": "home.row.0",
+                                "usesReuse": True,
+                                "headerNodeId": None,
+                                "footerNodeId": None,
+                            }],
+                            "usesReuse": True,
+                        },
                         "leafComponents": [],
                     },
                 }],
@@ -158,6 +172,48 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("UICollectionViewCompositionalLayout", runtime)
             self.assertIn('spec.nativeContainerKind == "table-view"', runtime)
             self.assertIn("let usesOuterScroll = screen.contentContainer.kind == \"scroll-view\"", runtime)
+            self.assertTrue((out / "Home/Models/HTMLToIOSHomeUIContract.swift").is_file())
+            self.assertTrue((out / "Home/Sections/HTMLToIOSHomeSection1View.swift").is_file())
+            self.assertTrue((out / "Home/Cells/HTMLToIOSHomeSection1TableViewCell.swift").is_file())
+            controller = (out / "Home/Controllers/HTMLToIOSHomeViewController.swift").read_text(encoding="utf-8")
+            self.assertIn("configureTypedComponents", controller)
+            self.assertIn("registerTableCell", controller)
+
+            swiftui_out = root / "SwiftUI" / "Generated" / "HTMLToIOS"
+            self.run_generator(
+                [ir_path], swiftui_out, ui_stack="swiftui", architecture_plan=architecture_path,
+            )
+            self.assertTrue((swiftui_out / "Home/Sections/HTMLToIOSHomeSection1View.swift").is_file())
+            item_path = swiftui_out / "Home/Cells/HTMLToIOSHomeSection1ItemView.swift"
+            self.assertTrue(item_path.is_file())
+            item_view = item_path.read_text(encoding="utf-8")
+            self.assertIn("let registry: HTMLToIOSTypedViewRegistry", item_view)
+            self.assertIn("bypassTypedNodeID: spec.id", item_view)
+            content = (swiftui_out / "Home/Views/HTMLToIOSHomeContentView.swift").read_text(encoding="utf-8")
+            self.assertIn("HTMLToIOSTypedViewRegistry", content)
+            self.assertIn("HTMLToIOSHomeSection1ItemView", content)
+            if shutil.which("xcrun"):
+                sdk = subprocess.run(
+                    ["xcrun", "--sdk", "iphonesimulator", "--show-sdk-path"],
+                    text=True,
+                    capture_output=True,
+                )
+                if sdk.returncode == 0:
+                    for ui_stack, generated_dir in (("uikit", out), ("swiftui", swiftui_out)):
+                        sources = sorted(str(path) for path in generated_dir.rglob("*.swift"))
+                        completed = subprocess.run(
+                            [
+                                "xcrun", "--sdk", "iphonesimulator", "swiftc",
+                                "-target", "arm64-apple-ios16.0-simulator", "-typecheck", *sources,
+                            ],
+                            text=True,
+                            capture_output=True,
+                        )
+                        self.assertEqual(
+                            completed.returncode,
+                            0,
+                            f"{ui_stack} typed architecture:\n{completed.stdout}{completed.stderr}",
+                        )
 
     def test_generated_swiftui_and_uikit_sources_typecheck_when_xcode_is_available(self) -> None:
         if shutil.which("xcrun") is None:

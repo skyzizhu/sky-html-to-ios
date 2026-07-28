@@ -327,6 +327,32 @@ def content_container_plan(
             "itemCount": len(children.get(root_id) or []),
             "usesReuse": True,
         })
+    existing_section_node_ids = {str(section.get("sourceNodeId") or "") for section in sections}
+    for strategy in node_strategies:
+        source_id = str(strategy.get("nodeId") or "")
+        if not strategy.get("usesReuse") or not source_id or source_id in existing_section_node_ids:
+            continue
+        source = nodes.get(source_id) or {}
+        item_ids = list(children.get(source_id) or [])
+        source_semantic = str(source.get("semanticType") or "collection")
+        section_kind = (
+            "horizontal-carousel" if source_semantic == "carousel" or scroll_axis(source) == "horizontal"
+            else "grid" if source_semantic in {"grid", "collection", "data-table"}
+            else "list"
+        )
+        sections.append({
+            "id": f"{screen.get('id')}.section.{len(sections)}",
+            "sourceNodeId": source_id,
+            "kind": section_kind,
+            "scrollAxis": "horizontal" if section_kind == "horizontal-carousel" else "vertical",
+            "itemNodeIds": item_ids,
+            "itemCount": len(item_ids),
+            "itemTemplateNodeId": item_ids[0] if item_ids else None,
+            "usesReuse": True,
+            "headerNodeId": next((item for item in item_ids if nodes[item].get("semanticType") in {"header", "table-header"}), None),
+            "footerNodeId": next((item for item in item_ids if nodes[item].get("semanticType") == "footer"), None),
+        })
+        existing_section_node_ids.add(source_id)
 
     return {
         "nodeId": selected_node_id,
@@ -475,10 +501,11 @@ def screen_plan(ir: dict[str, Any], report: dict[str, Any] | None, ui_stack: str
         "contentContainer": content_container,
         "reusableContent": {
             "sections": sections,
-            "usesReuse": content_container["usesCellReuse"],
+            "usesReuse": any(section.get("usesReuse") for section in sections),
             "cellStrategy": (
                 "UITableViewCell" if content_container["kind"] == "table-view"
                 else "UICollectionViewCell" if content_container["usesCellReuse"]
+                else "per-section" if any(section.get("usesReuse") for section in sections)
                 else "none"
             ),
         },

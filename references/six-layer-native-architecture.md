@@ -76,6 +76,15 @@ Table/Collection 计划必须保存：
 
 当前 HTML 可见内容是视觉 fixture，不据此生成网络接口、分页器或业务 ViewModel。Cell 内仍保留 source node ID 以供几何和截图追踪。
 
+代码生成阶段必须把本层计划物化为 screen 专属源码：
+
+- 每个 Section 生成 `<Prefix><Screen>SectionNView`；
+- UIKit 复用项生成真实 `UITableViewCell` 或 `UICollectionViewCell` 子类并注册；
+- SwiftUI 复用项生成强类型 Item View，并由 typed registry 路由；
+- `<Prefix><Screen>UIContract` 保存稳定的 Section 和 item node ID；
+- 嵌套横向 Collection 即使不拥有页面根滚动，也必须进入 `reusableContent.sections`；
+- 不为每一个装饰性 DOM 节点生成独立类型，叶子仍按职责和复用价值拆分。
+
 ## 6. Leaf Component
 
 每个最终叶子节点必须获得明确的 SwiftUI/UIKit 类型、样式策略、交互性、无障碍 ID、置信度和理由。
@@ -129,4 +138,4 @@ layers.reusableContent
 layers.leafComponents
 ```
 
-代码生成器必须校验六层完整性，并消费 `contentContainer.nodeStrategies`。缺层、重复滚动所有权或未解决的低置信度核心容器不得进入正式生成。
+代码生成器必须校验六层完整性，并消费 `contentContainer.nodeStrategies` 与 `reusableContent.sections`。计划中的 screen、Section、Cell/Item 必须在生成源码中可追溯，不能只由通用 JSON NodeRenderer 承担全部页面架构。缺层、重复滚动所有权或未解决的低置信度核心容器不得进入正式生成。

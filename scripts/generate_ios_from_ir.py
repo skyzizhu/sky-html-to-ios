@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.30.0"
+GENERATOR_VERSION = "1.31.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -3226,23 +3226,48 @@ private struct HTMLToIOSRadioToggleStyle: ToggleStyle {
     }
 }
 
+struct HTMLToIOSTypedViewRegistry {
+    let build: (
+        _ nodeID: String,
+        _ store: HTMLToIOSGeneratedStore,
+        _ spec: HTMLToIOSNodeSpec,
+        _ registry: HTMLToIOSTypedViewRegistry
+    ) -> AnyView?
+}
+
 struct HTMLToIOSNativeNodeView: View {
     @ObservedObject var store: HTMLToIOSGeneratedStore
     let spec: HTMLToIOSNodeSpec
     let textOverrides: [String: String]
+    let typedRegistry: HTMLToIOSTypedViewRegistry?
+    let bypassTypedNodeID: String?
     @FocusState private var isInputFocused: Bool
     @Environment(\.htmlToIOSControlVisualState) private var inheritedControlVisualState
 
-    init(store: HTMLToIOSGeneratedStore, spec: HTMLToIOSNodeSpec, textOverrides: [String: String] = [:]) {
+    init(
+        store: HTMLToIOSGeneratedStore,
+        spec: HTMLToIOSNodeSpec,
+        textOverrides: [String: String] = [:],
+        typedRegistry: HTMLToIOSTypedViewRegistry? = nil,
+        bypassTypedNodeID: String? = nil
+    ) {
         self.store = store
         self.spec = spec
         self.textOverrides = textOverrides
+        self.typedRegistry = typedRegistry
+        self.bypassTypedNodeID = bypassTypedNodeID
     }
 
     @ViewBuilder var body: some View {
         if !store.hiddenNodeIDs.contains(spec.id) && (spec.visibleWhenStateID == nil || store.flags.contains(spec.visibleWhenStateID!)) {
-            interactiveContent
-                .transition(.asymmetric(insertion: .opacity, removal: .move(edge: .trailing).combined(with: .opacity)))
+            if spec.id != bypassTypedNodeID,
+               let registry = typedRegistry,
+               let typed = registry.build(spec.id, store, spec, registry) {
+                typed
+            } else {
+                interactiveContent
+                    .transition(.asymmetric(insertion: .opacity, removal: .move(edge: .trailing).combined(with: .opacity)))
+            }
         }
     }
 
@@ -3275,7 +3300,13 @@ struct HTMLToIOSNativeNodeView: View {
         .overlay {
             ZStack {
                 ForEach(spec.overlayChildren) { child in
-                    HTMLToIOSNativeNodeView(store: store, spec: child, textOverrides: textOverrides)
+                    HTMLToIOSNativeNodeView(
+                        store: store,
+                        spec: child,
+                        textOverrides: textOverrides,
+                        typedRegistry: typedRegistry,
+                        bypassTypedNodeID: bypassTypedNodeID
+                    )
                 }
             }
         }
@@ -3726,7 +3757,15 @@ struct HTMLToIOSNativeNodeView: View {
             LazyVGrid(columns: gridColumns, spacing: spec.style.spacing ?? 0) { dynamicOrOrderedContent }
         } else if spec.axis == "overlay" {
             ZStack(alignment: .center) {
-                ForEach(spec.children) { child in HTMLToIOSNativeNodeView(store: store, spec: child, textOverrides: textOverrides) }
+                ForEach(spec.children) { child in
+                    HTMLToIOSNativeNodeView(
+                        store: store,
+                        spec: child,
+                        textOverrides: textOverrides,
+                        typedRegistry: typedRegistry,
+                        bypassTypedNodeID: bypassTypedNodeID
+                    )
+                }
             }
                 .frame(width: overlayWidth, height: overlayHeight)
         } else {
@@ -3753,7 +3792,13 @@ struct HTMLToIOSNativeNodeView: View {
 
     @ViewBuilder private func dynamicContentItem(_ item: HTMLToIOSDynamicContentItemSpec) -> some View {
         if let template = spec.children.first(where: { $0.id == item.templateNodeID }) ?? spec.children.first {
-            HTMLToIOSNativeNodeView(store: store, spec: template, textOverrides: item.textByNodeID)
+            HTMLToIOSNativeNodeView(
+                store: store,
+                spec: template,
+                textOverrides: item.textByNodeID,
+                typedRegistry: typedRegistry,
+                bypassTypedNodeID: bypassTypedNodeID
+            )
         }
     }
 
@@ -3834,7 +3879,13 @@ struct HTMLToIOSNativeNodeView: View {
             }
         } else if let childID = item.childID,
                   let child = spec.children.first(where: { $0.id == childID }) {
-            HTMLToIOSNativeNodeView(store: store, spec: child, textOverrides: textOverrides)
+            HTMLToIOSNativeNodeView(
+                store: store,
+                spec: child,
+                textOverrides: textOverrides,
+                typedRegistry: typedRegistry,
+                bypassTypedNodeID: bypassTypedNodeID
+            )
                 .frame(maxWidth: (child.style.flexGrow ?? 0) > 0 ? .infinity : nil)
         }
     }
@@ -3899,10 +3950,11 @@ struct HTMLToIOSGeneratedToolbarContent: ToolbarContent {
 struct HTMLToIOSGeneratedScrollContent: View {
     @ObservedObject var store: HTMLToIOSGeneratedStore
     let screen: HTMLToIOSScreenSpec
+    let typedRegistry: HTMLToIOSTypedViewRegistry?
 
     @ViewBuilder var body: some View {
         if ["static-view", "static-grid", "static-list"].contains(screen.contentContainer.kind) {
-            HTMLToIOSNativeNodeView(store: store, spec: screen.root)
+            HTMLToIOSNativeNodeView(store: store, spec: screen.root, typedRegistry: typedRegistry)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .accessibilityIdentifier(screen.root.id)
                 .background {
@@ -3912,7 +3964,7 @@ struct HTMLToIOSGeneratedScrollContent: View {
         } else {
             ScrollViewReader { proxy in
                 ScrollView(.vertical) {
-                    HTMLToIOSNativeNodeView(store: store, spec: scrollRoot)
+                    HTMLToIOSNativeNodeView(store: store, spec: scrollRoot, typedRegistry: typedRegistry)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                         .id(screen.root.id)
                 }
@@ -3948,6 +4000,7 @@ private extension HTMLToIOSNodeSpec {
 struct HTMLToIOSGeneratedScreenView: View {
     @ObservedObject var store: HTMLToIOSGeneratedStore
     let screen: HTMLToIOSScreenSpec
+    let typedRegistry: HTMLToIOSTypedViewRegistry?
 
     var body: some View {
         insetContent
@@ -3955,7 +4008,7 @@ struct HTMLToIOSGeneratedScreenView: View {
     }
 
     private var scrollContent: some View {
-        HTMLToIOSGeneratedScrollContent(store: store, screen: screen)
+        HTMLToIOSGeneratedScrollContent(store: store, screen: screen, typedRegistry: typedRegistry)
     }
 
     private var navigationContent: some View {
@@ -4008,14 +4061,14 @@ struct HTMLToIOSGeneratedScreenView: View {
 
     @ViewBuilder private var topBarContent: some View {
         if let topBar = screen.topBar {
-            HTMLToIOSNativeNodeView(store: store, spec: topBar)
+            HTMLToIOSNativeNodeView(store: store, spec: topBar, typedRegistry: typedRegistry)
                 .frame(maxWidth: .infinity)
         }
     }
 
     @ViewBuilder private var bottomBarContent: some View {
         if let bottomBar = screen.bottomBar {
-            HTMLToIOSNativeNodeView(store: store, spec: bottomBar)
+            HTMLToIOSNativeNodeView(store: store, spec: bottomBar, typedRegistry: typedRegistry)
                 .frame(maxWidth: .infinity)
                 .background { Color(htmlToIOS: bottomBar.style.background).ignoresSafeArea(edges: .bottom) }
         }
@@ -4389,7 +4442,7 @@ final class HTMLToIOSStatefulControl: UIControl {
     }
 }
 
-private final class HTMLToIOSGeneratedTableCell: UITableViewCell {
+class HTMLToIOSGeneratedTableCell: UITableViewCell {
     static let reuseIdentifier = "HTMLToIOSGeneratedTableCell"
 
     func install(_ generatedView: UIView) {
@@ -4408,27 +4461,35 @@ private final class HTMLToIOSGeneratedTableCell: UITableViewCell {
 private final class HTMLToIOSGeneratedTableView: UITableView, UITableViewDataSource {
     private let itemSpecs: [HTMLToIOSNodeSpec]
     private let render: (HTMLToIOSNodeSpec) -> UIView
+    private let cellType: (HTMLToIOSNodeSpec) -> HTMLToIOSGeneratedTableCell.Type
 
-    init(itemSpecs: [HTMLToIOSNodeSpec], render: @escaping (HTMLToIOSNodeSpec) -> UIView) {
+    init(
+        itemSpecs: [HTMLToIOSNodeSpec],
+        render: @escaping (HTMLToIOSNodeSpec) -> UIView,
+        cellType: @escaping (HTMLToIOSNodeSpec) -> HTMLToIOSGeneratedTableCell.Type
+    ) {
         self.itemSpecs = itemSpecs
         self.render = render
+        self.cellType = cellType
         super.init(frame: .zero, style: .plain)
         dataSource = self
         separatorStyle = .none
         rowHeight = UITableView.automaticDimension
         estimatedRowHeight = 72
         backgroundColor = .clear
-        register(HTMLToIOSGeneratedTableCell.self, forCellReuseIdentifier: HTMLToIOSGeneratedTableCell.reuseIdentifier)
+        for spec in itemSpecs {
+            let type = cellType(spec)
+            register(type, forCellReuseIdentifier: String(reflecting: type))
+        }
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { itemSpecs.count }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(
-            withIdentifier: HTMLToIOSGeneratedTableCell.reuseIdentifier,
-            for: indexPath
-        ) as! HTMLToIOSGeneratedTableCell
+        let type = cellType(itemSpecs[indexPath.row])
+        let cell = tableView.dequeueReusableCell(withIdentifier: String(reflecting: type), for: indexPath)
+            as! HTMLToIOSGeneratedTableCell
         cell.selectionStyle = .none
         cell.backgroundColor = .clear
         cell.install(render(itemSpecs[indexPath.row]))
@@ -4436,7 +4497,7 @@ private final class HTMLToIOSGeneratedTableView: UITableView, UITableViewDataSou
     }
 }
 
-private final class HTMLToIOSGeneratedCollectionCell: UICollectionViewCell {
+class HTMLToIOSGeneratedCollectionCell: UICollectionViewCell {
     static let reuseIdentifier = "HTMLToIOSGeneratedCollectionCell"
 
     func install(_ generatedView: UIView) {
@@ -4455,10 +4516,16 @@ private final class HTMLToIOSGeneratedCollectionCell: UICollectionViewCell {
 private final class HTMLToIOSGeneratedCollectionView: UICollectionView, UICollectionViewDataSource {
     private let itemSpecs: [HTMLToIOSNodeSpec]
     private let render: (HTMLToIOSNodeSpec) -> UIView
+    private let cellType: (HTMLToIOSNodeSpec) -> HTMLToIOSGeneratedCollectionCell.Type
 
-    init(spec: HTMLToIOSNodeSpec, render: @escaping (HTMLToIOSNodeSpec) -> UIView) {
+    init(
+        spec: HTMLToIOSNodeSpec,
+        render: @escaping (HTMLToIOSNodeSpec) -> UIView,
+        cellType: @escaping (HTMLToIOSNodeSpec) -> HTMLToIOSGeneratedCollectionCell.Type
+    ) {
         self.itemSpecs = spec.children
         self.render = render
+        self.cellType = cellType
         let layout = UICollectionViewFlowLayout()
         layout.scrollDirection = (spec.style.scrollAxis == "horizontal" || spec.semantic == "carousel") ? .horizontal : .vertical
         layout.minimumLineSpacing = spec.style.spacing ?? 0
@@ -4469,15 +4536,19 @@ private final class HTMLToIOSGeneratedCollectionView: UICollectionView, UICollec
         backgroundColor = .clear
         showsHorizontalScrollIndicator = layout.scrollDirection == .horizontal
         showsVerticalScrollIndicator = layout.scrollDirection == .vertical
-        register(HTMLToIOSGeneratedCollectionCell.self, forCellWithReuseIdentifier: HTMLToIOSGeneratedCollectionCell.reuseIdentifier)
+        for item in itemSpecs {
+            let type = cellType(item)
+            register(type, forCellWithReuseIdentifier: String(reflecting: type))
+        }
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int { itemSpecs.count }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        let type = cellType(itemSpecs[indexPath.item])
         let cell = collectionView.dequeueReusableCell(
-            withReuseIdentifier: HTMLToIOSGeneratedCollectionCell.reuseIdentifier,
+            withReuseIdentifier: String(reflecting: type),
             for: indexPath
         ) as! HTMLToIOSGeneratedCollectionCell
         cell.install(render(itemSpecs[indexPath.item]))
@@ -4488,10 +4559,16 @@ private final class HTMLToIOSGeneratedCollectionView: UICollectionView, UICollec
 private final class HTMLToIOSGeneratedCompositionalCollectionView: UICollectionView, UICollectionViewDataSource {
     private let sectionSpecs: [HTMLToIOSNodeSpec]
     private let render: (HTMLToIOSNodeSpec) -> UIView
+    private let cellType: (HTMLToIOSNodeSpec) -> HTMLToIOSGeneratedCollectionCell.Type
 
-    init(spec: HTMLToIOSNodeSpec, render: @escaping (HTMLToIOSNodeSpec) -> UIView) {
+    init(
+        spec: HTMLToIOSNodeSpec,
+        render: @escaping (HTMLToIOSNodeSpec) -> UIView,
+        cellType: @escaping (HTMLToIOSNodeSpec) -> HTMLToIOSGeneratedCollectionCell.Type
+    ) {
         self.sectionSpecs = spec.children
         self.render = render
+        self.cellType = cellType
         let sections = spec.children
         let layout = UICollectionViewCompositionalLayout { sectionIndex, _ in
             guard sections.indices.contains(sectionIndex) else { return nil }
@@ -4523,7 +4600,12 @@ private final class HTMLToIOSGeneratedCompositionalCollectionView: UICollectionV
         super.init(frame: .zero, collectionViewLayout: layout)
         dataSource = self
         backgroundColor = .clear
-        register(HTMLToIOSGeneratedCollectionCell.self, forCellWithReuseIdentifier: HTMLToIOSGeneratedCollectionCell.reuseIdentifier)
+        for section in sectionSpecs {
+            for item in section.children.isEmpty ? [section] : section.children {
+                let type = cellType(item)
+                register(type, forCellWithReuseIdentifier: String(reflecting: type))
+            }
+        }
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
@@ -4535,12 +4617,13 @@ private final class HTMLToIOSGeneratedCompositionalCollectionView: UICollectionV
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-        let cell = collectionView.dequeueReusableCell(
-            withReuseIdentifier: HTMLToIOSGeneratedCollectionCell.reuseIdentifier,
-            for: indexPath
-        ) as! HTMLToIOSGeneratedCollectionCell
         let section = sectionSpecs[indexPath.section]
         let item = section.children.indices.contains(indexPath.item) ? section.children[indexPath.item] : section
+        let type = cellType(item)
+        let cell = collectionView.dequeueReusableCell(
+            withReuseIdentifier: String(reflecting: type),
+            for: indexPath
+        ) as! HTMLToIOSGeneratedCollectionCell
         cell.install(render(item))
         return cell
     }
@@ -4548,23 +4631,54 @@ private final class HTMLToIOSGeneratedCompositionalCollectionView: UICollectionV
 
 final class HTMLToIOSNodeRenderer {
     typealias ActionHandler = (HTMLToIOSActionSpec?) -> Void
+    typealias TypedViewBuilder = (HTMLToIOSNodeSpec, HTMLToIOSNodeRenderer) -> UIView
     private let actionHandler: ActionHandler
     private let state: HTMLToIOSUIKitState
+    private var typedViewBuilders: [String: TypedViewBuilder] = [:]
+    private var typedTableCellTypes: [String: HTMLToIOSGeneratedTableCell.Type] = [:]
+    private var typedCollectionCellTypes: [String: HTMLToIOSGeneratedCollectionCell.Type] = [:]
 
     init(state: HTMLToIOSUIKitState, actionHandler: @escaping ActionHandler) {
         self.state = state
         self.actionHandler = actionHandler
     }
 
-    func makeView(_ spec: HTMLToIOSNodeSpec) -> UIView {
+    func registerView(nodeID: String, builder: @escaping TypedViewBuilder) {
+        typedViewBuilders[nodeID] = builder
+    }
+
+    func registerTableCell(nodeID: String, type: HTMLToIOSGeneratedTableCell.Type) {
+        typedTableCellTypes[nodeID] = type
+    }
+
+    func registerCollectionCell(nodeID: String, type: HTMLToIOSGeneratedCollectionCell.Type) {
+        typedCollectionCellTypes[nodeID] = type
+    }
+
+    func makeView(_ spec: HTMLToIOSNodeSpec, bypassingTypedNodeID: String? = nil) -> UIView {
+        if spec.id != bypassingTypedNodeID, let builder = typedViewBuilders[spec.id] {
+            return builder(spec, self)
+        }
         let view: UIView
         let effectiveScrollAxis = state.scrollAxisOverrides[spec.id] ?? spec.style.scrollAxis ?? "none"
         if spec.nativeContainerKind == "compositional-collection" {
-            view = HTMLToIOSGeneratedCompositionalCollectionView(spec: spec, render: makeView)
+            view = HTMLToIOSGeneratedCompositionalCollectionView(
+                spec: spec,
+                render: { [weak self] item in self?.makeView(item) ?? UIView() },
+                cellType: { [weak self] item in self?.typedCollectionCellTypes[item.id] ?? HTMLToIOSGeneratedCollectionCell.self }
+            )
         } else if spec.nativeContainerKind == "table-view" {
-            view = HTMLToIOSGeneratedTableView(itemSpecs: spec.children, render: makeView)
+            view = HTMLToIOSGeneratedTableView(
+                itemSpecs: spec.children,
+                render: { [weak self] item in self?.makeView(item) ?? UIView() },
+                cellType: { [weak self] item in self?.typedTableCellTypes[item.id] ?? HTMLToIOSGeneratedTableCell.self }
+            )
         } else if spec.nativeContainerKind == "collection-view" {
-            view = HTMLToIOSGeneratedCollectionView(spec: spec, render: makeView)
+            view = HTMLToIOSGeneratedCollectionView(
+                spec: spec,
+                render: { [weak self] item in self?.makeView(item) ?? UIView() },
+                cellType: { [weak self] item in self?.typedCollectionCellTypes[item.id] ?? HTMLToIOSGeneratedCollectionCell.self }
+            )
         } else if effectiveScrollAxis != "none" && spec.semantic != "carousel" && spec.semantic != "scroll" {
             view = makeScrollContainer(spec)
         } else {
@@ -5606,6 +5720,7 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
         generatedScrollView = nil; generatedTopBar = nil; generatedBottomBar = nil
         view.subviews.forEach { $0.removeFromSuperview() }
         let renderer = HTMLToIOSNodeRenderer(state: generatedState, actionHandler: { [weak self] action in self?.perform(action) })
+        configureTypedComponents(renderer)
         let content = wrapGeneratedContent(renderer.makeView(screen.root))
         let usesOuterScroll = screen.contentContainer.kind == "scroll-view"
         var constraints: [NSLayoutConstraint] = []
@@ -5684,6 +5799,7 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
     }
 
     func wrapGeneratedContent(_ content: UIView) -> UIView { content }
+    func configureTypedComponents(_ renderer: HTMLToIOSNodeRenderer) {}
 
     private func scheduleAutomaticActions() {
         guard !scheduledAutomaticActions else { return }
@@ -6049,50 +6165,220 @@ def navigation_source(ui_stack: str) -> str:
     return UIKIT_ROOT.split(marker, 1)[0].rstrip() + "\n"
 
 
-def screen_sources(screen: dict[str, Any], ui_stack: str, name_prefix: str) -> dict[str, str]:
+def typed_section_descriptors(architecture: dict[str, Any] | None) -> list[dict[str, Any]]:
+    architecture = architecture or {}
+    layers = architecture.get("layers") if isinstance(architecture.get("layers"), dict) else {}
+    reusable = layers.get("reusableContent") if isinstance(layers.get("reusableContent"), dict) else {}
+    content = layers.get("contentContainer") if isinstance(layers.get("contentContainer"), dict) else {}
+    strategies = {
+        str(item.get("nodeId") or ""): str(item.get("kind") or "")
+        for item in content.get("nodeStrategies") or []
+        if isinstance(item, dict)
+    }
+    result = []
+    for index, section in enumerate(reusable.get("sections") or []):
+        if not isinstance(section, dict) or not section.get("sourceNodeId"):
+            continue
+        source_id = str(section["sourceNodeId"])
+        item_ids = [str(item) for item in section.get("itemNodeIds") or [] if item]
+        uses_reuse = bool(section.get("usesReuse"))
+        strategy = strategies.get(source_id, "")
+        cell_kind = "table" if strategy == "table-view" else "collection"
+        result.append({
+            "index": index + 1,
+            "sourceNodeId": source_id,
+            "itemNodeIds": item_ids,
+            "itemTemplateNodeId": str(section.get("itemTemplateNodeId") or "") or None,
+            "kind": str(section.get("kind") or "list"),
+            "usesReuse": uses_reuse,
+            "cellKind": cell_kind,
+        })
+    return result
+
+
+def screen_sources(
+    screen: dict[str, Any],
+    ui_stack: str,
+    name_prefix: str,
+    architecture: dict[str, Any] | None,
+) -> dict[str, str]:
     module_type = str(screen["moduleType"])
     screen_type = str(screen["screenType"])
+    base_type = f"{name_prefix}{screen_type}"
+    sections = typed_section_descriptors(architecture)
+    contract_lines = [
+        f'    static let screenID: String = {json.dumps(screen["id"])}',
+        *[
+            f'    static let section{item["index"]}NodeID: String = {json.dumps(item["sourceNodeId"])}'
+            for item in sections
+        ],
+        *[
+            f'    static let section{item["index"]}ItemNodeIDs: [String] = [{", ".join(json.dumps(node_id) for node_id in item["itemNodeIds"])}]'
+            for item in sections
+        ],
+    ]
+    sources = {
+        f"{module_type}/Models/{base_type}UIContract.swift": f'''// Generated by sky-html-to-ios. Stable node ownership for {screen["id"]}.
+import Foundation
+
+enum {base_type}UIContract {{
+{chr(10).join(contract_lines)}
+}}
+''',
+    }
     if ui_stack == "swiftui":
-        return {
-            f"{module_type}/Screens/{name_prefix}{screen_type}Screen.swift": f'''// Generated by sky-html-to-ios. Native SwiftUI screen for {screen["id"]}.
+        section_cases = []
+        item_cases = []
+        for item in sections:
+            section_type = f"{base_type}Section{item['index']}View"
+            sources[f"{module_type}/Sections/{section_type}.swift"] = f'''// Generated by sky-html-to-ios. Typed SwiftUI section for {screen["id"]}.
 import SwiftUI
 
-struct {name_prefix}{screen_type}Screen: View {{
+struct {section_type}: View {{
+    @ObservedObject var store: HTMLToIOSGeneratedStore
+    let spec: HTMLToIOSNodeSpec
+    let registry: HTMLToIOSTypedViewRegistry
+
+    var body: some View {{
+        HTMLToIOSNativeNodeView(
+            store: store,
+            spec: spec,
+            typedRegistry: registry,
+            bypassTypedNodeID: spec.id
+        )
+    }}
+}}
+'''
+            section_cases.append(
+                f'''            case {base_type}UIContract.section{item["index"]}NodeID:
+                return AnyView({section_type}(store: store, spec: spec, registry: registry))'''
+            )
+            if item["usesReuse"] and item["itemNodeIds"]:
+                cell_type = f"{base_type}Section{item['index']}ItemView"
+                sources[f"{module_type}/Cells/{cell_type}.swift"] = f'''// Generated by sky-html-to-ios. Typed SwiftUI reusable item for {screen["id"]}.
+import SwiftUI
+
+struct {cell_type}: View {{
+    @ObservedObject var store: HTMLToIOSGeneratedStore
+    let spec: HTMLToIOSNodeSpec
+    let registry: HTMLToIOSTypedViewRegistry
+
+    var body: some View {{
+        HTMLToIOSNativeNodeView(
+            store: store,
+            spec: spec,
+            typedRegistry: registry,
+            bypassTypedNodeID: spec.id
+        )
+    }}
+}}
+'''
+                item_cases.append(
+                    f'''            case let nodeID where {base_type}UIContract.section{item["index"]}ItemNodeIDs.contains(nodeID):
+                return AnyView({cell_type}(store: store, spec: spec, registry: registry))'''
+                )
+        registry_cases = "\n".join(section_cases + item_cases)
+        sources.update({
+            f"{module_type}/Screens/{base_type}Screen.swift": f'''// Generated by sky-html-to-ios. Native SwiftUI screen for {screen["id"]}.
+import SwiftUI
+
+struct {base_type}Screen: View {{
     @ObservedObject var store: HTMLToIOSGeneratedStore
     let screen: HTMLToIOSScreenSpec
 
     var body: some View {{
-        {name_prefix}{screen_type}ContentView(store: store, screen: screen)
+        {base_type}ContentView(store: store, screen: screen)
     }}
 }}
 ''',
-            f"{module_type}/Views/{name_prefix}{screen_type}ContentView.swift": f'''// Generated by sky-html-to-ios. Module-owned SwiftUI content for {screen["id"]}.
+            f"{module_type}/Views/{base_type}ContentView.swift": f'''// Generated by sky-html-to-ios. Module-owned SwiftUI content for {screen["id"]}.
 import SwiftUI
 
-struct {name_prefix}{screen_type}ContentView: View {{
+struct {base_type}ContentView: View {{
     @ObservedObject var store: HTMLToIOSGeneratedStore
     let screen: HTMLToIOSScreenSpec
 
     var body: some View {{
-        HTMLToIOSGeneratedScreenView(store: store, screen: screen)
+        HTMLToIOSGeneratedScreenView(store: store, screen: screen, typedRegistry: typedRegistry)
+    }}
+
+    private var typedRegistry: HTMLToIOSTypedViewRegistry {{
+        HTMLToIOSTypedViewRegistry {{ nodeID, store, spec, registry in
+            switch nodeID {{
+{registry_cases}
+            default:
+                return nil
+            }}
+        }}
     }}
 }}
 ''',
-        }
-    return {
-        f"{module_type}/Controllers/{name_prefix}{screen_type}ViewController.swift": f'''// Generated by sky-html-to-ios. Native UIKit screen for {screen["id"]}.
+        })
+        return sources
+
+    register_lines = []
+    for item in sections:
+        section_type = f"{base_type}Section{item['index']}View"
+        sources[f"{module_type}/Sections/{section_type}.swift"] = f'''// Generated by sky-html-to-ios. Typed UIKit section for {screen["id"]}.
 import UIKit
 
-final class {name_prefix}{screen_type}ViewController: HTMLToIOSGeneratedScreenViewController {{
+final class {section_type}: UIView {{
+    init(spec: HTMLToIOSNodeSpec, renderer: HTMLToIOSNodeRenderer) {{
+        super.init(frame: .zero)
+        backgroundColor = .clear
+        let content = renderer.makeView(spec, bypassingTypedNodeID: spec.id)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor),
+            content.topAnchor.constraint(equalTo: topAnchor),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }}
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {{ fatalError("init(coder:) is unavailable") }}
+}}
+'''
+        register_lines.append(
+            f'''        renderer.registerView(nodeID: {base_type}UIContract.section{item["index"]}NodeID) {{ spec, renderer in
+            {section_type}(spec: spec, renderer: renderer)
+        }}'''
+        )
+        if item["usesReuse"] and item["itemNodeIds"]:
+            cell_suffix = "TableViewCell" if item["cellKind"] == "table" else "CollectionViewCell"
+            cell_type = f"{base_type}Section{item['index']}{cell_suffix}"
+            base_cell = "HTMLToIOSGeneratedTableCell" if item["cellKind"] == "table" else "HTMLToIOSGeneratedCollectionCell"
+            register_method = "registerTableCell" if item["cellKind"] == "table" else "registerCollectionCell"
+            sources[f"{module_type}/Cells/{cell_type}.swift"] = f'''// Generated by sky-html-to-ios. Typed reusable UIKit cell for {screen["id"]}.
+import UIKit
+
+final class {cell_type}: {base_cell} {{}}
+'''
+            register_lines.append(
+                f'''        for nodeID in {base_type}UIContract.section{item["index"]}ItemNodeIDs {{
+            renderer.{register_method}(nodeID: nodeID, type: {cell_type}.self)
+        }}'''
+            )
+    sources.update({
+        f"{module_type}/Controllers/{base_type}ViewController.swift": f'''// Generated by sky-html-to-ios. Native UIKit screen for {screen["id"]}.
+import UIKit
+
+final class {base_type}ViewController: HTMLToIOSGeneratedScreenViewController {{
+    override func configureTypedComponents(_ renderer: HTMLToIOSNodeRenderer) {{
+{chr(10).join(register_lines)}
+    }}
+
     override func wrapGeneratedContent(_ content: UIView) -> UIView {{
-        {name_prefix}{screen_type}ContentView(content: content)
+        {base_type}ContentView(content: content)
     }}
 }}
 ''',
-        f"{module_type}/Views/{name_prefix}{screen_type}ContentView.swift": f'''// Generated by sky-html-to-ios. Module-owned UIKit content for {screen["id"]}.
+        f"{module_type}/Views/{base_type}ContentView.swift": f'''// Generated by sky-html-to-ios. Module-owned UIKit content for {screen["id"]}.
 import UIKit
 
-final class {name_prefix}{screen_type}ContentView: UIView {{
+final class {base_type}ContentView: UIView {{
     init(content: UIView) {{
         super.init(frame: .zero)
         backgroundColor = .clear
@@ -6110,7 +6396,8 @@ final class {name_prefix}{screen_type}ContentView: UIView {{
     required init?(coder: NSCoder) {{ fatalError("init(coder:) is unavailable") }}
 }}
 ''',
-    }
+    })
+    return sources
 
 
 def screen_factory_source(screens: list[dict[str, Any]], ui_stack: str, name_prefix: str) -> str:
@@ -6388,8 +6675,17 @@ def main() -> int:
     generated_page_types = {
         f"{name_prefix}{screen['screenType']}{suffix}"
         for screen in screens
-        for suffix in (("Screen", "ContentView") if ui_stack == "swiftui" else ("ViewController", "ContentView"))
+        for suffix in (("Screen", "ContentView", "UIContract") if ui_stack == "swiftui" else ("ViewController", "ContentView", "UIContract"))
     }
+    for screen in screens:
+        base_type = f"{name_prefix}{screen['screenType']}"
+        for section in typed_section_descriptors(architecture_by_screen.get(screen["id"])):
+            generated_page_types.add(f"{base_type}Section{section['index']}View")
+            if section["usesReuse"] and section["itemNodeIds"]:
+                suffix = "ItemView" if ui_stack == "swiftui" else (
+                    "TableViewCell" if section["cellKind"] == "table" else "CollectionViewCell"
+                )
+                generated_page_types.add(f"{base_type}Section{section['index']}{suffix}")
     collisions = sorted(generated_page_types & existing_type_names)
     if collisions:
         raise ValueError("generated page types collide with existing target types: " + ", ".join(collisions))
@@ -6440,7 +6736,7 @@ def main() -> int:
         "Resources/Payload/HTMLToIOSGeneratedPayload.json": json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n",
     }
     for screen in screens:
-        files.update(screen_sources(screen, ui_stack, name_prefix))
+        files.update(screen_sources(screen, ui_stack, name_prefix, architecture_by_screen.get(screen["id"])))
     conflict_dir = args.conflict_dir or args.out_dir.with_name(args.out_dir.name + ".conflicts")
     metadata = {
         "uiStack": ui_stack,

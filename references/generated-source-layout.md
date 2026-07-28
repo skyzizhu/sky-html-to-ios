@@ -17,17 +17,26 @@ Generated/HTMLToIOS/
 │   │   └── HTMLToIOSGeneratedScreenFactory.swift
 │   └── Runtime/
 ├── Home/
+│   ├── Models/
+│   │   └── SkyHomeUIContract.swift
 │   ├── Screens/                 # SwiftUI
 │   │   ├── SkyHomeScreen.swift
 │   │   └── SkyHomeDetailScreen.swift
 │   ├── Controllers/             # UIKit
 │   │   ├── SkyHomeViewController.swift
 │   │   └── SkyHomeDetailViewController.swift
+│   ├── Sections/
+│   │   └── SkyHomeSection1View.swift
+│   ├── Cells/
+│   │   └── SkyHomeSection1ItemView.swift
 │   └── Views/
 │       ├── SkyHomeContentView.swift
 │       └── SkyHomeHeaderView.swift
 ├── ArticleList/
 │   ├── Screens/ | Controllers/
+│   ├── Models/
+│   ├── Sections/
+│   ├── Cells/
 │   └── Views/
 ├── Shared/
 │   ├── Components/
@@ -40,7 +49,7 @@ Generated/HTMLToIOS/
         └── HTMLToIOSGeneratedAssets.xcassets
 ```
 
-最外层页面目录代表业务模块，不是单个 DOM 页面。SwiftUI 模块生成 `Screens/` 和 `Views/`，UIKit 模块生成 `Controllers/` 和 `Views/`；不会同时生成无用的 `Screens` 与 `Controllers`。页面文件和 `ContentView` 必须实际进入路由与渲染链路，不得为了目录外观生成空 View、空 ViewModel、空 Repository。
+最外层页面目录代表业务模块，不是单个 DOM 页面。SwiftUI 模块生成 `Screens/`，UIKit 模块生成 `Controllers/`；两种技术栈都按架构计划生成 `Models/`、`Sections/`、`Cells/` 和 `Views/` 中实际需要的文件，不会生成另一技术栈的空目录。页面、Section、Cell 和 `ContentView` 必须实际进入路由与渲染链路，不得为了目录外观生成空 View、空 ViewModel、空 Repository。
 
 ## 命名规则
 
@@ -64,7 +73,10 @@ Generated/HTMLToIOS/
 - `Core/Runtime`：跨 screen 的通用渲染与状态运行时。
 - `<Module>/Screens`：SwiftUI 完整页面及页面生命周期入口。
 - `<Module>/Controllers`：UIKit 完整 ViewController；不放 Cell、Header 或局部控件。
-- `<Module>/Views`：该模块的页面内容、Header、Cell、Control 和局部复用组件。
+- `<Module>/Models`：该 screen 的稳定 node ID、Section item ID 和类型归属契约；不放网络模型。
+- `<Module>/Sections`：架构计划中每个独立内容 Section 的强类型容器。
+- `<Module>/Cells`：Table/Collection 复用 Cell，或 SwiftUI Lazy 容器中的强类型 Item View。
+- `<Module>/Views`：页面内容、Header、Control 和不属于 Cell 的局部复用组件。
 - `Shared/Components/`：至少被两个 screen 使用且语义稳定的组件。
 - `Shared/Styles/`：设计令牌和样式适配，不放业务状态。
 - `Resources/`：Payload、Asset Catalog、字体和本地化资源，不放 Swift。

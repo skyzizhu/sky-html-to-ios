@@ -283,12 +283,13 @@ python3 "$SKILL_ROOT/scripts/generate_ios_from_ir.py" \
 - 多页面重复传入 `--ir`，第一份是默认根页面。
 - 默认生成目录必须与人工源码隔离，并保留 `.html-to-ios-generation.json`。
 - 总控运行 `scripts/build_native_naming_plan.py` 生成 `native-naming-plan.json`。新工程页面文件和类型默认使用 `Sky` 前缀；已有项目优先复用稳定模块前缀，没有证据时使用 target 名回退。`--name-prefix` 显式值优先，上一轮计划优先于重新猜测，类型冲突必须停止生成。
-- 输出路径必须以 `Generated/HTMLToIOS` 结尾。内部按业务模块生成 `<Module>/Screens|Controllers|Views`，App 级 Navigation/Tab 放入 `Core/Navigation`，通用契约和运行时放入 `Core`，资源放入 `Resources`；禁止把全部文件平铺在一个目录。
+- 输出路径必须以 `Generated/HTMLToIOS` 结尾。内部按业务模块生成 `<Module>/Models|Screens|Controllers|Sections|Cells|Views` 中实际需要的源码，App 级 Navigation/Tab 放入 `Core/Navigation`，通用契约和运行时放入 `Core`，资源放入 `Resources`；禁止把全部文件平铺在一个目录。
 - 只有确认目标工程的生成目录规范无法采用标准路径时，才可显式使用 `--allow-nonstandard-output`，并保持等价职责分层和独立生成所有权。
 - 生成器拒绝 `requiresResolution=true` 的交互；禁止用 `--allow-unresolved` 掩盖正式交付中的歧义。
 - 用户修改过的生成文件不得覆盖；候选版本进入 `<out-dir>.conflicts`，由 Agent 做节点级合并。
 - 生成的 JSON 载荷必须作为 target resource 接入，不能内联成超大 Swift 字符串。
 - 通用运行时只是原生基线；发现现有 Router、Design System、Cell 或控件时，按映射计划替换为项目组件。
+- 六层架构计划必须物化为强类型页面源码：每个 screen 生成 UIContract，Section 生成独立容器，复用内容生成真实 UIKit Cell 子类或 SwiftUI Item View，并通过稳定 node ID 注册进入实际渲染链路。禁止只生成目录占位，或让一个通用 JSON NodeRenderer 独占全部页面架构。
 - 保持项目命名、目录、访问控制和状态管理风格。
 - 静态页面不强制创建 ViewModel。
 - 动态数据不是转换核心。HTML 当前可见内容只作为确定性视觉 fixture，用于还原列表、loading、empty、error 等画面；生成器不创建接口、请求层、分页器或业务 ViewModel，也不因重复列表猜测 endpoint。只有用户明确要求业务接入时，才把 `dataBinding` 交给项目数据层。

@@ -529,17 +529,23 @@ Web Font 无法合法嵌入时会使用明确 fallback，并在报告中记录�
         │   ├── Navigation/
         │   └── Runtime/
         ├── Home/
+        │   ├── Models/
         │   ├── Screens/ 或 Controllers/
+        │   ├── Sections/
+        │   ├── Cells/
         │   └── Views/
         ├── List/
+        │   ├── Models/
         │   ├── Screens/ 或 Controllers/
+        │   ├── Sections/
+        │   ├── Cells/
         │   └── Views/
         └── Resources/
             ├── Assets/
             └── Payload/
 ```
 
-页面按业务模块分目录；Navigation、Tab 和公共运行时进入 `Core`；资源进入 `Resources`。不会把所有文件平铺在同一个目录。
+页面按业务模块分目录，并拥有自己的强类型 UIContract、Section、Cell 和 View。六层架构计划会进入真实 Swift 源码：UIKit 注册生成的 `UITableViewCell`/`UICollectionViewCell` 子类，SwiftUI 将复用节点路由到强类型 Item View。Navigation、Tab 和跨页面公共运行时进入 `Core`；资源进入 `Resources`。不会把所有文件平铺在同一个目录。
 
 ### 增量更新
 
@@ -822,7 +828,7 @@ Skill 可以处理普通 HTML，但结构和语义越清楚，自动还原越稳
 
 - SwiftUI 真实工程构建；
 - UIKit 真实工程构建；
-- 当前开发版审计通过 85 项自动化测试；
+- 当前开发版审计通过 86 项自动化测试；
 - UI IR、工程决策、命名和生成器测试；
 - 多页面和交互状态测试；
 - 视觉差异和节点几何测试；

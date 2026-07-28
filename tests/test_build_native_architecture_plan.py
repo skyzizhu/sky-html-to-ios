@@ -127,6 +127,48 @@ class BuildNativeArchitecturePlanTests(unittest.TestCase):
             self.assertEqual(leaves["home.result.0.image"]["uiKitType"], "UIImageView")
             self.assertEqual(leaves["home.result.0.title"]["uiKitType"], "UILabel")
 
+    def test_nested_horizontal_collection_is_a_typed_reusable_section(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = make_ir("feed")
+            screen = payload["screens"][0]
+            root_id = screen["rootNodeId"]
+            carousel_id = "feed.filters"
+            screen["nodes"].append({
+                "id": carousel_id,
+                "parentId": root_id,
+                "semanticType": "carousel",
+                "layout": {"scrollAxis": "horizontal"},
+            })
+            for index in range(4):
+                screen["nodes"].append({
+                    "id": f"{carousel_id}.item.{index}",
+                    "parentId": carousel_id,
+                    "semanticType": "button",
+                })
+            ir_path = root / "ui-ir.json"
+            output = root / "plan.json"
+            ir_path.write_text(json.dumps(payload), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), "--ir", str(ir_path), "--out", str(output), "--ui-stack", "uikit",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            layers = json.loads(output.read_text(encoding="utf-8"))["screens"][0]["layers"]
+            strategy = next(
+                item for item in layers["contentContainer"]["nodeStrategies"]
+                if item["nodeId"] == carousel_id
+            )
+            section = next(
+                item for item in layers["reusableContent"]["sections"]
+                if item["sourceNodeId"] == carousel_id
+            )
+            self.assertEqual(strategy["kind"], "collection-view")
+            self.assertTrue(strategy["usesReuse"])
+            self.assertEqual(section["kind"], "horizontal-carousel")
+            self.assertEqual(section["scrollAxis"], "horizontal")
+            self.assertTrue(section["usesReuse"])
+            self.assertEqual(section["itemCount"], 4)
+
     def test_scroll_frame_never_subtracts_safe_area(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
