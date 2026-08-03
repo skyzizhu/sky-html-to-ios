@@ -15,7 +15,7 @@ NAMING_SCRIPT = ROOT / "scripts" / "build_native_naming_plan.py"
 
 
 class ProjectDecisionAndNamingTests(unittest.TestCase):
-    def test_new_project_requires_stack_and_defaults_to_visual_verification(self) -> None:
+    def test_new_project_requires_stack_and_defaults_to_build_verification(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             out = Path(temporary) / "decision.json"
             result = subprocess.run([
@@ -29,7 +29,8 @@ class ProjectDecisionAndNamingTests(unittest.TestCase):
             decision = json.loads(out.read_text(encoding="utf-8"))
             self.assertTrue(decision["uiStack"]["requiresUserSelection"])
             self.assertIsNone(decision["uiStack"]["selected"])
-            self.assertEqual(decision["verification"]["resolved"], "visual")
+            self.assertEqual(decision["verification"]["resolved"], "build")
+            self.assertFalse(decision["verification"]["launchesApplication"])
 
     def test_existing_swiftui_module_is_detected_and_waits_for_verification(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

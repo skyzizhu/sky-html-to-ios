@@ -40,6 +40,7 @@ class RunHTMLToIOSTests(unittest.TestCase):
             self.assertEqual(report["status"], "planned")
             self.assertTrue(report["createdProject"])
             self.assertEqual(Path(report["project"]).name, "SampleApp.xcodeproj")
+            self.assertEqual(report["projectGenerationDecision"]["verification"]["resolved"], "build")
             self.assertEqual(report["qualityGates"]["uiIRValidation"], "pending")
             self.assertEqual(report["qualityGates"]["htmlVisualBaselines"], "skipped")
             self.assertFalse(any(workspace.glob("*.xcodeproj")))

@@ -30,12 +30,12 @@ python3 "$SKILL_ROOT/scripts/run_html_to_ios.py" \
 5. UI IR 模式先校验所有 IR；无效 IR 在创建工程前停止。
 6. 没有 Xcode 工程时创建 App 工程。
 7. 发现项目组件并核验本机 SDK。
-8. HTML 模式逐 screen 提取 render tree、截图、生成并校验 UI IR。
-9. 默认逐 screen 生成文本标定、多尺寸响应式分析、滚动区域行为探测、视觉状态清单和 HTML 状态基准图。
+8. HTML 模式逐 screen 提取 render tree、生成并校验 UI IR；只有 verification 为 `visual` 时才在提取阶段附带基准截图。
+9. 默认逐 screen 生成文本标定、多尺寸响应式分析和滚动区域行为探测；只有 verification 为 `visual` 时才生成视觉状态清单和 HTML 状态基准图。
 10. 生成 `native-naming-plan.json` 与 `native-architecture-plan.json`，验证命名冲突及 controller/navigation/presentation/Safe Area 单一所有权。
 11. 生成带稳定项目前缀的原生页面代码和 Payload，接入指定 target。
 12. 新建工程自动接入根 View/根 ViewController；现有工程只检测入口，不覆盖启动架构。
-13. 根据 verification mode 决定停止、构建或启动：已有项目 `auto` 停止并等待确认，新建托管项目 `auto` 执行完整视觉验证。
+13. 根据 verification mode 决定停止、构建或启动：已有项目 `auto` 停止并等待确认，新建托管项目 `auto` 只生成并构建；完整视觉验证必须显式选择 `visual`。
 14. 用户选择 `visual` 且入口已接通时，创建隔离的 generator-owned UI Test target，逐 screen 执行状态动作、导出 xcresult 截图并归一化到目标逻辑 viewport。
 15. 对 required states 执行节点分区视觉门禁，并执行转换后门禁；任一状态缺失、超阈值或存在交付阻断项时总控返回 `failed`，保留 review bundle 供 Agent 局部纠偏。
 
@@ -89,15 +89,19 @@ python3 "$SKILL_ROOT/scripts/run_html_to_ios.py" \
 
 默认响应式探针宽度为 `320,375,393,430`，可用 `--responsive-widths` 调整。`--skip-visual-baselines` 只允许用于定位流水线故障；它会跳过视觉状态 manifest 与 HTML 状态截图，不能用于正式视觉验收。
 
-每个 screen 的默认产物位于 `<report-dir>/screens/<screen-id>/`：
+每个 screen 的核心产物位于 `<report-dir>/screens/<screen-id>/`：
 
-- `render-tree.json` 与 `html-baseline.png`
+- `render-tree.json`
 - `ui-ir.json`
 - `text-calibration.json`
 - `responsive-layout.json`
 - `scroll-region-behavior.json`
-- `visual-state-manifest.json`
 - `state-delta-review.json`
+
+只有 `visual` 模式额外生成：
+
+- `html-baseline.png`
+- `visual-state-manifest.json`
 - `visual-states/html/captures.json` 与同名状态截图
 - `visual-states/ios/iteration-<n>/captures.json` 与同名逻辑尺寸截图
 - `visual-review/iteration-<n>/review-bundle.json`、逐状态 diff/overlay/comparison/regions
@@ -110,10 +114,10 @@ python3 "$SKILL_ROOT/scripts/run_html_to_ios.py" \
 
 ## 验证模式
 
-- `--verification-mode auto`：新建托管项目解析为 `visual`；已有项目解析为 `ask`。
+- `--verification-mode auto`：新建托管项目解析为 `build`；已有项目解析为 `ask`。
 - `ask`：只生成、关联 target 并返回 `generated-awaiting-verification`，不运行 `xcodebuild`，不启动 App。
-- `build`：只编译选定 scheme，不启动模拟器页面；HTML 视觉状态保持 pending。
-- `visual`：构建、启动、执行状态动作、截图和确定性视觉门禁。
+- `build`：只编译选定 scheme，不启动模拟器页面；HTML/iOS 截图、visual diff 和纠偏标记为 `optional-not-requested`。
+- `visual`：可选验收兜底；构建、启动、执行状态动作、截图和确定性视觉门禁。多模态能力不可用时仍可运行确定性比较，并将多模态 review 标记为 `not-run`。
 - `none`：显式跳过构建和视觉验证，返回 `generated-without-verification`。
 
 `--skip-build` 作为兼容参数等价于本轮 `none`。用户在原始请求中已经明确要求测试时，Agent 直接传 `build` 或 `visual`，不要生成后重复询问。
@@ -126,17 +130,17 @@ python3 "$SKILL_ROOT/scripts/run_html_to_ios.py" \
 
 ## 状态
 
-- `completed`：代码生成、target 接入、入口确认、构建、required iOS 状态截图和确定性视觉门禁均通过。多模态复核仍按 capability gate 单独记录。
+- `completed`：代码生成、target 接入、入口确认以及当前请求的验证模式均完成。`build` 模式表示编译验证完成但未视觉验收；`visual` 模式还要求 required iOS 状态截图和确定性视觉门禁通过。多模态复核按 capability gate 单独记录，不影响核心转换。
 - `generated-awaiting-verification`：已有项目已生成并接入 target，等待用户选择 build 或 visual。
 - `generated-without-verification`：用户明确跳过构建和运行；不得声称编译或视觉通过。
-- `built-awaiting-visual-verification`：已经构建，但尚未执行 HTML/iOS 状态截图。
+- `built-awaiting-visual-verification`：兼容旧报告的历史状态；新流程在 `build` 模式成功后使用 `completed`，并把视觉 quality gates 标记为 `optional-not-requested`。
 - `built-pending-visual-acceptance`：视觉链路已开始但尚未通过。
 - `generated-needs-entry-integration`：代码已生成并关联 target，但现有 App 流程还没有使用生成入口。
 - `needs-input`：多工程、多 target、混合技术栈、Swift Package 宿主、未解决交互或 API 版本需要人工决定。
 - `failed`：输入、工具、生成、工程接入或构建失败。
 - `planned`：`--dry-run` 只输出工程决策，不写文件。
 
-`qualityGates` 独立记录 UI IR、状态差分复核、文本标定、响应式分析、滚动行为、原生架构计划、HTML 基准、构建、iOS 状态截图和 visual diff。`stateDeltaReview` 为 `review-required` 时必须先核对归属和差分；`iosStateCapture` 或 `visualDiff` 不是 `passed` 时，只能声称已完成对应前置阶段，不能声称高保真验收通过。
+`qualityGates` 独立记录 UI IR、状态差分复核、文本标定、响应式分析、滚动行为、原生架构计划、HTML 基准、构建、iOS 状态截图和 visual diff。`stateDeltaReview` 为 `review-required` 时必须先核对归属和差分；`build` 模式下视觉项为 `optional-not-requested`，不影响核心转换完成，但不能声称视觉验收通过。`visual` 模式下 `iosStateCapture` 或 `visualDiff` 不是 `passed` 时，只能声称已完成对应前置阶段。
 
 ## 安全约束
 

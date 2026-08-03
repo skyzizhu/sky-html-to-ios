@@ -1,11 +1,11 @@
 ---
 name: sky-html-to-ios
-description: 将可运行的移动端 HTML 高保真原型转换为可编译、可运行、可视觉验收的 iOS 原生页面。适用于用户要求把 HTML、网页原型、移动端效果图页面还原为 SwiftUI 或 Swift UIKit，接入现有 Xcode 工程，复刻页面布局、样式、资源、导航与基础交互，或修正已有 HTML 转 iOS 结果。必须通过浏览器提取真实计算样式和布局，生成 UI IR，遵循项目现有规范，并执行构建、模拟器截图和视觉差异验证。不要用于把网页简单嵌入 WKWebView，也不要用于仅凭截图生成页面。
+description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换为可编译、可维护的 iOS 原生页面。适用于把网页原型还原为 SwiftUI 或 Swift UIKit，接入现有 Xcode 工程，并复刻布局、样式、资源、导航与基础交互。核心流程必须通过浏览器读取真实计算样式、几何、DOM 与脚本行为，生成 UI IR 和原生代码；构建是基础验证，截图、像素对比、多模态走查和自动纠偏仅是可选的验收兜底，不得作为转换能力或 Agent 多模态能力的前提。不要用于 WKWebView 包装或仅凭截图生成页面。
 ---
 
 # HTML to iOS Native
 
-将可运行的移动端 HTML 原型转换为真实 iOS 原生页面。优先保证目标设备上的视觉保真、原生结构、工程兼容和可验证性。
+将可运行的移动端 HTML/CSS/JavaScript 原型转换为真实 iOS 原生页面。核心任务是结构化读取网页布局、样式和行为并生成合理的原生 UI；视觉验证是生成后的可选兜底，不是输入方式或转换引擎。
 
 ## 核心原则
 
@@ -14,15 +14,15 @@ description: 将可运行的移动端 HTML 高保真原型转换为可编译、�
 3. 遵循现有项目架构、组件和依赖；不要强制引入 MVVM、Router 或第三方库。
 4. 使用真实原生 View。禁止用整页截图、整块截图或 `WKWebView` 冒充原生实现。
 5. 保留可合法访问的本地图片、图标和字体资源；资源缺失时才使用明确标记的占位内容。
-6. 必须验证编译结果。环境允许时，还必须执行 HTML 截图、模拟器截图和视觉差异检查。
+6. 必须验证编译结果。截图、像素对比和纠偏只在用户要求 `visual` 验证或 Agent/环境适合时执行；缺少多模态能力不得阻断提取、UI IR、代码生成或构建。
 7. 纠偏时只修改产生差异的节点或组件，避免重写无关页面。
 8. 响应式页面必须从多宽度计算结果推断原生约束；禁止用运行时整页缩放代替 Auto Layout。
 9. 视觉复刻不得破坏原生 UI 架构。页面、容器、可复用 View/Cell、状态和路由按职责分层；状态变化通过数据模型驱动 Stack/Grid/Auto Layout，不在业务页面散落截图坐标或逐状态 frame。
 10. 同一页面的重复画板必须先归并为 owner screen 的状态。去重依据是页面骨架、节点语义、文本、层级、几何与可选 `data-ios-state-key`，不能依赖 menu、sheet、Cell 左滑等案例枚举。状态画板必须生成通用 insert/remove/replace/update 差分并进入 owner 原生树，不得各自生成业务页面；归属存在歧义时使用 `data-ios-state-owner` 或旁路契约确认。
 11. 状态差分必须由通用策略执行器落到原生结构：页面内变化使用条件子树或替换节点，覆盖层使用 presentation，条目操作使用上下文操作。不得只把状态记录在报告中而不生成可触发的原生行为。
-12. 每个状态必须有独立 HTML/iOS 截图、几何区域和门禁结论。低置信度归属、被抑制的删除或目标不明确的上下文操作必须进入 `state-delta-review.json`，不得静默猜测。
+12. 每个状态必须有独立的结构、交互与 owner 契约。只有进入 `visual` 验证时才要求独立 HTML/iOS 截图、几何区域和门禁结论。低置信度归属、被抑制的删除或目标不明确的上下文操作必须进入 `state-delta-review.json`，不得静默猜测。
 13. 控件选择必须执行系统优先、视觉适配门禁：先用 Apple 系统控件及官方配置；系统本体视觉不足时保留系统控件并增加原生包装层；只有语义、行为或视觉能力确有阻断证据时才生成组合控件或自定义 `UIControl`/View。
-14. 视觉失败必须生成节点级 `visual-correction-plan.json`。纠偏只允许修改 UI IR 和派生契约，禁止直接给生成后的 Swift 源码追加截图专用补丁。
+14. `visual` 验证失败时生成节点级 `visual-correction-plan.json`。纠偏只允许修改 UI IR 和派生契约，禁止直接给生成后的 Swift 源码追加截图专用补丁；未运行视觉验收不等于核心转换失败。
 
 ## 支持范围
 
@@ -96,7 +96,7 @@ python3 "$SKILL_ROOT/scripts/run_html_to_ios.py" \
   --html <prototype.html>
 ```
 
-已经具备校验通过且无未决交互的 UI IR 时，重复传入 `--ir`。总控负责工作目录工程发现、输入预检、项目生成决策、必要时创建 App、逐页 IR 构建、命名计划、代码生成和 target 接入；构建与启动验证按项目状态分阶段执行。除非正在定位单个阶段故障，否则优先使用总控，不要求用户手工串联脚本。HTML 模式只有 required states 完整且视觉门禁通过时才可声称高保真验收完成；仍须检查 `qualityGates` 和 review bundle。
+已经具备校验通过且无未决交互的 UI IR 时，重复传入 `--ir`。总控负责工作目录工程发现、输入预检、项目生成决策、必要时创建 App、逐页 IR 构建、命名计划、代码生成和 target 接入；构建与启动验证按项目状态分阶段执行。除非正在定位单个阶段故障，否则优先使用总控，不要求用户手工串联脚本。HTML 模式完成提取、UI IR、原生生成和构建后，可声称核心转换及编译验证完成，但不得声称已经视觉验收。只有显式运行 `visual` 且 required states 门禁通过时，才可声称视觉验收完成；多模态 review 是否运行单独报告。
 
 - `empty-no-ios-project`：创建 App 前必须传 `--ui-stack swiftui|uikit`；未选择时返回 `needs-input` 并保留项目决策。
 - 一个 Xcode 工程：自动选择；target、scheme 或技术栈无法唯一判断时返回 `needs-input`。
@@ -105,7 +105,7 @@ python3 "$SKILL_ROOT/scripts/run_html_to_ios.py" \
 - 无效 IR 或未解决交互必须在创建工程前停止。
 - 用户传入的 `--interaction-overrides` 是只读确认契约；自动发现的新草稿必须另存，禁止覆盖。
 - 新工程自动接生成入口；现有工程不覆盖 App/SceneDelegate/Router，未接入口时报告 `generated-needs-entry-integration`。
-- `--dry-run` 只给出工程决策且不写文件。新建托管项目的 `auto` 验证默认执行视觉链路；已有项目的 `auto` 默认停在 `generated-awaiting-verification`，等待用户选择 `build` 或 `visual`，禁止擅自启动大型 App。
+- `--dry-run` 只给出工程决策且不写文件。新建托管项目的 `auto` 默认生成并构建，不启动模拟器；已有项目的 `auto` 停在 `generated-awaiting-verification`，等待用户选择 `build` 或 `visual`。截图和纠偏必须显式进入 `visual`。
 
 ### 1. 校验输入
 
@@ -331,13 +331,13 @@ python3 "$SKILL_ROOT/scripts/generate_ios_from_ir.py" \
 
 ### 10. 构建与视觉验证
 
-读取 `references/visual-validation.md`。
+先完成构建。只有 verification 为 `visual` 时才读取 `references/visual-validation.md` 并执行下面第 3–16 项；`build` 模式在第 2 项完成后结束核心验证。
 
-1. 先读取 `project-generation-decision.json` 的 verification：`ask` 只生成并提示，`build` 只运行 `xcodebuild`，`visual` 才启动模拟器并截图，`none` 明确跳过。已有项目 `auto` 解析为 `ask`，新建托管项目 `auto` 解析为 `visual`。
+1. 先读取 `project-generation-decision.json` 的 verification：`ask` 只生成并提示，`build` 运行 `xcodebuild` 并完成核心验证，`visual` 才启动模拟器、截图、对比和纠偏，`none` 明确跳过。已有项目 `auto` 解析为 `ask`，新建托管项目 `auto` 解析为 `build`。
 2. 修复由本次生成引起的编译错误。
-3. HTML 总控模式默认已经运行 `scripts/build_visual_state_manifest.py`，从 UI IR 生成 HTML actions 与 iOS accessibility actions；先复用报告中的 manifest。
-4. HTML 总控模式默认已经运行 `scripts/capture_html_states.cjs` 捕获 required HTML states；只有产物缺失或正在单阶段调试时才手动重跑。
-5. 总控默认使用 `scripts/prepare_visual_ui_tests.rb` 创建隔离且带 ownership 标记的 `HTMLToIOSVisualTests` target，再由 `scripts/capture_ios_states.py` 执行 XCUITest、导出 xcresult 附件并归一化到目标逻辑 viewport。现有同名非托管 target 不得覆盖；单阶段调试时才手动运行这两个脚本。
+3. `visual` 模式已经运行 `scripts/build_visual_state_manifest.py`，从 UI IR 生成 HTML actions 与 iOS accessibility actions；先复用报告中的 manifest。
+4. `visual` 模式已经运行 `scripts/capture_html_states.cjs` 捕获 required HTML states；只有产物缺失或正在单阶段调试时才手动重跑。
+5. `visual` 模式下总控使用 `scripts/prepare_visual_ui_tests.rb` 创建隔离且带 ownership 标记的 `HTMLToIOSVisualTests` target，再由 `scripts/capture_ios_states.py` 执行 XCUITest、导出 xcresult 附件并归一化到目标逻辑 viewport。现有同名非托管 target 不得覆盖；单阶段调试时才手动运行这两个脚本。
 6. 对移除、隐藏、展开、选择和路由类交互，视觉 manifest 应携带可推导的后置状态断言；XCUITest 必须先验证目标节点消失、出现、选中或路由到达，再截图。只完成 tap 而页面状态未变化不得算作有效状态捕获。
 7. 运行 `scripts/build_visual_review_bundle.py` 检查精确尺寸、全局 mismatch、平均差异、critical region 和文本 edge mismatch。任一 required state 超阈值必须重新生成和截图，不能由多模态评语改成通过。
 8. 同时读取每个状态的 `geometry-report.json`，先核对高置信度节点的 top/middle/bottom median y delta、height delta、`anchorRows` 和 `driftTransitions`。固定画板 region 坐标必须使用与 HTML 截图一致的 cover/center 裁切；累计漂移沿首个 transition 回查中间容器，禁止用整页 y offset 掩盖 border-box、item 高度或 gap 丢失。
@@ -354,11 +354,11 @@ python3 "$SKILL_ROOT/scripts/generate_ios_from_ir.py" \
 
 用户选择验证后，如果环境无法启动模拟器，编译验证仍是必需项，并明确报告未完成的视觉验证及原因。用户尚未确认已有项目验证时，不得把 pending 说成失败或通过。
 
-模型不支持图像时，仍须执行状态矩阵和确定性像素检查，并把多模态阶段标记为 `not-run`，不能假装完成视觉走查。
+模型不支持图像时，核心转换链路照常执行。若用户显式选择 `visual`，仍可执行不依赖模型看图的状态矩阵和确定性像素检查，并把多模态阶段标记为 `not-run`；若没有选择 `visual`，不创建截图和纠偏产物。
 
 ## 交付要求
 
-先执行 `references/conversion-boundary-gates.md` 的转换后门禁。只有构建、required states、滚动轴、系统区域和确定性视觉门禁均满足对应验证模式时，才可声称完成或高保真通过。
+先执行 `references/conversion-boundary-gates.md` 的转换后门禁。核心转换完成至少要求 UI IR、原生架构、生成接入和所请求的构建门禁通过；只有请求 `visual` 时才追加 required states、滚动轴、系统区域和确定性视觉门禁。报告必须区分“转换/编译完成”和“视觉验收通过”。
 
 最终报告必须包括：
 

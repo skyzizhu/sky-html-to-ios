@@ -108,14 +108,14 @@ def main() -> int:
         requires_selection = True
 
     if args.verification_mode == "auto":
-        verification = "visual" if creating else "ask"
+        verification = "build" if creating else "ask"
         verification_source = "new-project-default" if creating else "existing-project-confirmation-required"
     else:
         verification = args.verification_mode
         verification_source = "explicit-request"
 
     result = {
-        "schemaVersion": "project-generation-decision-1.0",
+        "schemaVersion": "project-generation-decision-1.1",
         "projectState": args.project_state,
         "target": args.target,
         "sourceRoot": str(args.source_root.resolve()) if args.source_root else None,

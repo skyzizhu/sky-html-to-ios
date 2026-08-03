@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = "html-to-ios-orchestration-1.5"
+SCHEMA_VERSION = "html-to-ios-orchestration-1.6"
 PROJECT_MARKER_NAME = ".html-to-ios-created-project.json"
 SKIP_PARTS = {".git", ".build", "build", "DerivedData", "Pods", "Carthage", "node_modules", "xcuserdata"}
 MAX_VISUAL_CORRECTION_ITERATIONS = 3
@@ -72,7 +72,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-visual-baselines",
         action="store_true",
-        help="Diagnostic escape hatch: skip visual-state manifests and HTML captures",
+        help="Skip optional visual-state artifacts even when visual verification is requested",
     )
     parser.add_argument("--no-create", action="store_true", help="Do not create an App when no Xcode project exists")
     parser.add_argument("--create-package-host-app", action="store_true", help="Allow creating an App beside a Swift Package")
@@ -81,7 +81,7 @@ def parse_args() -> argparse.Namespace:
         "--verification-mode",
         choices=("auto", "ask", "build", "visual", "none"),
         default="auto",
-        help="auto uses visual verification for a newly created project and asks before building an existing project",
+        help="auto builds a newly created project and asks before building an existing project; visual verification is opt-in",
     )
     parser.add_argument("--dry-run", action="store_true", help="Inspect and print decisions without modifying files")
     return parser.parse_args()
@@ -466,9 +466,9 @@ class Orchestrator:
                     recommendation = "uikit"
                 if selected is None and recommendation in {"swiftui", "uikit"}:
                     selected = recommendation
-            resolved_verification = ("visual" if creating else "ask") if verification_mode == "auto" else verification_mode
+            resolved_verification = ("build" if creating else "ask") if verification_mode == "auto" else verification_mode
             decision = {
-                "schemaVersion": "project-generation-decision-1.0",
+                "schemaVersion": "project-generation-decision-1.1",
                 "projectState": project_state,
                 "target": target,
                 "sourceRoot": str(source_root) if source_root else None,
@@ -694,6 +694,7 @@ class Orchestrator:
         minimum_ios: str,
         sdk_report: Path,
         contracts: tuple[Path, Path, Path, Path, list[dict[str, Any]]],
+        visual_validation: bool = False,
     ) -> list[Path]:
         html, route_graph, interaction_graph, overrides, screens = contracts
         ir_paths: list[Path] = []
@@ -711,7 +712,7 @@ class Orchestrator:
         self.artifacts["scrollBehaviorAnalyses"] = scroll_behavior_analyses
         self.artifacts["stateRepresentationIRs"] = state_representation_irs
         self.artifacts["stateDeltaReviewReports"] = state_delta_review_reports
-        if not self.args.skip_visual_baselines:
+        if visual_validation and not self.args.skip_visual_baselines:
             self.artifacts["visualStateManifests"] = visual_manifests
             self.artifacts["htmlStateCaptures"] = html_state_captures
             self.artifacts["visualReviewPlans"] = visual_review_plans
@@ -731,15 +732,15 @@ class Orchestrator:
             screen_id = str(screen.get("id") or f"screen-{len(ir_paths) + 1}")
             screen_dir = screen_root / safe_app_name(screen_id).lower()
             render_tree = screen_dir / "render-tree.json"
-            screenshot = screen_dir / "html-baseline.png"
             extract: list[str | Path] = [
                 self.node, self.scripts / "extract_render_tree.cjs",
                 "--html", html,
                 "--out", render_tree,
-                "--screenshot", screenshot,
                 "--width", str(self.args.width),
                 "--height", str(self.args.height),
             ]
+            if visual_validation and not self.args.skip_visual_baselines:
+                extract.extend(["--screenshot", screen_dir / "html-baseline.png"])
             container_selector = screen.get("containerSelector")
             if container_selector:
                 extract.extend(["--selector", str(container_selector)])
@@ -783,19 +784,20 @@ class Orchestrator:
                     continue
                 state_dir = screen_dir / "state-representations" / safe_app_name(state_id).lower()
                 state_render_tree = state_dir / "render-tree.json"
-                state_screenshot = state_dir / "html-baseline.png"
+                state_extract_command: list[str | Path] = [
+                    self.node,
+                    self.scripts / "extract_render_tree.cjs",
+                    "--html", html,
+                    "--out", state_render_tree,
+                    "--selector", state_selector,
+                    "--width", str(self.args.width),
+                    "--height", str(self.args.height),
+                ]
+                if visual_validation and not self.args.skip_visual_baselines:
+                    state_extract_command.extend(["--screenshot", state_dir / "html-baseline.png"])
                 self.run_command(
                     f"extract-state-representation-{state_id}",
-                    [
-                        self.node,
-                        self.scripts / "extract_render_tree.cjs",
-                        "--html", html,
-                        "--out", state_render_tree,
-                        "--screenshot", state_screenshot,
-                        "--selector", state_selector,
-                        "--width", str(self.args.width),
-                        "--height", str(self.args.height),
-                    ],
+                    state_extract_command,
                     environment=self.node_environment,
                 )
                 state_render_data = json.loads(state_render_tree.read_text(encoding="utf-8"))
@@ -952,7 +954,7 @@ class Orchestrator:
             scroll_behavior_analyses.append(str(scroll_behavior))
             self.report["qualityGates"]["scrollBehaviorAnalysis"] = "generated-for-processed-screens"
 
-            if not self.args.skip_visual_baselines:
+            if visual_validation and not self.args.skip_visual_baselines:
                 visual_manifest = screen_dir / "visual-state-manifest.json"
                 self.run_command(
                     f"build-visual-manifest-{screen_id}",
@@ -1020,7 +1022,7 @@ class Orchestrator:
             "textCalibration": "generated",
             "responsiveAnalysis": "generated",
             "scrollBehaviorAnalysis": "generated",
-            "htmlVisualBaselines": "captured" if visual_manifests else "skipped",
+            "htmlVisualBaselines": "captured" if visual_manifests else "optional-not-requested",
         })
         return ir_paths
 
@@ -1429,7 +1431,13 @@ struct ContentView: View {
         sdk_report, component_report = self.inspect_sdk_and_components(source_root, minimum_ios)
         naming_plan = self.build_native_naming_plan(state, target, component_report)
         if html_contracts is not None:
-            ir_paths = self.build_irs_from_html(ui_stack, minimum_ios, sdk_report, html_contracts)
+            ir_paths = self.build_irs_from_html(
+                ui_stack,
+                minimum_ios,
+                sdk_report,
+                html_contracts,
+                visual_validation=verification_mode == "visual",
+            )
         if ir_paths is None:
             raise OrchestrationError("prepare-ui-ir", "No UI IR inputs are available.")
         architecture_plan = self.build_native_architecture_plan(ir_paths, ui_stack, minimum_ios)
@@ -1443,6 +1451,10 @@ struct ContentView: View {
 
         if verification_mode in {"build", "visual"}:
             self.build(project, scheme)
+            if verification_mode == "build":
+                self.report["qualityGates"]["iosStateCapture"] = "optional-not-requested"
+                self.report["qualityGates"]["visualDiff"] = "optional-not-requested"
+                self.report["qualityGates"]["visualCorrectionPlan"] = "optional-not-requested"
         elif verification_mode == "ask":
             self.report["qualityGates"]["build"] = "pending-user-confirmation"
             self.report["qualityGates"]["iosStateCapture"] = "pending-user-confirmation"
@@ -1455,8 +1467,14 @@ struct ContentView: View {
             self.report["qualityGates"]["visualDiff"] = "skipped"
             self.report["qualityGates"]["visualCorrectionPlan"] = "skipped"
 
-        if self.args.html and not self.args.skip_visual_baselines:
-            if verification_mode == "visual" and self.entry_wired:
+        if self.args.html and verification_mode == "visual":
+            if self.args.skip_visual_baselines:
+                self.report["qualityGates"]["htmlVisualBaselines"] = "skipped-by-explicit-option"
+                self.report["qualityGates"]["iosStateCapture"] = "skipped-by-explicit-option"
+                self.report["qualityGates"]["visualDiff"] = "skipped-by-explicit-option"
+                self.report["qualityGates"]["visualCorrectionPlan"] = "skipped-by-explicit-option"
+                self.warnings.append("Visual verification was requested but visual baselines were explicitly skipped.")
+            elif self.entry_wired:
                 previous_plans: dict[str, Path] = {}
                 # Three mutation rounds require a fourth capture-only pass to verify the final result.
                 for iteration in range(1, MAX_VISUAL_CORRECTION_ITERATIONS + 2):
@@ -1503,7 +1521,7 @@ struct ContentView: View {
                         "visual-quality-gate",
                         "Required visual states still fail after the maximum automatic correction iterations.",
                     )
-            elif verification_mode in {"build", "visual"}:
+            else:
                 self.report["qualityGates"]["iosStateCapture"] = "required-pending"
                 self.report["qualityGates"]["visualDiff"] = "blocked-pending-ios-captures"
                 self.report["qualityGates"]["visualCorrectionPlan"] = "blocked-pending-ios-captures"
@@ -1516,9 +1534,7 @@ struct ContentView: View {
             self.report["status"] = "generated-awaiting-verification"
         elif verification_mode == "none":
             self.report["status"] = "generated-without-verification"
-        elif verification_mode == "build" and self.args.html and not self.args.skip_visual_baselines:
-            self.report["status"] = "built-awaiting-visual-verification"
-        elif self.args.html and not self.args.skip_visual_baselines and self.report["qualityGates"]["visualDiff"] != "passed":
+        elif verification_mode == "visual" and self.report["qualityGates"]["visualDiff"] != "passed":
             self.report["status"] = "built-pending-visual-acceptance"
         else:
             self.report["status"] = "completed"

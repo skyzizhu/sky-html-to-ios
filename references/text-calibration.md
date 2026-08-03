@@ -73,7 +73,7 @@ python3 "$SKILL_ROOT/scripts/compare_text_calibration.py" text-calibration.json 
   --out text-comparison.json
 ```
 
-默认要求行数完全一致，frame 偏差不超过约 1.5pt，baseline 偏差不超过约 1pt。截图仍用于观察字形、抗锯齿、富文本颜色和下划线；结构化指标用于防止肉眼漏掉累计换行误差。
+`visual` 模式默认要求行数完全一致，frame 偏差不超过约 1.5pt，baseline 偏差不超过约 1pt；截图用于观察字形、抗锯齿、富文本颜色和下划线。核心转换和 `build` 模式使用浏览器行盒、字体度量和结构化指标，不依赖模型读取截图。
 
 纵向几何必须按区域分别核对：system chrome/safe area、顶部栏、滚动内容、固定底栏和 presentation 各自建立锚点，禁止用整页统一 `y` 偏移修正所有区域。对每个区域依次比较顶部锚点、首个文本 baseline、内容高度、相邻间距和底部锚点；若误差随节点向下逐步增大，优先检查 line-height、段落间距和重复 item 高度，不能在页面末尾补偿。iOS safe area 由系统管理时，不得再从滚动视图宽高或内容高度中手工扣减；仅根据来源的 system chrome 所有权决定是否使用 `safeAreaInset`、content inset 或全屏延伸。
 

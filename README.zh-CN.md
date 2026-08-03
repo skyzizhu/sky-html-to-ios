@@ -2,9 +2,9 @@
 
 [English](README.md) | **简体中文**
 
-将可运行的移动端 HTML 高保真原型转换为可编译、可运行、可视觉验收的 iOS 原生页面。
+将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换为可编译、可维护的 iOS 原生页面。截图对比和视觉纠偏是可选的生成后兜底，不是转换前提。
 
-当前仓库是第一个可用版本。它面向 Codex Agent 使用，通过浏览器提取 HTML 的真实渲染结果，建立中间 UI IR，再生成 SwiftUI 或 UIKit + Swift 代码。它不会使用整页截图或 `WKWebView` 冒充原生实现。
+当前仓库面向 Codex Agent 使用，通过浏览器读取真实计算布局、DOM、CSS、资源和 JavaScript 行为，建立中间 UI IR，再生成 SwiftUI 或 UIKit + Swift 代码。核心转换不依赖模型多模态能力，也不会使用整页截图或 `WKWebView` 冒充原生实现。
 
 ## 目录
 
@@ -55,7 +55,9 @@ UI IR
         ↓
 SwiftUI 或 UIKit + Swift
         ↓
-Xcode 构建、Simulator 截图、几何与像素差异报告
+Xcode 构建（核心验证完成）
+        ↓ 可选 visual 模式
+Simulator 截图、确定性差异与纠偏
 ```
 
 ## 核心目标
@@ -72,8 +74,8 @@ Xcode 构建、Simulator 截图、几何与像素差异报告
 4. **尽量减少用户操作**  
    总控脚本负责工程发现、提取、生成、接入和验证；只有技术栈、工程归属或交互目标确实不明确时才要求确认。
 
-5. **可验证、可纠偏**  
-   每个 HTML 节点保留稳定 ID，能够从视觉差异追溯到 UI IR 和原生节点，支持局部修正。
+5. **可选的视觉验收兜底**
+   用户选择 visual 时，每个 HTML 节点可从视觉差异追溯到 UI IR 和原生节点并局部修正；模型不能看图时不影响核心转换。
 
 ## 支持的输入与输出
 
@@ -573,6 +575,8 @@ Web Font 无法合法嵌入时会使用明确 fallback，并在报告中记录�
 
 ## 视觉验证
 
+视觉验证是可选的生成后验收链路。Skill 的核心能力是读取 HTML/CSS/JavaScript、构建 UI IR、选择原生架构与控件、生成代码、接入工程并完成编译验证。不支持多模态的 Agent 仍可完整使用核心转换；显式选择 `visual` 后，确定性截图和像素比较也不依赖模型看图，多模态只负责解释差异。
+
 ### 验证链路
 
 1. 捕获 HTML required states；
@@ -620,7 +624,7 @@ Web Font 无法合法嵌入时会使用明确 fallback，并在报告中记录�
 
 | 模式 | 行为 |
 |---|---|
-| `auto` | 新建工程执行 visual；已有工程停下询问 |
+| `auto` | 新建工程只生成并构建，不启动模拟器；已有工程停下询问 |
 | `ask` | 只生成和接入，等待确认 |
 | `build` | 只执行构建 |
 | `visual` | 构建、截图和视觉门禁 |
@@ -631,7 +635,7 @@ Web Font 无法合法嵌入时会使用明确 fallback，并在报告中记录�
 推荐环境：
 
 - macOS；
-- Xcode 和 iOS Simulator；
+- Xcode；只有可选的 `visual` 验证需要 iOS Simulator；
 - Python 3.9+；
 - Ruby；
 - Node.js；
@@ -684,7 +688,7 @@ python3 "$SKILL_ROOT/scripts/run_html_to_ios.py" \
   --workspace "$PWD" \
   --html /absolute/path/prototype.html \
   --ui-stack swiftui \
-  --verification-mode visual
+  --verification-mode auto
 ```
 
 UIKit：
@@ -694,8 +698,10 @@ python3 "$SKILL_ROOT/scripts/run_html_to_ios.py" \
   --workspace "$PWD" \
   --html /absolute/path/prototype.html \
   --ui-stack uikit \
-  --verification-mode visual
+  --verification-mode auto
 ```
+
+只有需要截图对比和视觉纠偏时，才显式使用 `--verification-mode visual`。
 
 已有工程只生成并等待确认：
 
@@ -857,7 +863,7 @@ Skill 可以处理普通 HTML，但结构和语义越清楚，自动还原越稳
 - Skill 结构校验；
 - Python/Ruby 语法检查。
 
-这里的“可用”表示流程能够生成、接入、构建和验证原生页面，并具备系统化纠偏能力，不表示任何复杂 HTML 都能一次达到 100% 像素一致。复杂页面通常仍需要根据 review bundle 做少量节点级修正。
+这里的“可用”首先表示流程能够读取 HTML/CSS/JavaScript、生成、接入并构建原生页面。可选的 visual 模式进一步提供截图、对比和系统化纠偏能力；不表示任何复杂 HTML 都能一次达到 100% 像素一致。
 
 ## 常见问题
 
@@ -905,9 +911,8 @@ Skill 可以处理普通 HTML，但结构和语义越清楚，自动还原越稳
 - 无未解决关键交互；
 - 生成文件已关联 target；
 - Xcode 构建通过；
-- required iOS states 无缺失；
-- 响应式和滚动轴门禁通过；
-- visual review 没有未说明的关键失败；
+- 响应式和滚动轴结构契约通过；
+- 若选择 `visual`，required iOS states 无缺失且 visual review 没有未说明的关键失败；
 - 所有降级和待确认项已报告。
 
 ## 仓库

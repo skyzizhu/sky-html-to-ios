@@ -2,9 +2,9 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-Convert runnable, high-fidelity mobile HTML prototypes into compilable, maintainable, and visually verifiable native iOS interfaces.
+Convert runnable, high-fidelity HTML/CSS/JavaScript mobile prototypes into compilable and maintainable native iOS interfaces. Screenshot comparison and visual correction are optional post-generation safeguards, not conversion prerequisites.
 
-`sky-html-to-ios` is a Codex Skill that inspects the browser's actual rendered output, builds an intermediate UI representation (UI IR), and generates native SwiftUI or UIKit code. It does not disguise a web page as a native app with a full-page screenshot or `WKWebView`.
+`sky-html-to-ios` is a Codex Skill that reads computed browser layout, DOM structure, CSS, assets, and JavaScript behavior, builds an intermediate UI representation (UI IR), and generates native SwiftUI or UIKit code. The core pipeline does not require a multimodal model. It does not disguise a web page as a native app with a full-page screenshot or `WKWebView`.
 
 ## Contents
 
@@ -61,7 +61,10 @@ Native architecture, controls, assets, and naming
 SwiftUI or UIKit + Swift
           |
           v
-Xcode build, Simulator captures, geometry checks, and visual diff
+Xcode build (core verification complete)
+          |
+          v optional: visual mode
+Simulator captures, deterministic diff, and correction
 ```
 
 ## Design Goals
@@ -70,7 +73,7 @@ Xcode build, Simulator captures, geometry checks, and visual diff
 2. **High visual fidelity**: use computed styles, rendered rectangles, text line boxes, resolved assets, and observed states rather than guessing from source markup.
 3. **Maintainable iOS architecture**: organize screens, controllers, reusable views, cells, state, navigation, and assets by responsibility.
 4. **Minimal manual work**: orchestrate discovery, extraction, generation, integration, and validation; ask only when essential decisions are ambiguous.
-5. **Actionable differences**: connect stable HTML node IDs to UI IR and native views so a mismatch can be traced and corrected locally.
+5. **Optional visual safeguards**: when visual mode is requested, connect stable HTML node IDs to UI IR and native views so a mismatch can be traced and corrected locally without making image understanding a core dependency.
 
 ## Inputs and Outputs
 
@@ -407,6 +410,8 @@ Features own their screens, typed UI contracts, sections, cells, and views. The 
 
 ## Visual Validation
 
+Visual validation is an optional post-generation acceptance path. The primary capability is HTML/CSS/JavaScript analysis, UI IR construction, native architecture selection, code generation, integration, and build verification. Agents without multimodal capability can use the complete core conversion pipeline. When `visual` is explicitly selected, deterministic screenshot and pixel checks still run without multimodal understanding; multimodal review only explains failures.
+
 The validation pipeline:
 
 1. captures required HTML states;
@@ -428,7 +433,7 @@ Geometry instrumentation expands the accessibility tree only under generated UI-
 
 | Mode | Behavior |
 |---|---|
-| `auto` | Visual validation for new projects; asks before validating existing projects |
+| `auto` | Builds new projects without launching the Simulator; asks before validating existing projects |
 | `ask` | Generates and integrates, then waits |
 | `build` | Runs an Xcode build only |
 | `visual` | Builds, captures, and applies visual gates |
@@ -437,7 +442,7 @@ Geometry instrumentation expands the accessibility tree only under generated UI-
 ## Requirements
 
 - macOS
-- Xcode and iOS Simulator
+- Xcode; iOS Simulator is required only for optional `visual` verification
 - Python 3.9+
 - Ruby
 - Node.js
@@ -473,8 +478,10 @@ python3 "$SKILL_ROOT/scripts/run_html_to_ios.py" \
   --workspace "$PWD" \
   --html /absolute/path/prototype.html \
   --ui-stack swiftui \
-  --verification-mode visual
+  --verification-mode auto
 ```
+
+Use `--verification-mode visual` only when screenshot comparison and visual correction are desired.
 
 For UIKit, use `--ui-stack uikit`. For an existing project:
 
@@ -574,7 +581,7 @@ The first usable release has passed:
 - Skill structure validation;
 - Python, Ruby, and Node checks.
 
-“Usable” means the workflow can generate, integrate, compile, capture, compare, and iteratively correct native interfaces. Complex HTML may still require targeted node-level correction from the visual review bundle.
+“Usable” primarily means the workflow can analyze HTML/CSS/JavaScript, generate and integrate native code, and compile it. Optional visual mode can additionally capture, compare, and iteratively correct native interfaces. Complex HTML may still require targeted node-level review when that mode is selected.
 
 ## FAQ
 
@@ -608,7 +615,7 @@ Yes. The manifest protects manual changes and records conflicts. General fidelit
 
 ### What defines a complete conversion?
 
-UI IR must pass, critical interactions must be resolved, files must belong to the intended target, selected build/visual gates must pass, required states must exist, and all fallbacks must be reported.
+UI IR must pass, critical interactions must be resolved, files must belong to the intended target, the selected verification mode must pass, and all fallbacks must be reported. Required screenshots and visual states are mandatory only when `visual` verification was selected.
 
 ## Repository
 

@@ -1,5 +1,7 @@
 # Visual Validation
 
+本文件描述可选的生成后验收链路，不是 HTML/CSS/JavaScript 转原生 UI 的核心输入或前置条件。核心转换依赖浏览器计算样式、DOM/Render Tree、脚本交互、UI IR 和原生生成；只有 verification 为 `visual` 时才读取本文件并创建截图、像素差异与纠偏产物。多模态能力只用于解释差异，缺失时确定性比较仍可运行，也可以完全停留在 `build` 模式。
+
 视觉验收必须在对应逻辑 viewport、方向、外观和稳定数据状态下进行。HTML 位于固定展示板时允许源 viewport 与目标 viewport 不同，但归一化过程必须显式记录。
 
 同一业务页面的状态画板必须逐状态验收。manifest 中每个状态保留自己的 `htmlRootSelector`、`activeStateId`、`geometryNodes` 和 `validationRegions`；当状态画板本身是确定性静态表示时，HTML 截图直接裁切该画板，不再重复执行可能不存在的网页交互。iOS 侧仍执行 tap、swipe、dismiss 等原生动作并验证目标 accessibility identifier。
