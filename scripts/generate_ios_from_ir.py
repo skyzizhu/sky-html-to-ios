@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.36.0"
+GENERATOR_VERSION = "1.37.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -52,6 +52,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ui-stack", choices=("swiftui", "uikit"))
     parser.add_argument("--module-name", default="HTMLToIOSGenerated")
     parser.add_argument("--architecture-plan", type=Path)
+    parser.add_argument("--layout-relation-graph", type=Path)
+    parser.add_argument("--native-structure-manifest", type=Path)
     parser.add_argument("--naming-plan", type=Path)
     parser.add_argument("--conflict-dir", type=Path)
     parser.add_argument("--allow-unresolved", action="store_true")
@@ -123,6 +125,22 @@ def load_architecture_plan(path: Path | None) -> dict[str, dict[str, Any]]:
             if missing:
                 raise ValueError(f"{path}: {screen_id} is missing architecture layers: {', '.join(missing)}")
     return result
+
+
+def load_layout_relation_graph(path: Path | None) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    if path is None:
+        return {}, {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("schemaVersion") != "layout-relation-graph-1.0":
+        raise ValueError(f"{path}: expected layout-relation-graph-1.0")
+    screens = {
+        str(screen.get("screenId") or ""): screen
+        for screen in data.get("screens") or []
+        if isinstance(screen, dict)
+    }
+    if not screens or "" in screens:
+        raise ValueError(f"{path}: every layout graph screen needs a screenId")
+    return data, screens
 
 
 def load_naming_prefix(path: Path | None) -> tuple[str, str | None, set[str]]:
@@ -7179,6 +7197,378 @@ def write_asset_catalog(out_dir: Path, irs: list[dict[str, Any]]) -> dict[str, A
     return {"path": str(catalog.resolve()), "assets": written}
 
 
+def recursive_payload_evidence(value: Any) -> tuple[dict[str, dict[str, Any]], set[str], list[str]]:
+    nodes: dict[str, dict[str, Any]] = {}
+    identifiers: set[str] = set()
+    order: list[str] = []
+
+    def visit(item: Any) -> None:
+        if isinstance(item, dict):
+            node_id = item.get("id")
+            if isinstance(node_id, str) and node_id:
+                identifiers.add(node_id)
+                order.append(node_id)
+                if "semantic" in item and "style" in item:
+                    nodes[node_id] = item
+            for key in ("childID", "nodeId", "sourceNodeID", "targetNodeID"):
+                identifier = item.get(key)
+                if isinstance(identifier, str) and identifier:
+                    identifiers.add(identifier)
+                    order.append(identifier)
+            for child in item.values():
+                visit(child)
+        elif isinstance(item, list):
+            for child in item:
+                visit(child)
+
+    visit(value)
+    return nodes, identifiers, order
+
+
+def direct_payload_child_ids(node: dict[str, Any] | None) -> list[str]:
+    if not node:
+        return []
+    result = [
+        str(child.get("id"))
+        for key in ("children", "overlayChildren")
+        for child in node.get(key) or []
+        if isinstance(child, dict) and child.get("id")
+    ]
+    result.extend(
+        str(item.get("childID"))
+        for item in node.get("contentItems") or []
+        if isinstance(item, dict) and item.get("childID")
+    )
+    return list(dict.fromkeys(result))
+
+
+def native_optimization_reason(node: dict[str, Any], payload_nodes: dict[str, dict[str, Any]]) -> str | None:
+    semantic = str(node.get("semanticType") or "")
+    parent_id = str(node.get("parentId") or "")
+    parent = payload_nodes.get(parent_id) or {}
+    content = node.get("content") or {}
+    style = node.get("style") or {}
+    interactive = bool(node.get("interactionRef") or node.get("interactionRefs"))
+    if interactive or node.get("assetRef"):
+        return None
+    if semantic in {"text", "label", "heading"} and parent.get("semantic") == "text":
+        source_text = compact_text(content.get("text"))
+        if source_text and source_text in str(parent.get("text") or ""):
+            return "flattened-into-native-rich-text"
+    has_visual_style = bool(
+        color_string(style.get("backgroundColor"))
+        or str(style.get("backgroundImage") or "none") != "none"
+        or max(scaled_edges(style.get("borderWidths"), 1.0)) > 0
+        or max(number(value) for value in style.get("cornerRadii") or [0]) > 0
+        or str(style.get("boxShadow") or "none") != "none"
+    )
+    if semantic in {"container", "decoration", "spacer"} and not has_visual_style and not compact_text(content.get("text")):
+        return "empty-structural-wrapper-elided"
+    return None
+
+
+def relation_native_consumption(
+    relation: dict[str, Any],
+    payload_screen: dict[str, Any],
+    payload_nodes: dict[str, dict[str, Any]],
+    represented_ids: set[str],
+    payload_order: list[str],
+    ir_nodes: dict[str, dict[str, Any]],
+    architecture_relations: dict[str, dict[str, Any]],
+    detached_native_ids: set[str],
+) -> dict[str, Any]:
+    relation_id = str(relation.get("id") or "")
+    kind = str(relation.get("kind") or "")
+    node_ids = [str(item) for item in relation.get("nodeIds") or []]
+    missing = [node_id for node_id in node_ids if node_id not in represented_ids]
+    optimized = {
+        node_id: native_optimization_reason(ir_nodes.get(node_id) or {}, payload_nodes)
+        for node_id in missing
+    }
+    unresolved = [node_id for node_id, reason in optimized.items() if not reason]
+    checks: list[dict[str, Any]] = []
+    strategy = "payload-and-native-runtime"
+
+    def check(name: str, passed: bool, evidence: Any) -> None:
+        checks.append({"name": name, "passed": bool(passed), "evidence": evidence})
+
+    check("node-representation", not unresolved, {
+        "represented": [node_id for node_id in node_ids if node_id in represented_ids],
+        "optimized": optimized,
+        "unresolved": unresolved,
+    })
+
+    if kind == "containment":
+        parent_id = str(relation.get("parentNodeId") or "")
+        child_id = str(relation.get("childNodeId") or "")
+        direct_children = direct_payload_child_ids(payload_nodes.get(parent_id))
+        presentation_ids = {
+            str(item.get("node", {}).get("id") or item.get("id") or "")
+            for item in payload_screen.get("presentations") or []
+            if isinstance(item, dict) and isinstance(item.get("node") or {}, dict)
+        }
+        detached_ids = detached_native_ids | presentation_ids
+        consumed = child_id in direct_children or child_id in detached_ids or bool(optimized.get(child_id))
+        strategy = (
+            "native-layer-detachment" if child_id in detached_ids
+            else "native-child-tree"
+        )
+        check("native-parent-child-ownership", consumed, {
+            "parentNodeId": parent_id,
+            "childNodeId": child_id,
+            "directChildNodeIds": direct_children,
+            "detachedPresentationNodeIds": sorted(detached_ids),
+        })
+    elif kind == "visual-sequence":
+        before_id = str(relation.get("beforeNodeId") or "")
+        after_id = str(relation.get("afterNodeId") or "")
+        container_id = str(relation.get("containerNodeId") or "")
+        direct_order = direct_payload_child_ids(payload_nodes.get(container_id))
+        if before_id in detached_native_ids or after_id in detached_native_ids:
+            consumed = before_id in represented_ids and after_id in represented_ids
+            strategy = "native-layer-detachment"
+        elif before_id in direct_order and after_id in direct_order:
+            consumed = direct_order.index(before_id) < direct_order.index(after_id)
+        elif before_id in payload_order and after_id in payload_order:
+            consumed = payload_order.index(before_id) < payload_order.index(after_id)
+        else:
+            consumed = bool(optimized.get(before_id) or optimized.get(after_id)) and not unresolved
+        if strategy != "native-layer-detachment":
+            strategy = "ordered-native-children"
+        check("rendered-child-order", consumed, {
+            "containerNodeId": container_id,
+            "beforeNodeId": before_id,
+            "afterNodeId": after_id,
+            "payloadChildOrder": direct_order,
+        })
+    elif kind in {"equal-width", "equal-height"}:
+        dimension = "preferredWidth" if kind == "equal-width" else "preferredHeight"
+        measured = {
+            node_id: value
+            for node_id in node_ids
+            if (
+                value := number(
+                    (payload_nodes.get(node_id) or {}).get("style", {}).get(dimension),
+                    None,
+                )
+            ) is not None
+        }
+        values = list(measured.values())
+        tolerance = number(relation.get("tolerancePt"), 1.5)
+        optimized_ids = {node_id for node_id, reason in optimized.items() if reason}
+        detached_unmeasured_ids = {
+            node_id
+            for node_id in node_ids
+            if node_id in detached_native_ids and node_id not in measured
+        }
+        covered_ids = set(measured) | optimized_ids | detached_unmeasured_ids
+        consumed = set(node_ids) <= covered_ids and (
+            len(values) < 2 or max(values) - min(values) <= tolerance
+        )
+        strategy = (
+            "measured-native-size-contract-with-layer-detachment"
+            if detached_unmeasured_ids
+            else "measured-native-size-contract"
+        )
+        check("equal-dimension-contract", consumed, {
+            "dimension": dimension,
+            "measuredNodeValues": measured,
+            "values": values,
+            "detachedNodeIds": sorted(detached_unmeasured_ids),
+            "optimizedNodeIds": sorted(optimized_ids),
+            "uncoveredNodeIds": sorted(set(node_ids) - covered_ids),
+            "tolerancePt": tolerance,
+        })
+    elif kind == "square-aspect":
+        node_id = node_ids[0] if node_ids else ""
+        style = (payload_nodes.get(node_id) or {}).get("style") or {}
+        ratio = number(style.get("aspectRatio"), None)
+        fixed_width = number(style.get("fixedWidth"), None)
+        fixed_height = number(style.get("fixedHeight"), None)
+        consumed = bool(
+            ratio is not None and abs(ratio - 1) <= 0.05
+            or fixed_width is not None and fixed_height is not None and abs(fixed_width - fixed_height) <= 1.5
+            or optimized.get(node_id)
+        )
+        strategy = "native-aspect-ratio-constraint"
+        check("square-aspect-contract", consumed, {"aspectRatio": ratio, "fixedWidth": fixed_width, "fixedHeight": fixed_height})
+    elif kind == "scroll-axis-ownership":
+        node_id = str(relation.get("ownerNodeId") or "")
+        axis = str(relation.get("axis") or "none")
+        payload_axis = str(((payload_nodes.get(node_id) or {}).get("style") or {}).get("scrollAxis") or "none")
+        content = payload_screen.get("contentContainer") or {}
+        content_match = str(content.get("nodeId") or "") == node_id and str(content.get("scrollAxis") or "none") == axis
+        consumed = payload_axis == axis or content_match
+        strategy = "native-scroll-owner"
+        check("scroll-axis-contract", consumed, {"sourceAxis": axis, "payloadAxis": payload_axis, "contentContainer": content})
+    elif kind == "alignment":
+        container_id = str(relation.get("containerNodeId") or "")
+        container = payload_nodes.get(container_id) or {}
+        architecture_relation = architecture_relations.get(container_id) or {}
+        consumed = bool(container) and not unresolved and bool(architecture_relation)
+        strategy = "native-container-alignment-with-layer-detachment" if any(
+            node_id in detached_native_ids for node_id in node_ids
+        ) else "native-container-alignment"
+        check("alignment-contract", consumed, {
+            "sourceAlignment": relation.get("alignment"),
+            "payloadAlignItems": (container.get("style") or {}).get("alignItems"),
+            "architectureAlignment": architecture_relation.get("alignment"),
+        })
+    elif kind == "overlap-order":
+        container_id = str(relation.get("containerNodeId") or "")
+        container = payload_nodes.get(container_id) or {}
+        overlay_order = [str(item.get("id")) for item in container.get("overlayChildren") or [] if item.get("id")]
+        back_id = str(relation.get("backNodeId") or "")
+        front_id = str(relation.get("frontNodeId") or "")
+        if back_id in overlay_order and front_id in overlay_order:
+            consumed = overlay_order.index(back_id) < overlay_order.index(front_id)
+        else:
+            back_z = number(((payload_nodes.get(back_id) or {}).get("style") or {}).get("zIndex"), 0)
+            front_z = number(((payload_nodes.get(front_id) or {}).get("style") or {}).get("zIndex"), 0)
+            consumed = back_id in represented_ids and front_id in represented_ids and back_z <= front_z
+        strategy = "native-overlay-z-order"
+        check("overlap-order-contract", consumed, {"overlayOrder": overlay_order, "backNodeId": back_id, "frontNodeId": front_id})
+
+    passed = all(item["passed"] for item in checks)
+    return {
+        "relationId": relation_id,
+        "kind": kind,
+        "nodeIds": node_ids,
+        "status": "optimized-equivalent" if passed and optimized else "consumed" if passed else "not-consumed",
+        "strategy": strategy,
+        "checks": checks,
+    }
+
+
+def build_native_structure_manifest(
+    irs: list[dict[str, Any]],
+    screens: list[dict[str, Any]],
+    architecture_by_screen: dict[str, dict[str, Any]],
+    layout_graph: dict[str, Any],
+    graph_by_screen: dict[str, dict[str, Any]],
+    screen_source_files: dict[str, list[str]],
+    generation_manifest: dict[str, Any],
+    out_dir: Path,
+    architecture_path: Path | None,
+    graph_path: Path,
+    ui_stack: str,
+) -> dict[str, Any]:
+    ir_by_screen = {
+        str((ir.get("screens") or [{}])[0].get("id") or ""): ir
+        for ir in irs
+    }
+    payload_by_screen = {str(screen.get("id") or ""): screen for screen in screens}
+    manifest_screens = []
+    for screen_id, graph_screen in graph_by_screen.items():
+        ir_screen = (ir_by_screen.get(screen_id) or {}).get("screens", [{}])[0]
+        ir_nodes = {str(node.get("id") or ""): node for node in ir_screen.get("nodes") or [] if node.get("id")}
+        payload_screen = payload_by_screen.get(screen_id) or {}
+        payload_nodes, represented_ids, payload_order = recursive_payload_evidence(payload_screen)
+        detached_native_ids = {
+            str((payload_screen.get(key) or {}).get("id") or "")
+            for key in ("topBar", "bottomBar")
+            if isinstance(payload_screen.get(key), dict)
+        }
+        detached_native_ids.update(
+            str(item.get("node", {}).get("id") or item.get("id") or "")
+            for item in payload_screen.get("presentations") or []
+            if isinstance(item, dict) and isinstance(item.get("node") or {}, dict)
+        )
+        detached_native_ids.update(
+            node_id for node_id in represented_ids
+            if node_id in ir_nodes and node_id not in payload_nodes
+        )
+        detached_native_ids.discard("")
+        architecture = architecture_by_screen.get(screen_id) or {}
+        architecture_relations = {
+            str(item.get("containerNodeId") or ""): item
+            for item in (((architecture.get("layers") or {}).get("contentContainer") or {}).get("layoutRelations") or [])
+            if isinstance(item, dict) and item.get("containerNodeId")
+        }
+        node_records = []
+        for graph_node in graph_screen.get("nodes") or []:
+            node_id = str(graph_node.get("nodeId") or "")
+            reason = None if node_id in represented_ids else native_optimization_reason(ir_nodes.get(node_id) or {}, payload_nodes)
+            node_records.append({
+                "nodeId": node_id,
+                "status": "represented" if node_id in represented_ids else "optimized-equivalent" if reason else "missing",
+                "strategy": reason or "generated-native-payload",
+            })
+        relation_records = [
+            relation_native_consumption(
+                relation,
+                payload_screen,
+                payload_nodes,
+                represented_ids,
+                payload_order,
+                ir_nodes,
+                architecture_relations,
+                detached_native_ids,
+            )
+            for relation in graph_screen.get("relations") or []
+        ]
+        source_paths = [
+            "Resources/Payload/HTMLToIOSGeneratedPayload.json",
+            "Core/Runtime/HTMLToIOSGeneratedRuntime.swift",
+            *screen_source_files.get(screen_id, []),
+        ]
+        source_paths = list(dict.fromkeys(source_paths))
+        consumer_files = []
+        for relative in source_paths:
+            file_entry = (generation_manifest.get("files") or {}).get(relative) or {}
+            path = out_dir / relative
+            consumer_files.append({
+                "relativePath": relative,
+                "status": file_entry.get("status"),
+                "sha256": sha256_file(path) if path.is_file() else None,
+                "exists": path.is_file(),
+            })
+        regions = ir_screen.get("regions") or {}
+        manifest_screens.append({
+            "screenId": screen_id,
+            "nodes": node_records,
+            "relations": relation_records,
+            "contentContainer": payload_screen.get("contentContainer"),
+            "regions": {
+                "top": {
+                    "sourceNodeId": (regions.get("topBar") or {}).get("nodeId"),
+                    "generatedNodeId": (payload_screen.get("topBar") or {}).get("id"),
+                },
+                "bottom": {
+                    "sourceNodeId": (regions.get("bottomBar") or {}).get("nodeId"),
+                    "generatedNodeId": (payload_screen.get("bottomBar") or {}).get("id"),
+                },
+            },
+            "consumerFiles": consumer_files,
+            "summary": {
+                "nodeCount": len(node_records),
+                "missingNodeCount": sum(item["status"] == "missing" for item in node_records),
+                "relationCount": len(relation_records),
+                "unconsumedRelationCount": sum(item["status"] == "not-consumed" for item in relation_records),
+            },
+        })
+    return {
+        "schemaVersion": "native-structure-manifest-1.0",
+        "generatorVersion": GENERATOR_VERSION,
+        "uiStack": ui_stack,
+        "architecturePlan": str(architecture_path.resolve()) if architecture_path else None,
+        "architecturePlanSha256": sha256_file(architecture_path) if architecture_path else None,
+        "layoutRelationGraph": str(graph_path.resolve()),
+        "layoutRelationGraphSha256": sha256_file(graph_path),
+        "layoutRelationGraphSchemaVersion": layout_graph.get("schemaVersion"),
+        "generationManifest": str((out_dir / MANIFEST_NAME).resolve()),
+        "generationManifestSha256": sha256_file(out_dir / MANIFEST_NAME),
+        "screens": manifest_screens,
+        "summary": {
+            "screenCount": len(manifest_screens),
+            "nodeCount": sum(item["summary"]["nodeCount"] for item in manifest_screens),
+            "missingNodeCount": sum(item["summary"]["missingNodeCount"] for item in manifest_screens),
+            "relationCount": sum(item["summary"]["relationCount"] for item in manifest_screens),
+            "unconsumedRelationCount": sum(item["summary"]["unconsumedRelationCount"] for item in manifest_screens),
+        },
+    }
+
+
 def main() -> int:
     args = parse_args()
     normalized_parts = args.out_dir.resolve().parts
@@ -7200,11 +7590,18 @@ def main() -> int:
         raise ValueError("--ui-stack is required when UI IR files disagree")
 
     architecture_by_screen = load_architecture_plan(args.architecture_plan)
+    layout_graph, graph_by_screen = load_layout_relation_graph(args.layout_relation_graph)
+    if args.native_structure_manifest and not args.layout_relation_graph:
+        raise ValueError("--native-structure-manifest requires --layout-relation-graph")
     name_prefix, naming_source, existing_type_names = load_naming_prefix(args.naming_plan)
     ir_screen_ids = [str((ir.get("screens") or [{}])[0].get("id") or "screen") for ir in irs]
     unknown_architecture_screens = sorted(set(architecture_by_screen) - set(ir_screen_ids))
     if unknown_architecture_screens:
         raise ValueError("architecture plan contains unknown screens: " + ", ".join(unknown_architecture_screens))
+    if graph_by_screen and set(graph_by_screen) != set(ir_screen_ids):
+        missing = sorted(set(ir_screen_ids) - set(graph_by_screen))
+        extra = sorted(set(graph_by_screen) - set(ir_screen_ids))
+        raise ValueError(f"layout relation graph screen mismatch; missing={missing}, extra={extra}")
     screens = [build_screen(ir, architecture_by_screen.get(screen_id)) for ir, screen_id in zip(irs, ir_screen_ids)]
     ids = [screen["id"] for screen in screens]
     if len(ids) != len(set(ids)):
@@ -7280,8 +7677,13 @@ def main() -> int:
         "Core/Runtime/HTMLToIOSGeneratedRuntime.swift": SWIFTUI_RUNTIME if ui_stack == "swiftui" else UIKIT_RUNTIME,
         "Resources/Payload/HTMLToIOSGeneratedPayload.json": json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n",
     }
+    screen_source_files: dict[str, list[str]] = {}
     for screen in screens:
-        files.update(screen_sources(screen, ui_stack, name_prefix, architecture_by_screen.get(screen["id"])))
+        generated_screen_sources = screen_sources(
+            screen, ui_stack, name_prefix, architecture_by_screen.get(screen["id"])
+        )
+        screen_source_files[screen["id"]] = sorted(generated_screen_sources)
+        files.update(generated_screen_sources)
     conflict_dir = args.conflict_dir or args.out_dir.with_name(args.out_dir.name + ".conflicts")
     metadata = {
         "uiStack": ui_stack,
@@ -7291,11 +7693,34 @@ def main() -> int:
         "screenModules": {screen["id"]: screen["moduleId"] for screen in screens},
         "inputs": [{"path": str(path.resolve()), "sha256": sha256_file(path)} for path in args.ir],
         "architecturePlan": str(args.architecture_plan.resolve()) if args.architecture_plan else None,
+        "layoutRelationGraph": str(args.layout_relation_graph.resolve()) if args.layout_relation_graph else None,
         "namingPlan": str(args.naming_plan.resolve()) if args.naming_plan else None,
         "namePrefix": name_prefix,
         "namingSource": naming_source,
     }
     manifest = write_incremental(args.out_dir, conflict_dir, files, metadata, args.overwrite_modified)
+    native_structure_path = None
+    native_structure = None
+    if graph_by_screen:
+        native_structure_path = args.native_structure_manifest or args.out_dir / "native-structure-manifest.json"
+        native_structure = build_native_structure_manifest(
+            irs,
+            screens,
+            architecture_by_screen,
+            layout_graph,
+            graph_by_screen,
+            screen_source_files,
+            manifest,
+            args.out_dir,
+            args.architecture_plan,
+            args.layout_relation_graph,
+            ui_stack,
+        )
+        native_structure_path.parent.mkdir(parents=True, exist_ok=True)
+        native_structure_path.write_text(
+            json.dumps(native_structure, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
     asset_catalog = write_asset_catalog(args.out_dir, irs)
     asset_migration = None
     legacy_catalog = args.out_dir / "HTMLToIOSGeneratedAssets.xcassets"
@@ -7314,6 +7739,8 @@ def main() -> int:
     print(json.dumps({
         "outDir": str(args.out_dir.resolve()),
         "manifest": str((args.out_dir / MANIFEST_NAME).resolve()),
+        "nativeStructureManifest": str(native_structure_path.resolve()) if native_structure_path else None,
+        "nativeStructureSummary": native_structure.get("summary") if native_structure else None,
         "uiStack": ui_stack,
         "entrySymbol": metadata["entrySymbol"],
         "screens": ids,

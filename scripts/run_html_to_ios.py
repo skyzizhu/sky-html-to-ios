@@ -191,6 +191,8 @@ class Orchestrator:
                 "nativeArchitecturePlan": "pending",
                 "layoutRelationGraph": "pending",
                 "structuralFidelity": "pending",
+                "nativeStructureManifest": "pending",
+                "nativeStructureValidation": "pending",
                 "projectGenerationDecision": "pending",
                 "nativeNamingPlan": "pending",
                 "htmlVisualBaselines": "pending" if args.html and not args.skip_visual_baselines else "skipped",
@@ -1109,9 +1111,11 @@ class Orchestrator:
         ui_stack: str,
         minimum_ios: str,
         architecture_plan: Path,
+        layout_relation_graph: Path,
         naming_plan: Path,
     ) -> Path:
         generated_dir = source_root / "Generated" / "HTMLToIOS"
+        native_structure_manifest = self.report_dir / "native-structure-manifest.json"
         command: list[str | Path] = [sys.executable, self.scripts / "generate_ios_from_ir.py"]
         for path in ir_paths:
             command.extend(["--ir", path])
@@ -1120,9 +1124,37 @@ class Orchestrator:
             "--ui-stack", ui_stack,
             "--module-name", target,
             "--architecture-plan", architecture_plan,
+            "--layout-relation-graph", layout_relation_graph,
+            "--native-structure-manifest", native_structure_manifest,
             "--naming-plan", naming_plan,
         ])
         generation = self.run_command("generate-ios-code", command)
+        generation_manifest = generated_dir / ".html-to-ios-generation.json"
+        if isinstance(generation, dict) and generation.get("nativeStructureManifest"):
+            native_structure_manifest = Path(str(generation["nativeStructureManifest"]))
+        if not native_structure_manifest.is_file():
+            raise OrchestrationError(
+                "validate-native-structure",
+                "Generator did not produce native-structure-manifest.json.",
+            )
+        native_structure_report = self.report_dir / "native-structure-validation.json"
+        self.run_command(
+            "validate-native-structure",
+            [
+                sys.executable,
+                self.scripts / "validate_native_structure_manifest.py",
+                "--manifest", native_structure_manifest,
+                "--layout-graph", layout_relation_graph,
+                "--architecture-plan", architecture_plan,
+                "--generated-dir", generated_dir,
+                "--generation-manifest", generation_manifest,
+                "--out", native_structure_report,
+            ],
+        )
+        self.artifacts["nativeStructureManifest"] = str(native_structure_manifest)
+        self.artifacts["nativeStructureValidation"] = str(native_structure_report)
+        self.report["qualityGates"]["nativeStructureManifest"] = "generated"
+        self.report["qualityGates"]["nativeStructureValidation"] = "passed"
         self.run_command(
             "integrate-generated-sources",
             [
@@ -1477,8 +1509,11 @@ struct ContentView: View {
         if ir_paths is None:
             raise OrchestrationError("prepare-ui-ir", "No UI IR inputs are available.")
         architecture_plan = self.build_native_architecture_plan(ir_paths, ui_stack, minimum_ios)
-        self.build_and_validate_structural_fidelity(ir_paths, architecture_plan)
-        self.generate_and_integrate(ir_paths, project, target, source_root, ui_stack, minimum_ios, architecture_plan, naming_plan)
+        layout_relation_graph, _ = self.build_and_validate_structural_fidelity(ir_paths, architecture_plan)
+        self.generate_and_integrate(
+            ir_paths, project, target, source_root, ui_stack, minimum_ios,
+            architecture_plan, layout_relation_graph, naming_plan,
+        )
         self.wire_managed_entry(source_root, ui_stack)
         symbol = "HTMLToIOSGeneratedRootView" if ui_stack == "swiftui" else "HTMLToIOSGeneratedRootViewController"
         self.entry_wired = self.entry_wired or self.detect_existing_entry(source_root, symbol)
@@ -1542,7 +1577,7 @@ struct ContentView: View {
                     ir_paths = corrected_irs
                     self.artifacts["uiIRs"] = [str(path) for path in ir_paths]
                     architecture_plan = self.build_native_architecture_plan(ir_paths, ui_stack, minimum_ios)
-                    self.build_and_validate_structural_fidelity(ir_paths, architecture_plan)
+                    layout_relation_graph, _ = self.build_and_validate_structural_fidelity(ir_paths, architecture_plan)
                     self.generate_and_integrate(
                         ir_paths,
                         project,
@@ -1551,6 +1586,7 @@ struct ContentView: View {
                         ui_stack,
                         minimum_ios,
                         architecture_plan,
+                        layout_relation_graph,
                         naming_plan,
                     )
                     self.build(project, scheme)

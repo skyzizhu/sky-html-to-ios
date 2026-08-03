@@ -175,7 +175,7 @@ Small fixed groups remain static layouts. Long homogeneous rows use Table/Lazy c
 
 Each screen also receives a typed layout contract containing visual child order, axis, alignment, distribution, wrapping, spacing, sizing policy, aspect ratio, and compression evidence. Inputs, explicit/project components, specialized media, and stable business controls become typed leaf views. Ordinary text, SVG internals, decorative nodes, and auto-numbered DOM leaves stay in the shared runtime instead of creating one Swift file per node.
 
-Before Swift generation, `layout-relation-graph-1.0` promotes those per-node measurements into cross-node constraints: containment, rendered child order, adjacency and gap, alignment, equal sizing, square aspect evidence, overlap order, and one scroll-axis owner. `structural-fidelity-report-1.0` then checks that the six-layer native plan consumes the same relationships. This core gate requires neither screenshots nor multimodal capability.
+Before Swift generation, `layout-relation-graph-1.0` promotes those per-node measurements into cross-node constraints: containment, rendered child order, adjacency and gap, alignment, equal sizing, square aspect evidence, overlap order, and one scroll-axis owner. `structural-fidelity-report-1.0` checks that the six-layer native plan can express the same relationships. After generation, `native-structure-manifest-1.0` records how the actual Swift/Payload consumes every node and relation, and an independent validator checks it before Xcode target integration. Both core gates require neither screenshots nor multimodal capability.
 
 ## Supported Views and Controls
 
@@ -548,6 +548,8 @@ Reports are written under `<workspace>/.html-to-ios/`.
 | `native-architecture-plan.json` | Navigation, scrolling, Safe Area, and presentation |
 | `layout-relation-graph.json` | Containment, visual order, spacing, alignment, aspect ratio, overlap, and scroll ownership |
 | `structural-fidelity-report.json` | Screenshot-free source-to-native structural quality gate |
+| `native-structure-manifest.json` | Actual Swift/Payload node and relation consumption evidence |
+| `native-structure-validation.json` | Post-generation structural gate run before target integration |
 | `screens/<id>/render-tree.json` | Browser render tree |
 | `screens/<id>/ui-ir.json` | Screen UI IR |
 | `screens/<id>/text-calibration.json` | Text calibration |
@@ -582,7 +584,7 @@ High-risk inputs include runtime-generated DOM, closed Shadow DOM, cross-origin 
 The first usable release has passed:
 
 - real SwiftUI and UIKit builds;
-- 122 automated tests in the current development audit;
+- 125 automated tests in the current development audit;
 - UI IR, decision, naming, generator, route, and interaction tests;
 - visual-difference and geometry tests;
 - real Simulator responsive matrices;

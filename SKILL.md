@@ -24,6 +24,7 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 13. 控件选择必须执行系统优先、视觉适配门禁：先用 Apple 系统控件及官方配置；系统本体视觉不足时保留系统控件并增加原生包装层；只有语义、行为或视觉能力确有阻断证据时才生成组合控件或自定义 `UIControl`/View。
 14. `visual` 验证失败时生成节点级 `visual-correction-plan.json`。纠偏只允许修改 UI IR 和派生契约，禁止直接给生成后的 Swift 源码追加截图专用补丁；未运行视觉验收不等于核心转换失败。
 15. 截图之前必须完成确定性结构验收。浏览器来源覆盖、parent-child 归属、视觉顺序、布局关系、scroll owner、原生叶子组件和 screen region 所有权必须进入 `layout-relation-graph.json` 与 `structural-fidelity-report.json`；结构门禁失败时不得生成 Swift。
+16. Swift 生成后、Xcode target 接入前必须完成原生消费验收。生成器必须输出 `native-structure-manifest.json`，独立门禁必须输出通过的 `native-structure-validation.json`，证明实际 Swift/Payload 消费了关系图；禁止只验证计划而不验证生成结果。
 
 ## 支持范围
 
@@ -259,7 +260,7 @@ python3 "$SKILL_ROOT/scripts/build_ui_ir.py" render-tree.json \
 
 总控必须运行 `scripts/build_native_architecture_plan.py` 生成 `native-architecture-plan.json`。计划必须完整包含 Application Container、Screen Container、Screen Regions、Content Container、Reusable Section/Item 和 Leaf Component 六层。它将 controller/container 所有权、导航栈、导航栏绘制、滚动行为、Table/Collection/Scroll/静态容器选择、Cell 复用、叶子 View/Control、presentation 和 Safe Area 分开建模。系统导航栈与顶部栏是否使用系统样式是两个独立决策；滚动页面的容器宽高始终等于父容器 bounds，禁止用 `width/height - safeAreaInsets` 计算 frame。
 
-随后读取 `references/structural-fidelity.md`。总控必须生成 `layout-relation-graph.json`，固化 containment、视觉子节点顺序、相邻间距、对齐、等宽/等高、宽高比、overlap 与 scroll axis owner；再生成 `structural-fidelity-report.json`，验证这些关系被六层原生架构完整消费。该门禁不依赖截图或多模态能力，失败时必须回到提取、UI IR 或架构计划修复，不得直接补丁生成后的 Swift。
+随后读取 `references/structural-fidelity.md`。总控必须生成 `layout-relation-graph.json`，固化 containment、视觉子节点顺序、相邻间距、对齐、等宽/等高、宽高比、overlap 与 scroll axis owner；再生成 `structural-fidelity-report.json`，验证这些关系能被六层原生架构完整表达。该生成前门禁不依赖截图或多模态能力，失败时必须回到提取、UI IR 或架构计划修复，不得直接补丁生成后的 Swift。
 
 控件映射必须先判断语义，再选择原生控件，最后还原外观。不要仅按 HTML tag 映射，也不要为了视觉方便把 Button、输入框和选择控件退化成无语义的普通 View。
 
@@ -300,6 +301,7 @@ python3 "$SKILL_ROOT/scripts/generate_ios_from_ir.py" \
 - 通用运行时只是原生基线；发现现有 Router、Design System、Cell 或控件时，按映射计划替换为项目组件。
 - 六层架构计划必须物化为强类型页面源码：每个 screen 生成 UIContract，Section 生成独立容器，复用内容生成真实 UIKit Cell 子类或 SwiftUI Item View，并通过稳定 node ID 注册进入实际渲染链路。禁止只生成目录占位，或让一个通用 JSON NodeRenderer 独占全部页面架构。
 - 每个 screen 生成 LayoutContract，保存容器的 source/visual order、axis、alignment、distribution、wrap、gap 和子项尺寸策略。它用于关系约束和视觉校准，不得转成逐节点页面绝对 frame。
+- 读取 `references/native-structure-consumption.md`。生成器必须消费 `layout-relation-graph.json` 并写出 `native-structure-manifest.json`；随后运行 `scripts/validate_native_structure_manifest.py`。只有 screen/node/relation 集合、原生等价提升、区域所有权及 Swift/Payload 哈希全部通过，才能接入 Xcode target。
 - 叶子强类型化只覆盖输入状态所有者、显式/项目组件、特殊媒体或绘制组件，以及拥有稳定业务 ID 的交互控件。普通文本、装饰节点、SVG 内部路径、自动编号节点和已由 Cell 拥有的 item 不按一节点一文件生成。
 - 保持项目命名、目录、访问控制和状态管理风格。
 - 静态页面不强制创建 ViewModel。
@@ -361,7 +363,7 @@ python3 "$SKILL_ROOT/scripts/generate_ios_from_ir.py" \
 
 ## 交付要求
 
-先执行 `references/conversion-boundary-gates.md` 的转换后门禁。核心转换完成至少要求 UI IR、原生架构、生成接入和所请求的构建门禁通过；只有请求 `visual` 时才追加 required states、滚动轴、系统区域和确定性视觉门禁。报告必须区分“转换/编译完成”和“视觉验收通过”。
+先执行 `references/conversion-boundary-gates.md` 的转换后门禁。核心转换完成至少要求 UI IR、原生架构、生成前结构门禁、生成后原生消费门禁、工程接入和所请求的构建门禁通过；只有请求 `visual` 时才追加 required states、滚动轴、系统区域和确定性视觉门禁。报告必须区分“转换/编译完成”和“视觉验收通过”。
 
 最终报告必须包括：
 
