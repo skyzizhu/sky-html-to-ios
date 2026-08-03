@@ -18,9 +18,10 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = "html-to-ios-orchestration-1.4"
+SCHEMA_VERSION = "html-to-ios-orchestration-1.5"
 PROJECT_MARKER_NAME = ".html-to-ios-created-project.json"
 SKIP_PARTS = {".git", ".build", "build", "DerivedData", "Pods", "Carthage", "node_modules", "xcuserdata"}
+MAX_VISUAL_CORRECTION_ITERATIONS = 3
 
 
 class OrchestrationError(RuntimeError):
@@ -1172,27 +1173,37 @@ struct ContentView: View {
         self.artifacts["derivedData"] = str(derived_data)
         self.report["qualityGates"]["build"] = "passed"
 
-    def capture_and_review_visual_states(self, project: Path, target: str, minimum_ios: str) -> None:
+    def capture_and_review_visual_states(
+        self,
+        project: Path,
+        target: str,
+        minimum_ios: str,
+        iteration: int,
+        previous_plans: dict[str, Path] | None = None,
+    ) -> dict[str, Any]:
         plans = self.artifacts.get("visualReviewPlans") or []
         if not plans:
             self.report["qualityGates"]["iosStateCapture"] = "skipped"
             self.report["qualityGates"]["visualDiff"] = "skipped"
             self.report["qualityGates"]["visualCorrectionPlan"] = "skipped"
-            return
+            return {"passed": True, "failedStates": [], "screens": []}
         capture_reports: list[str] = []
         review_bundles: list[str] = []
         correction_plans: list[str] = []
+        screen_results: list[dict[str, Any]] = []
         failed_states: list[str] = []
         kind, container = self.choose_build_container(project)
         for plan in plans:
             screen_id = str(plan["screenId"])
+            ios_directory = Path(plan["iosDirectory"]) / f"iteration-{iteration}"
+            review_directory = Path(plan["reviewDirectory"]) / f"iteration-{iteration}"
             capture_command: list[str | Path] = [
                 sys.executable,
                 self.scripts / "capture_ios_states.py",
                 Path(plan["manifest"]),
                 "--project", project,
                 "--target", target,
-                "--out-dir", Path(plan["iosDirectory"]),
+                "--out-dir", ios_directory,
                 "--device", self.args.device,
                 "--minimum-ios", minimum_ios,
             ]
@@ -1205,7 +1216,7 @@ struct ContentView: View {
                 self.report["qualityGates"]["visualDiff"] = "blocked-by-ios-state-capture"
                 self.report["qualityGates"]["visualCorrectionPlan"] = "blocked-by-ios-state-capture"
                 raise
-            capture_reports.append(str(capture.get("out") or Path(plan["iosDirectory"]) / "captures.json"))
+            capture_reports.append(str(capture.get("out") or ios_directory / "captures.json"))
             try:
                 self.run_command(
                     f"review-visual-states-{screen_id}",
@@ -1214,8 +1225,8 @@ struct ContentView: View {
                         self.scripts / "build_visual_review_bundle.py",
                         Path(plan["manifest"]),
                         "--html-dir", Path(plan["htmlDirectory"]),
-                        "--ios-dir", Path(plan["iosDirectory"]),
-                        "--out-dir", Path(plan["reviewDirectory"]),
+                        "--ios-dir", ios_directory,
+                        "--out-dir", review_directory,
                         "--multimodal-capability", "auto",
                         "--advisory",
                     ],
@@ -1224,38 +1235,109 @@ struct ContentView: View {
                 self.report["qualityGates"]["visualDiff"] = "failed"
                 self.report["qualityGates"]["visualCorrectionPlan"] = "blocked-by-visual-diff"
                 raise
-            bundle_path = Path(plan["reviewDirectory"]) / "review-bundle.json"
+            bundle_path = review_directory / "review-bundle.json"
             review_bundles.append(str(bundle_path))
             bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
             summary = bundle.get("summary") or {}
-            correction_path = Path(plan["reviewDirectory"]) / "visual-correction-plan.json"
+            correction_path = review_directory / "visual-correction-plan.json"
+            correction_command: list[str | Path] = [
+                sys.executable,
+                self.scripts / "build_visual_correction_plan.py",
+                bundle_path,
+                "--ir", Path(plan["uiIR"]),
+                "--out", correction_path,
+                "--iteration", str(iteration),
+            ]
+            previous_plan = (previous_plans or {}).get(screen_id)
+            if previous_plan:
+                correction_command.extend(["--previous-plan", previous_plan])
             self.run_command(
                 f"build-visual-correction-plan-{screen_id}",
-                [
-                    sys.executable,
-                    self.scripts / "build_visual_correction_plan.py",
-                    bundle_path,
-                    "--ir", Path(plan["uiIR"]),
-                    "--out", correction_path,
-                ],
+                correction_command,
             )
             correction_plans.append(str(correction_path))
+            correction_plan = json.loads(correction_path.read_text(encoding="utf-8"))
+            screen_results.append({
+                "screenId": screen_id,
+                "uiIR": str(plan["uiIR"]),
+                "correctionPlan": str(correction_path),
+                "correctionSummary": correction_plan.get("summary") or {},
+            })
             failed_states.extend(f"{screen_id}:{state_id}" for state_id in summary.get("missingRequired") or [])
             failed_states.extend(f"{screen_id}:{state_id}" for state_id in summary.get("requiredFailures") or [])
-        self.artifacts["iosStateCaptures"] = capture_reports
-        self.artifacts["visualReviewBundles"] = review_bundles
-        self.artifacts["visualCorrectionPlans"] = correction_plans
+        self.artifacts.setdefault("iosStateCaptures", []).extend(capture_reports)
+        self.artifacts.setdefault("visualReviewBundles", []).extend(review_bundles)
+        self.artifacts.setdefault("visualCorrectionPlans", []).extend(correction_plans)
         self.report["qualityGates"]["iosStateCapture"] = "passed"
         self.report["qualityGates"]["visualDiff"] = "failed" if failed_states else "passed"
-        self.report["qualityGates"]["visualCorrectionPlan"] = (
-            "generated-review-required" if failed_states else "not-needed"
+        automatic_ready = any(
+            (item.get("correctionSummary") or {}).get("nextAction") == "apply-plan-and-regenerate"
+            for item in screen_results
+        )
+        self.report["qualityGates"]["visualCorrectionPlan"] = "not-needed" if not failed_states else (
+            "automatic-correction-ready" if automatic_ready else "generated-review-required"
         )
         if failed_states:
             self.report["visualQualityGateFailures"] = failed_states
-            raise OrchestrationError(
-                "visual-quality-gate",
-                "Required visual states failed deterministic acceptance: " + ", ".join(failed_states),
+        else:
+            self.report.pop("visualQualityGateFailures", None)
+        return {"passed": not failed_states, "failedStates": failed_states, "screens": screen_results}
+
+    def apply_visual_corrections(self, result: dict[str, Any], iteration: int) -> list[Path] | None:
+        applications: list[str] = []
+        corrected_by_screen: dict[str, Path] = {}
+        applied_count = 0
+        plans_by_screen = {
+            str(plan["screenId"]): plan
+            for plan in self.artifacts.get("visualReviewPlans") or []
+        }
+        for item in result.get("screens") or []:
+            summary = item.get("correctionSummary") or {}
+            if summary.get("nextAction") != "apply-plan-and-regenerate":
+                continue
+            screen_id = str(item["screenId"])
+            source_ir = Path(item["uiIR"])
+            visual_plan = plans_by_screen[screen_id]
+            correction_directory = Path(visual_plan["reviewDirectory"]).parent / "visual-corrections" / f"iteration-{iteration}"
+            corrected_ir = correction_directory / "ui-ir.json"
+            application_report = correction_directory / "application-report.json"
+            application = self.run_command(
+                f"apply-visual-correction-plan-{screen_id}",
+                [
+                    sys.executable,
+                    self.scripts / "apply_visual_correction_plan.py",
+                    Path(item["correctionPlan"]),
+                    "--ir", source_ir,
+                    "--out", corrected_ir,
+                    "--report", application_report,
+                ],
             )
+            applications.append(str(application_report))
+            count = int(application.get("appliedCount") or 0)
+            if count <= 0:
+                continue
+            self.run_command(
+                f"validate-corrected-ui-ir-{screen_id}",
+                [sys.executable, self.scripts / "validate_ui_ir.py", corrected_ir],
+                parse_json=False,
+            )
+            applied_count += count
+            corrected_by_screen[screen_id] = corrected_ir
+            visual_plan["uiIR"] = str(corrected_ir)
+        self.artifacts.setdefault("visualCorrectionApplications", []).extend(applications)
+        self.report.setdefault("visualCorrectionIterations", []).append({
+            "iteration": iteration,
+            "appliedCount": applied_count,
+            "applicationReports": applications,
+        })
+        if applied_count <= 0:
+            self.report["qualityGates"]["visualCorrectionApplication"] = "no-safe-corrections"
+            return None
+        self.report["qualityGates"]["visualCorrectionApplication"] = "applied-regeneration-required"
+        return [
+            corrected_by_screen.get(str(plan["screenId"]), Path(plan["uiIR"]))
+            for plan in self.artifacts.get("visualReviewPlans") or []
+        ]
 
     def execute(self) -> dict[str, Any]:
         if not self.workspace.exists():
@@ -1375,7 +1457,52 @@ struct ContentView: View {
 
         if self.args.html and not self.args.skip_visual_baselines:
             if verification_mode == "visual" and self.entry_wired:
-                self.capture_and_review_visual_states(project, target, minimum_ios)
+                previous_plans: dict[str, Path] = {}
+                # Three mutation rounds require a fourth capture-only pass to verify the final result.
+                for iteration in range(1, MAX_VISUAL_CORRECTION_ITERATIONS + 2):
+                    visual_result = self.capture_and_review_visual_states(
+                        project,
+                        target,
+                        minimum_ios,
+                        iteration,
+                        previous_plans,
+                    )
+                    previous_plans = {
+                        str(item["screenId"]): Path(item["correctionPlan"])
+                        for item in visual_result.get("screens") or []
+                    }
+                    if visual_result["passed"]:
+                        if self.report.get("visualCorrectionIterations"):
+                            self.report["qualityGates"]["visualCorrectionApplication"] = "passed-after-regeneration"
+                        else:
+                            self.report["qualityGates"]["visualCorrectionApplication"] = "not-needed"
+                        break
+                    corrected_irs = self.apply_visual_corrections(visual_result, iteration)
+                    if not corrected_irs:
+                        raise OrchestrationError(
+                            "visual-quality-gate",
+                            "Required visual states failed and no safe machine-applicable UI IR corrections remain: "
+                            + ", ".join(visual_result["failedStates"]),
+                        )
+                    ir_paths = corrected_irs
+                    self.artifacts["uiIRs"] = [str(path) for path in ir_paths]
+                    architecture_plan = self.build_native_architecture_plan(ir_paths, ui_stack, minimum_ios)
+                    self.generate_and_integrate(
+                        ir_paths,
+                        project,
+                        target,
+                        source_root,
+                        ui_stack,
+                        minimum_ios,
+                        architecture_plan,
+                        naming_plan,
+                    )
+                    self.build(project, scheme)
+                else:  # pragma: no cover - the plan guard normally stops the fourth review pass
+                    raise OrchestrationError(
+                        "visual-quality-gate",
+                        "Required visual states still fail after the maximum automatic correction iterations.",
+                    )
             elif verification_mode in {"build", "visual"}:
                 self.report["qualityGates"]["iosStateCapture"] = "required-pending"
                 self.report["qualityGates"]["visualDiff"] = "blocked-pending-ios-captures"

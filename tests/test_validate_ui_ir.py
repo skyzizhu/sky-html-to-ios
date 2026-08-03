@@ -124,6 +124,24 @@ class ValidateUIIRTests(unittest.TestCase):
         errors, _ = MODULE.validate(ir(payload))
         self.assertTrue(any("nativeControlDecision.policy is invalid" in error for error in errors))
 
+    def test_visual_correction_history_requires_hash_and_consistent_operations(self) -> None:
+        payload = node("text", "none")
+        payload["calibration"] = {"visualCorrections": [{
+            "operations": [{"property": "x", "before": 20, "after": 18, "amount": -3}],
+        }]}
+        document = ir(payload)
+        document["visualCorrectionHistory"] = [{
+            "schemaVersion": "ui-ir-visual-correction-application-1.0",
+            "sourceIR": "source.json",
+            "sourceIRSha256": "not-a-hash",
+            "iteration": 1,
+            "appliedCount": 1,
+            "rejectedCount": 0,
+        }]
+        errors, _ = MODULE.validate(document)
+        self.assertTrue(any("sourceIRSha256" in error for error in errors))
+        self.assertTrue(any("after must equal before plus amount" in error for error in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

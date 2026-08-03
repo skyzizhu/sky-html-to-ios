@@ -12,6 +12,9 @@ from typing import Any
 
 MAX_AUTOMATIC_ITERATIONS = 3
 MIN_IMPROVEMENT_PERCENT = 0.25
+MAX_AUTOMATIC_TRANSLATION_POINTS = 12.0
+MAX_AUTOMATIC_SIZE_POINTS = 12.0
+MAX_AUTOMATIC_SIZE_RATIO = 0.15
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -59,6 +62,67 @@ def changed_geometry_properties(item: dict | None) -> list[str]:
         for key in ("x", "y", "width", "height")
         if abs(finite(delta.get(key))) >= 1
     ]
+
+
+def proposed_geometry_mutation(
+    state_id: str,
+    active_state_id: str,
+    node: dict,
+    geometry: dict | None,
+    target: str,
+) -> tuple[dict | None, list[str]]:
+    if target != "layout-contract" or not geometry:
+        return None, ["mutation-target-has-no-deterministic-geometry-operation"]
+    if str(geometry.get("geometryConfidence") or "").lower() != "high":
+        return None, ["geometry-confidence-is-not-high"]
+    node_id = str(node.get("id") or "")
+    if state_id != "initial" and not node_id.startswith("state."):
+        return None, ["state-specific-delta-would-mutate-shared-node"]
+    if active_state_id and state_id == "initial":
+        return None, ["initial-state-correction-has-active-state-owner"]
+
+    rect = (node.get("layout") or {}).get("rect") or {}
+    delta = geometry.get("delta") or {}
+    operations = []
+    rejection_reasons = []
+    for prop in ("x", "y", "width", "height"):
+        amount = -finite(delta.get(prop))
+        if abs(amount) < 0.5:
+            continue
+        before = finite(rect.get(prop), math.nan)
+        if not math.isfinite(before):
+            rejection_reasons.append(f"missing-layout-rect-{prop}")
+            continue
+        limit = MAX_AUTOMATIC_TRANSLATION_POINTS
+        if prop in {"width", "height"}:
+            limit = min(MAX_AUTOMATIC_SIZE_POINTS, max(2.0, abs(before) * MAX_AUTOMATIC_SIZE_RATIO))
+        if abs(amount) > limit:
+            rejection_reasons.append(f"{prop}-adjustment-exceeds-{round(limit, 3)}pt-limit")
+            continue
+        after = before + amount
+        if prop in {"width", "height"} and after < 1:
+            rejection_reasons.append(f"{prop}-adjustment-would-produce-invalid-size")
+            continue
+        operations.append({
+            "path": f"layout.rect.{prop}",
+            "operation": "add",
+            "amount": round(amount, 4),
+            "expectedBefore": round(before, 4),
+            "expectedAfter": round(after, 4),
+            "sourceDelta": round(-amount, 4),
+            "limitPoints": round(limit, 4),
+        })
+    if rejection_reasons or not operations:
+        if not operations and not rejection_reasons:
+            rejection_reasons.append("geometry-delta-is-below-automatic-threshold")
+        return None, rejection_reasons
+    return {
+        "schemaVersion": "ui-ir-bounded-mutation-1.0",
+        "owner": "ui-ir",
+        "nodeId": node_id,
+        "operations": operations,
+        "rollback": "discard-corrected-ir-and-restore-source-ir",
+    }, []
 
 
 def attribution(
@@ -154,6 +218,13 @@ def build_plan(bundle: dict, irs: list[dict], iteration: int, previous: dict | N
             mismatch = finite(region.get("mismatchRatio"))
             edge = finite(region.get("edgeMismatchRatio"))
             confidence = min(0.98, 0.62 + mismatch * 0.25 + (0.08 if geometries.get(node_id) else 0) + (0.06 if control else 0))
+            proposed_mutation, automatic_rejection_reasons = proposed_geometry_mutation(
+                state_id,
+                active_state_id,
+                node,
+                geometries.get(node_id),
+                target,
+            )
             corrections.append({
                 "id": f"correction.{len(corrections) + 1}",
                 "stateId": state_id,
@@ -169,15 +240,17 @@ def build_plan(bundle: dict, irs: list[dict], iteration: int, previous: dict | N
                     "mismatchRatio": round(mismatch, 6),
                     "edgeMismatchRatio": round(edge, 6),
                     "geometryDelta": (geometries.get(node_id) or {}).get("delta"),
+                    "geometryConfidence": (geometries.get(node_id) or {}).get("geometryConfidence"),
+                    "expectedRect": (geometries.get(node_id) or {}).get("expectedRect"),
+                    "actualRect": (geometries.get(node_id) or {}).get("actualRect"),
                 },
                 "nativeControlDecision": control or None,
                 "recommendedCorrection": recommendation(target, control, properties),
                 "priority": "critical" if region.get("criticality") == "critical" else "high" if mismatch >= 0.35 else "medium",
                 "confidence": round(confidence, 3),
-                "automaticEligible": confidence >= 0.75 and target in {
-                    "layout-contract", "text-calibration", "native-control-configuration",
-                    "asset-contract", "style-tokens",
-                },
+                "automaticEligible": confidence >= 0.75 and proposed_mutation is not None,
+                "proposedMutation": proposed_mutation,
+                "automaticRejectionReasons": automatic_rejection_reasons,
                 "prohibitedMutation": "generated-swift-source",
             })
 
@@ -189,12 +262,15 @@ def build_plan(bundle: dict, irs: list[dict], iteration: int, previous: dict | N
     previous_fidelity = finite((previous or {}).get("summary", {}).get("sourceFidelityPercent"), -1)
     improvement = round(fidelity - previous_fidelity, 4) if previous_fidelity >= 0 else None
     stop_reasons = []
-    if iteration >= MAX_AUTOMATIC_ITERATIONS:
+    if iteration > MAX_AUTOMATIC_ITERATIONS:
         stop_reasons.append("maximum-automatic-iterations-reached")
     if improvement is not None and improvement < MIN_IMPROVEMENT_PERCENT:
         stop_reasons.append("fidelity-improvement-below-threshold")
     if not corrections:
         stop_reasons.append("no-attributable-node-level-corrections")
+    automatic_count = sum(bool(item["automaticEligible"]) for item in corrections)
+    if corrections and automatic_count == 0:
+        stop_reasons.append("no-safe-machine-applicable-corrections")
     next_action = "human-review" if stop_reasons and corrections else "complete" if not corrections else "apply-plan-and-regenerate"
     return {
         "schemaVersion": "visual-correction-plan-1.0",
@@ -203,6 +279,9 @@ def build_plan(bundle: dict, irs: list[dict], iteration: int, previous: dict | N
             "mutationOwnership": "ui-ir-and-derived-contracts-only",
             "maxAutomaticIterations": MAX_AUTOMATIC_ITERATIONS,
             "minimumFidelityImprovementPercent": MIN_IMPROVEMENT_PERCENT,
+            "maximumAutomaticTranslationPoints": MAX_AUTOMATIC_TRANSLATION_POINTS,
+            "maximumAutomaticSizePoints": MAX_AUTOMATIC_SIZE_POINTS,
+            "maximumAutomaticSizeRatio": MAX_AUTOMATIC_SIZE_RATIO,
             "customFallback": "only-after-system-control-fit-is-insufficient",
         },
         "iteration": iteration,
@@ -213,7 +292,7 @@ def build_plan(bundle: dict, irs: list[dict], iteration: int, previous: dict | N
             "previousFidelityPercent": previous_fidelity if previous_fidelity >= 0 else None,
             "improvementPercent": improvement,
             "correctionCount": len(corrections),
-            "automaticEligibleCount": sum(bool(item["automaticEligible"]) for item in corrections),
+            "automaticEligibleCount": automatic_count,
             "systemControlCorrectionCount": sum(
                 item["mutationTarget"] == "native-control-configuration"
                 for item in corrections

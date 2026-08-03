@@ -206,6 +206,7 @@ UI IR 是浏览器渲染结果与原生代码之间的稳定中间层。不要�
 - 横向 repeat item、紧凑图标容器和比例媒体的来源 rect 是生成 `fixed/min/intrinsic/aspectRatio` 策略的证据。生成器可派生运行时样式，但不得删除原始 rect 与 CSS 证据。
 - `support` 使用 `native`、`native-fallback`、`placeholder` 或 `unsupported`。
 - `source.synthetic` 记录 pseudo-element 等浏览器生成节点；`layout.estimated` 表示边界需要截图纠偏。
+- 自动视觉纠偏生成新的 IR 副本，并在根级 `visualCorrectionHistory` 与节点级 `calibration.visualCorrections` 记录来源 IR hash、计划、迭代、前后值和操作。该记录不得改写 `sourceRectCssPx`，也不得成为跳过重新截图的理由。
 
 ## Semantic Type 词表
 

@@ -343,7 +343,7 @@ python3 "$SKILL_ROOT/scripts/generate_ios_from_ir.py" \
 8. 同时读取每个状态的 `geometry-report.json`，先核对高置信度节点的 top/middle/bottom median y delta、height delta、`anchorRows` 和 `driftTransitions`。固定画板 region 坐标必须使用与 HTML 截图一致的 cover/center 裁切；累计漂移沿首个 transition 回查中间容器，禁止用整页 y offset 掩盖 border-box、item 高度或 gap 丢失。
 9. 判断当前 Agent 的实际图像查看能力，并以 `available`、`unavailable` 或 `auto` 传给 review bundle；不要根据模型名称猜测。脚本生成每个状态的像素报告、comparison、heatmap、overlay、regions 和能力门控状态。
 10. 能力为 `available` 时读取 `references/visual-agent-review.md`，实际打开图片并检查 failed-threshold 状态；能力为 `unavailable` 时标记 `not-run`；`unknown` 时先尝试打开一张图片，不能把 unknown 当成完成。
-11. 按 UI IR node 局部纠偏，重新构建并回归所有受影响状态；默认最多 3 轮。
+11. 视觉失败后先运行 `build_visual_correction_plan.py`。只有计划包含高置信度、状态归属明确且幅度未越界的 `proposedMutation` 时，才运行 `apply_visual_correction_plan.py` 生成新的 corrected UI IR；随后重新生成、构建并回归全部 required states。原始 IR 必须保留，默认最多 3 轮，单轮提升低于 0.25% 或没有安全修正时停止。
 12. 至少复核首屏、有意义的长页末端、弹层和切换状态。动画 0/50/100 帧只有具备原生确定性采样钩子时才设为 required，否则作为 advisory，不能用三张相同静态图冒充动画验证。
 13. 在项目支持的 320/375/393/430pt 或实际设备宽度上验证 Auto Layout、文字换行、边距和横向溢出；使用 `scripts/validate_responsive_ios_matrix.py` 为每个宽度指定真实可用 Simulator，使用 `scripts/compare_text_calibration.py` 核对 iOS 文字测量结果。禁止把一台设备截图缩放后冒充多设备验证；本机缺少某尺寸 runtime 时必须如实报告。
 14. 执行轴向隔离走查：纵向页面的横向拖动不得移动根内容；横向 carousel 的纵向拖动不得带动其自身产生纵向偏移。逐项核对横向 item 宽度、文字行数、图标容器宽高比和末项可达性。
@@ -397,5 +397,6 @@ python3 "$SKILL_ROOT/scripts/generate_ios_from_ir.py" \
 2. 映射到 UI IR 节点和原生 View。
 3. 判断差异来自字体、布局、资源、Safe Area、渲染顺序还是交互状态。
 4. 只修改相关组件。
-5. 重新构建、截图和对比。
-6. 报告本次修改范围及是否影响其他页面。
+5. 自动纠偏只接受计划白名单内的 UI IR 几何操作；外观、系统控件配置、Presentation 和低置信度差异没有确定目标值时不得猜测修改。
+6. 重新生成、构建、截图和对比；失败时可直接回退到上一份 IR。
+7. 报告本次修改范围及是否影响其他页面。

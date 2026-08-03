@@ -4,7 +4,7 @@
 
 同一业务页面的状态画板必须逐状态验收。manifest 中每个状态保留自己的 `htmlRootSelector`、`activeStateId`、`geometryNodes` 和 `validationRegions`；当状态画板本身是确定性静态表示时，HTML 截图直接裁切该画板，不再重复执行可能不存在的网页交互。iOS 侧仍执行 tap、swipe、dismiss 等原生动作并验证目标 accessibility identifier。
 
-视觉门禁失败后运行 `build_visual_correction_plan.py`。计划将差异归因到位置/尺寸、文字、资源、系统区域、控件外观、状态差分或 Presentation，并回指 UI IR 节点。系统控件问题优先修改官方 configuration、plain style、content inset 或包装层；只有 `nativeControlDecision` 证明系统能力不足时才升级封装。自动纠偏最多 3 轮，单轮保真度提升低于 0.25% 时停止并转人工复核。
+视觉门禁失败后运行 `build_visual_correction_plan.py`。计划将差异归因到位置/尺寸、文字、资源、系统区域、控件外观、状态差分或 Presentation，并回指 UI IR 节点。只有高置信度 expected/actual geometry、状态 owner 明确、单项改变量未越界且计划给出 `ui-ir-bounded-mutation-1.0` 时，`apply_visual_correction_plan.py` 才可生成 corrected UI IR。原始 IR 不覆盖，生成后的 Swift 不修改，同一节点每轮只接受一个最高优先级修正。系统控件问题优先修改官方 configuration、plain style、content inset 或包装层；没有确定目标值时只保留建议，不能猜测外观参数。自动修正最多应用 3 轮，第三轮后允许一次只验收不再修改的截图复核；单轮保真度提升低于 0.25% 时提前停止并转人工复核。
 
 ## 基准
 
@@ -28,6 +28,14 @@
 8. 先处理大面积结构偏差，再处理字体、阴影和抗锯齿细节。
 9. 每轮只修改有限节点并重新验证。
 10. 执行方向手势：根页面横向拖动、根页面纵向拖动、每个 nested scroller 的主轴与交叉轴拖动，记录内容 offset 是否只在声明轴变化。
+
+## 自动应用边界
+
+- 当前机器自动应用白名单仅包含 `layout.rect.x|y|width|height` 的小幅 additive 修正。
+- x/y 单项最大 12pt；width/height 同时受 12pt 和节点原尺寸 15% 限制。
+- geometry confidence 不是 `high`、公共节点只在某个交互态偏移、计划前值已过期、尺寸会小于 1pt、同节点出现冲突修正时全部拒绝。
+- 颜色、字体、阴影、资源、系统控件 configuration、Safe Area owner、Presentation strategy 和 state delta 在没有确定目标值时不得自动修改。
+- 每轮输出 application report，记录 applied/rejected、前后值、来源计划和回退方式；下一轮必须使用 corrected IR 重新生成，不能在 Swift 上叠加补丁。
 
 ## 指标
 

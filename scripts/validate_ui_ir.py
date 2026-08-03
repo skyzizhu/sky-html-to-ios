@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 from pathlib import Path
 
 
@@ -43,6 +44,7 @@ ALLOWED_CONTROL_DECISIONS = {
     "system-control", "system-control-with-native-wrapper", "native-composition",
     "system-view", "system-container", "native-view", "project-component", "unsupported",
 }
+ALLOWED_VISUAL_CORRECTION_PROPERTIES = {"x", "y", "width", "height"}
 
 
 def validate_rect(rect, location, errors):
@@ -72,6 +74,27 @@ def validate(data):
     target = data.get("target", {})
     if target.get("uiStack") not in ALLOWED_STACKS:
         errors.append("target.uiStack must be 'swiftui' or 'uikit'")
+    correction_history = data.get("visualCorrectionHistory")
+    if correction_history is not None:
+        if not isinstance(correction_history, list):
+            errors.append("visualCorrectionHistory must be an array")
+        else:
+            for index, entry in enumerate(correction_history):
+                where = f"visualCorrectionHistory[{index}]"
+                if not isinstance(entry, dict):
+                    errors.append(f"{where} must be an object")
+                    continue
+                if entry.get("schemaVersion") != "ui-ir-visual-correction-application-1.0":
+                    errors.append(f"{where}.schemaVersion is invalid")
+                if not isinstance(entry.get("sourceIR"), str) or not entry.get("sourceIR"):
+                    errors.append(f"{where}.sourceIR must be a non-empty string")
+                source_hash = entry.get("sourceIRSha256")
+                if not isinstance(source_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", source_hash):
+                    errors.append(f"{where}.sourceIRSha256 must be a lowercase SHA-256")
+                for key in ("iteration", "appliedCount", "rejectedCount"):
+                    value = entry.get(key)
+                    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                        errors.append(f"{where}.{key} must be a non-negative integer")
     screens = data.get("screens")
     if not isinstance(screens, list) or not screens:
         errors.append("screens must be a non-empty array")
@@ -155,6 +178,42 @@ def validate(data):
                 errors.append(f"{nwhere}.content must be an object")
             if not isinstance(node.get("state"), dict):
                 errors.append(f"{nwhere}.state must be an object")
+            calibration = node.get("calibration")
+            if calibration is not None:
+                if not isinstance(calibration, dict):
+                    errors.append(f"{nwhere}.calibration must be an object")
+                else:
+                    visual_corrections = calibration.get("visualCorrections")
+                    if visual_corrections is not None:
+                        if not isinstance(visual_corrections, list):
+                            errors.append(f"{nwhere}.calibration.visualCorrections must be an array")
+                        else:
+                            for correction_index, correction in enumerate(visual_corrections):
+                                cwhere = f"{nwhere}.calibration.visualCorrections[{correction_index}]"
+                                if not isinstance(correction, dict):
+                                    errors.append(f"{cwhere} must be an object")
+                                    continue
+                                operations = correction.get("operations")
+                                if not isinstance(operations, list) or not operations:
+                                    errors.append(f"{cwhere}.operations must be a non-empty array")
+                                    continue
+                                for operation_index, operation in enumerate(operations):
+                                    owhere = f"{cwhere}.operations[{operation_index}]"
+                                    if not isinstance(operation, dict):
+                                        errors.append(f"{owhere} must be an object")
+                                        continue
+                                    if operation.get("property") not in ALLOWED_VISUAL_CORRECTION_PROPERTIES:
+                                        errors.append(f"{owhere}.property is invalid")
+                                    values = [operation.get(key) for key in ("before", "after", "amount")]
+                                    if any(
+                                        not isinstance(value, (int, float))
+                                        or isinstance(value, bool)
+                                        or not math.isfinite(value)
+                                        for value in values
+                                    ):
+                                        errors.append(f"{owhere} values must be finite numbers")
+                                    elif abs((values[0] + values[2]) - values[1]) > 0.01:
+                                        errors.append(f"{owhere}.after must equal before plus amount")
             text_behavior = node.get("textBehavior")
             if text_behavior is not None:
                 if not isinstance(text_behavior, dict):

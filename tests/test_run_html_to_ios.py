@@ -150,6 +150,134 @@ class RunHTMLToIOSTests(unittest.TestCase):
             self.assertNotEqual(result[3], Path(orchestrator.artifacts["generatedInteractionOverridesDraft"]))
             self.assertTrue(Path(orchestrator.artifacts["generatedInteractionOverridesDraft"]).is_file())
 
+    def test_safe_visual_correction_updates_plan_ir_and_requires_regeneration(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            source_ir = workspace / "screen" / "ui-ir.json"
+            source_ir.parent.mkdir(parents=True)
+            source_ir.write_text("{}\n", encoding="utf-8")
+            correction_plan = workspace / "plan.json"
+            correction_plan.write_text("{}\n", encoding="utf-8")
+            args = SimpleNamespace(
+                workspace=workspace,
+                report_dir=workspace / ".html-to-ios",
+                node=None,
+                dry_run=False,
+                html=workspace / "prototype.html",
+                ir=None,
+                skip_visual_baselines=False,
+            )
+            orchestrator = RUN_MODULE.Orchestrator(args)
+            visual_plan = {
+                "screenId": "home",
+                "uiIR": str(source_ir),
+                "reviewDirectory": str(workspace / "screen" / "visual-review"),
+            }
+            orchestrator.artifacts["visualReviewPlans"] = [visual_plan]
+
+            def fake_run_command(self, stage, command, **_kwargs):
+                command = [str(item) for item in command]
+                if stage.startswith("apply-visual-correction-plan"):
+                    out = Path(command[command.index("--out") + 1])
+                    report = Path(command[command.index("--report") + 1])
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    out.write_text("{}\n", encoding="utf-8")
+                    report.write_text(json.dumps({"summary": {"appliedCount": 1}}), encoding="utf-8")
+                    return {"appliedCount": 1, "requiresRegeneration": True}
+                return ""
+
+            orchestrator.run_command = MethodType(fake_run_command, orchestrator)
+            corrected = orchestrator.apply_visual_corrections({
+                "screens": [{
+                    "screenId": "home",
+                    "uiIR": str(source_ir),
+                    "correctionPlan": str(correction_plan),
+                    "correctionSummary": {"nextAction": "apply-plan-and-regenerate"},
+                }],
+            }, 1)
+            self.assertIsNotNone(corrected)
+            assert corrected is not None
+            self.assertEqual(corrected[0], Path(visual_plan["uiIR"]))
+            self.assertIn("visual-corrections/iteration-1/ui-ir.json", str(corrected[0]))
+            self.assertEqual(orchestrator.report["visualCorrectionIterations"][0]["appliedCount"], 1)
+            self.assertEqual(
+                orchestrator.report["qualityGates"]["visualCorrectionApplication"],
+                "applied-regeneration-required",
+            )
+
+    def test_visual_review_iterations_are_isolated_and_chain_previous_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            screen = workspace / "screen"
+            screen.mkdir()
+            source_ir = screen / "ui-ir.json"
+            source_ir.write_text("{}\n", encoding="utf-8")
+            manifest = screen / "manifest.json"
+            manifest.write_text("{}\n", encoding="utf-8")
+            previous = screen / "previous-plan.json"
+            previous.write_text("{}\n", encoding="utf-8")
+            args = SimpleNamespace(
+                workspace=workspace,
+                report_dir=workspace / ".html-to-ios",
+                node=None,
+                dry_run=False,
+                html=workspace / "prototype.html",
+                ir=None,
+                skip_visual_baselines=False,
+                device="iPhone 15 Pro",
+            )
+            orchestrator = RUN_MODULE.Orchestrator(args)
+            orchestrator.artifacts["visualReviewPlans"] = [{
+                "screenId": "home",
+                "uiIR": str(source_ir),
+                "manifest": str(manifest),
+                "htmlDirectory": str(screen / "visual-states" / "html"),
+                "iosDirectory": str(screen / "visual-states" / "ios"),
+                "reviewDirectory": str(screen / "visual-review"),
+            }]
+            observed_correction_command = []
+
+            def fake_container(self, _project):
+                return "project", workspace / "App.xcodeproj"
+
+            def fake_run_command(self, stage, command, **_kwargs):
+                normalized = [str(item) for item in command]
+                if stage.startswith("capture-ios-states"):
+                    out_dir = Path(normalized[normalized.index("--out-dir") + 1])
+                    return {"out": str(out_dir / "captures.json")}
+                if stage.startswith("review-visual-states"):
+                    out_dir = Path(normalized[normalized.index("--out-dir") + 1])
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    (out_dir / "review-bundle.json").write_text(json.dumps({
+                        "schemaVersion": "visual-review-bundle-2.0",
+                        "summary": {"requiredFailures": ["initial"]},
+                    }), encoding="utf-8")
+                    return {}
+                if stage.startswith("build-visual-correction-plan"):
+                    observed_correction_command.extend(normalized)
+                    out = Path(normalized[normalized.index("--out") + 1])
+                    out.write_text(json.dumps({
+                        "schemaVersion": "visual-correction-plan-1.0",
+                        "summary": {"nextAction": "apply-plan-and-regenerate"},
+                    }), encoding="utf-8")
+                    return {}
+                return {}
+
+            orchestrator.choose_build_container = MethodType(fake_container, orchestrator)
+            orchestrator.run_command = MethodType(fake_run_command, orchestrator)
+            result = orchestrator.capture_and_review_visual_states(
+                workspace / "App.xcodeproj",
+                "App",
+                "16.0",
+                2,
+                {"home": previous},
+            )
+            self.assertFalse(result["passed"])
+            self.assertIn("iteration-2", result["screens"][0]["correctionPlan"])
+            self.assertIn("--previous-plan", observed_correction_command)
+            self.assertIn(str(previous), observed_correction_command)
+            self.assertEqual(orchestrator.report["qualityGates"]["visualCorrectionPlan"], "automatic-correction-ready")
+
 
 if __name__ == "__main__":
     unittest.main()

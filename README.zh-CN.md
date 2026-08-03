@@ -586,7 +586,7 @@ Web Font 无法合法嵌入时会使用明确 fallback，并在报告中记录�
 9. 生成 comparison、overlay、heatmap 和 regions；
 10. 多模态能力可用时进行人工视觉走查。
 
-视觉门禁失败时生成 `visual-correction-plan.json`，将差异归因到 UI IR 节点，并限定纠偏目标为布局契约、文字标定、资源、Presentation、状态差分或系统控件配置。生成后的 Swift 源码不作为纠偏所有者。
+视觉门禁失败时按迭代生成 `visual-correction-plan.json`，将差异归因到 UI IR 节点，并限定纠偏目标为布局契约、文字标定、资源、Presentation、状态差分或系统控件配置。高置信度、状态归属明确且幅度安全的小范围几何修正可以应用到新的 UI IR 副本，然后重新生成、构建和截图验证；低置信度或没有确定目标值的外观问题只进入复核。原始 IR 和生成后的 Swift 源码都不会被纠偏补丁覆盖。
 
 ### 验证内容
 
@@ -792,10 +792,11 @@ Skill 可以处理普通 HTML，但结构和语义越清楚，自动还原越稳
 | `screens/<id>/scroll-region-behavior.json` | 滚动区域行为 |
 | `screens/<id>/visual-state-manifest.json` | 状态截图契约 |
 | `screens/<id>/state-delta-review.json` | 状态归属、策略置信度、受保护节点和被抑制删除 |
-| `screens/<id>/visual-review/visual-correction-plan.json` | 节点级差异归因与有限纠偏计划 |
+| `screens/<id>/visual-review/iteration-<n>/visual-correction-plan.json` | 节点级差异归因、有限 mutation 与拒绝原因 |
+| `screens/<id>/visual-corrections/iteration-<n>/` | corrected UI IR 与应用报告 |
 | `screens/<id>/visual-states/html/` | HTML 状态截图 |
 | `screens/<id>/visual-states/ios/` | iOS 状态截图与几何 |
-| `screens/<id>/visual-review/` | diff、overlay、heatmap 和报告 |
+| `screens/<id>/visual-review/iteration-<n>/` | diff、overlay、heatmap 和报告 |
 
 ## 支持边界
 
@@ -848,7 +849,7 @@ Skill 可以处理普通 HTML，但结构和语义越清楚，自动还原越稳
 
 - SwiftUI 真实工程构建；
 - UIKit 真实工程构建；
-- 当前开发版审计通过 111 项自动化测试；
+- 当前开发版审计通过 117 项自动化测试；
 - UI IR、工程决策、命名和生成器测试；
 - 多页面和交互状态测试；
 - 视觉差异和节点几何测试；

@@ -99,9 +99,10 @@ python3 "$SKILL_ROOT/scripts/run_html_to_ios.py" \
 - `visual-state-manifest.json`
 - `state-delta-review.json`
 - `visual-states/html/captures.json` 与同名状态截图
-- `visual-states/ios/captures.json` 与同名逻辑尺寸截图
-- `visual-review/review-bundle.json`、逐状态 diff/overlay/comparison/regions
-- `visual-review/visual-correction-plan.json`，记录节点级差异归因、系统控件纠偏路径和有限迭代停止条件
+- `visual-states/ios/iteration-<n>/captures.json` 与同名逻辑尺寸截图
+- `visual-review/iteration-<n>/review-bundle.json`、逐状态 diff/overlay/comparison/regions
+- `visual-review/iteration-<n>/visual-correction-plan.json`，记录节点级差异归因、可执行 mutation、拒绝理由和有限迭代停止条件
+- `visual-corrections/iteration-<n>/ui-ir.json` 与 `application-report.json`，保存不覆盖原始 IR 的受控修正及回退证据
 
 跨 screen 的 `<report-dir>/native-architecture-plan.json` 是生成器必须读取的结构契约。其硬约束包括：滚动容器使用父容器完整 bounds，系统 Safe Area 不从宽高预扣，每个 screen 只有一个 Safe Area owner，自绘栏位高度只作为内容 inset 追加一次。
 

@@ -422,7 +422,7 @@ Quality checks cover image dimensions, global mismatch, mean absolute difference
 
 Repeated-state artboards are captured independently. Each state carries its own HTML root selector, active native state, geometry nodes, and validation regions, while iOS capture executes the real tap, swipe, or presentation action.
 
-Failed visual gates produce `visual-correction-plan.json`, which attributes differences to UI IR nodes and proposes bounded corrections to layout contracts, text calibration, assets, presentation strategy, state deltas, or system-control configuration. Generated Swift source is never the correction owner.
+Failed visual gates produce an iteration-scoped `visual-correction-plan.json`, which attributes differences to UI IR nodes and proposes bounded corrections to layout contracts, text calibration, assets, presentation strategy, state deltas, or system-control configuration. High-confidence, state-safe, small geometry mutations can be applied to a copied UI IR and then regenerated and revalidated. Low-confidence or non-deterministic appearance changes remain review items. Original IR and generated Swift source are never overwritten by correction patches.
 
 Geometry instrumentation expands the accessibility tree only under generated UI-test launch arguments and does not alter normal production accessibility.
 
@@ -540,8 +540,9 @@ Reports are written under `<workspace>/.html-to-ios/`.
 | `screens/<id>/scroll-region-behavior.json` | Scroll behavior |
 | `screens/<id>/visual-state-manifest.json` | Required states |
 | `screens/<id>/state-delta-review.json` | State ownership, strategy confidence, protected nodes, and suppressed deletions |
-| `screens/<id>/visual-review/visual-correction-plan.json` | Node-level attribution and bounded correction plan |
-| `screens/<id>/visual-review/` | Diffs, overlays, heatmaps, and reports |
+| `screens/<id>/visual-review/iteration-<n>/visual-correction-plan.json` | Node-level attribution, bounded mutations, and rejection reasons |
+| `screens/<id>/visual-corrections/iteration-<n>/` | Corrected UI IR and application report |
+| `screens/<id>/visual-review/iteration-<n>/` | Diffs, overlays, heatmaps, and reports |
 
 ## Scope and Limitations
 
@@ -566,7 +567,7 @@ High-risk inputs include runtime-generated DOM, closed Shadow DOM, cross-origin 
 The first usable release has passed:
 
 - real SwiftUI and UIKit builds;
-- 111 automated tests in the current development audit;
+- 117 automated tests in the current development audit;
 - UI IR, decision, naming, generator, route, and interaction tests;
 - visual-difference and geometry tests;
 - real Simulator responsive matrices;
