@@ -4,6 +4,8 @@
 
 同一业务页面的状态画板必须逐状态验收。manifest 中每个状态保留自己的 `htmlRootSelector`、`activeStateId`、`geometryNodes` 和 `validationRegions`；当状态画板本身是确定性静态表示时，HTML 截图直接裁切该画板，不再重复执行可能不存在的网页交互。iOS 侧仍执行 tap、swipe、dismiss 等原生动作并验证目标 accessibility identifier。
 
+视觉门禁失败后运行 `build_visual_correction_plan.py`。计划将差异归因到位置/尺寸、文字、资源、系统区域、控件外观、状态差分或 Presentation，并回指 UI IR 节点。系统控件问题优先修改官方 configuration、plain style、content inset 或包装层；只有 `nativeControlDecision` 证明系统能力不足时才升级封装。自动纠偏最多 3 轮，单轮保真度提升低于 0.25% 时停止并转人工复核。
+
 ## 基准
 
 - 响应式 HTML viewport 与 iOS 目标逻辑尺寸一致；固定展示板保留 source viewport，并单独归一化 app root。

@@ -21,6 +21,8 @@ description: 将可运行的移动端 HTML 高保真原型转换为可编译、�
 10. 同一页面的重复画板必须先归并为 owner screen 的状态。去重依据是页面骨架、节点语义、文本、层级、几何与可选 `data-ios-state-key`，不能依赖 menu、sheet、Cell 左滑等案例枚举。状态画板必须生成通用 insert/remove/replace/update 差分并进入 owner 原生树，不得各自生成业务页面；归属存在歧义时使用 `data-ios-state-owner` 或旁路契约确认。
 11. 状态差分必须由通用策略执行器落到原生结构：页面内变化使用条件子树或替换节点，覆盖层使用 presentation，条目操作使用上下文操作。不得只把状态记录在报告中而不生成可触发的原生行为。
 12. 每个状态必须有独立 HTML/iOS 截图、几何区域和门禁结论。低置信度归属、被抑制的删除或目标不明确的上下文操作必须进入 `state-delta-review.json`，不得静默猜测。
+13. 控件选择必须执行系统优先、视觉适配门禁：先用 Apple 系统控件及官方配置；系统本体视觉不足时保留系统控件并增加原生包装层；只有语义、行为或视觉能力确有阻断证据时才生成组合控件或自定义 `UIControl`/View。
+14. 视觉失败必须生成节点级 `visual-correction-plan.json`。纠偏只允许修改 UI IR 和派生契约，禁止直接给生成后的 Swift 源码追加截图专用补丁。
 
 ## 支持范围
 
@@ -239,7 +241,7 @@ python3 "$SKILL_ROOT/scripts/build_ui_ir.py" render-tree.json \
 
 ### 6. 规划原生结构
 
-读取 `references/six-layer-native-architecture.md`、`references/common-mapping-rules.md`、`references/control-mapping-matrix.md`、`references/native-component-catalog.md`、`references/interaction-rules.md`、`references/navigation-presentation-containment.md`、`references/page-regions-and-system-chrome.md`、`references/custom-component-fallback.md`、`references/motion-and-effects.md`、`references/edge-case-policy.md`、`references/multi-page-routing.md`、`references/project-component-discovery.md`、`references/text-calibration.md`、`references/form-and-dynamic-data.md` 和 `references/responsive-auto-layout.md`，再按技术栈读取：
+读取 `references/six-layer-native-architecture.md`、`references/common-mapping-rules.md`、`references/control-mapping-matrix.md`、`references/native-control-selection-policy.md`、`references/native-component-catalog.md`、`references/interaction-rules.md`、`references/navigation-presentation-containment.md`、`references/page-regions-and-system-chrome.md`、`references/custom-component-fallback.md`、`references/motion-and-effects.md`、`references/edge-case-policy.md`、`references/multi-page-routing.md`、`references/project-component-discovery.md`、`references/text-calibration.md`、`references/form-and-dynamic-data.md` 和 `references/responsive-auto-layout.md`，再按技术栈读取：
 
 - SwiftUI：`references/swiftui-rules.md`
 - UIKit：`references/uikit-rules.md`

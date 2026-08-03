@@ -507,6 +507,7 @@ def leaf_component_plan(
         elif text_behavior.get("nativeControl") == "text-field":
             category, swiftui, uikit = "input", "TextField/SecureField", "UITextField"
         mapping = node.get("nativeMapping") or {}
+        control_decision = mapping.get("nativeControlDecision") or {}
         confidence = float(mapping.get("confidence") or 0.75)
         style_strategy = str(mapping.get("styleStrategy") or "custom-native-view")
         if style_strategy == "project-component":
@@ -530,7 +531,11 @@ def leaf_component_plan(
         if explicit_component:
             generation_reasons.append("explicit-component-contract")
         if interactive and category == "control" and has_stable_business_id:
-            generation_reasons.append("stable-interactive-control")
+            generation_reasons.append(
+                "stable-system-control-wrapper"
+                if control_decision.get("systemCandidate")
+                else "stable-interactive-control"
+            )
         result.append({
             "nodeId": node_id,
             "sourceName": str(
@@ -543,6 +548,9 @@ def leaf_component_plan(
             "swiftUIType": swiftui,
             "uiKitType": uikit,
             "styleStrategy": style_strategy,
+            "nativeControlDecision": control_decision,
+            "systemControlPreferred": bool(control_decision.get("systemCandidate")),
+            "requiresCustomControl": bool(control_decision.get("requiresCustomControl")),
             "interactive": interactive,
             "accessibilityIdentifier": node_id,
             "confidence": confidence,

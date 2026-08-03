@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.35.0"
+GENERATOR_VERSION = "1.36.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -6504,6 +6504,8 @@ def typed_leaf_descriptors(
             "category": str(leaf.get("category") or "view"),
             "semanticType": str(leaf.get("semanticType") or "custom"),
             "generationReasons": [str(item) for item in leaf.get("generationReasons") or []],
+            "systemControlPreferred": bool(leaf.get("systemControlPreferred")),
+            "requiresCustomControl": bool(leaf.get("requiresCustomControl")),
             "layoutSizing": sizing_by_node_id.get(node_id) or {},
         })
     return result
@@ -6833,7 +6835,13 @@ final class {cell_type}: {base_cell} {{}}
             )
     for item in leaves:
         leaf_type = f"{base_type}Leaf{item['typeStem']}View"
-        leaf_base_type = "UIControl" if item["category"] == "control" else "UIView"
+        leaf_base_type = (
+            "UIControl"
+            if item["category"] == "control"
+            and item["requiresCustomControl"]
+            and not item["systemControlPreferred"]
+            else "UIView"
+        )
         sizing = item["layoutSizing"]
         width_policy = str(sizing.get("widthPolicy") or "intrinsic")
         fixed_width = sizing.get("measuredWidth") if width_policy == "fixed" else None

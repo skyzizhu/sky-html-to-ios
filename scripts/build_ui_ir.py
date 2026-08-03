@@ -406,6 +406,152 @@ def semantic_mapping(node: dict, has_interaction: bool) -> dict:
     return result("container", "VStack/HStack/ZStack", "UIView + Auto Layout", 0.75, "custom-native-view")
 
 
+SYSTEM_CONTROL_SEMANTICS = {
+    "button", "icon-button", "link", "text-input", "secure-input", "search-input",
+    "number-input", "date-input", "text-area", "file-input", "switch",
+    "segmented-control", "select", "slider", "stepper", "color-picker", "progress",
+    "disclosure", "disclosure-trigger", "menu-item", "tab-item", "alert", "sheet",
+    "modal", "menu", "loading", "video", "map",
+}
+SYSTEM_VIEW_SEMANTICS = {
+    "text", "heading", "label", "image", "icon", "divider", "progress", "loading",
+}
+SYSTEM_CONTAINER_SEMANTICS = {
+    "scroll", "list", "sectioned-list", "data-table", "grid", "carousel",
+    "navigation", "navigation-bar", "tab-bar", "tab-control",
+}
+NATIVE_COMPOSITION_SEMANTICS = {
+    "checkbox", "radio", "radio-group", "multi-select", "meter", "toast", "overlay",
+}
+
+
+def native_control_decision(node: dict, mapping: dict, interactions: list[dict]) -> dict:
+    """Explain when native controls are sufficient and when composition is justified."""
+    semantic = str(mapping.get("semanticType") or "container")
+    has_interaction = bool(interactions)
+    interaction_actions = sorted({
+        str(item.get("action") or "unknown")
+        for item in interactions
+    })
+    interaction_triggers = sorted({
+        str(item.get("trigger") or "unknown")
+        for item in interactions
+    })
+    native_mapping = mapping.get("nativeMapping") or {}
+    style = node.get("style") or {}
+    blockers: list[str] = []
+    wrapper_reasons: list[str] = []
+
+    def active(property_name: str) -> bool:
+        value = str(style.get(property_name) or "").strip().lower()
+        return bool(value and value not in {"none", "normal", "auto", "0px", "rgba(0, 0, 0, 0)"})
+
+    if active("clipPath"):
+        blockers.append("non-rectangular-clip-path")
+    if active("filter"):
+        blockers.append("css-filter")
+    if active("backdropFilter"):
+        blockers.append("backdrop-filter")
+    shadow = str(style.get("boxShadow") or "").lower()
+    if "inset" in shadow:
+        blockers.append("inset-shadow")
+    elif shadow not in {"", "none"}:
+        wrapper_reasons.append("outer-shadow")
+    if active("transform"):
+        wrapper_reasons.append("transformed-control")
+    background_image = str(style.get("backgroundImage") or "").strip().lower()
+    if background_image not in {"", "none"}:
+        wrapper_reasons.append("layered-background")
+
+    border_widths = [str(item or "0px") for item in style.get("borderWidths") or []]
+    border_colors = [str(item or "") for item in style.get("borderColors") or []]
+    border_styles = [str(item or "none") for item in style.get("borderStyles") or []]
+    corner_radii = [str(item or "0px") for item in style.get("cornerRadii") or []]
+    if border_widths and len(set(border_widths)) > 1:
+        wrapper_reasons.append("asymmetric-border-widths")
+    if border_colors and len(set(border_colors)) > 1:
+        wrapper_reasons.append("asymmetric-border-colors")
+    if border_styles and any(item not in {"none", "solid"} for item in border_styles):
+        blockers.append("non-solid-border-style")
+    if corner_radii and len(set(corner_radii)) > 1:
+        wrapper_reasons.append("asymmetric-corner-radii")
+
+    project_component = native_mapping.get("styleStrategy") == "project-component"
+    unsupported = mapping.get("support") == "unsupported"
+    system_control_candidate = semantic in SYSTEM_CONTROL_SEMANTICS
+    system_view_candidate = semantic in SYSTEM_VIEW_SEMANTICS
+    system_container_candidate = semantic in SYSTEM_CONTAINER_SEMANTICS
+    system_candidate = system_control_candidate or system_view_candidate or system_container_candidate
+    native_composition = semantic in NATIVE_COMPOSITION_SEMANTICS
+    candidate_contains_custom = "custom" in " ".join([
+        str(native_mapping.get("swiftUI") or ""),
+        str(native_mapping.get("uiKit") or ""),
+    ]).lower()
+
+    if project_component:
+        decision = "project-component"
+        visual_fit = "project-owned"
+    elif unsupported:
+        decision = "unsupported"
+        visual_fit = "insufficient"
+    elif system_control_candidate and not blockers:
+        decision = "system-control-with-native-wrapper" if wrapper_reasons else "system-control"
+        visual_fit = "wrapped" if wrapper_reasons else "styled"
+    elif system_control_candidate:
+        decision = "system-control-with-native-wrapper"
+        visual_fit = "wrapped"
+    elif system_view_candidate:
+        decision = "system-view"
+        visual_fit = "wrapped" if blockers or wrapper_reasons else "styled"
+    elif system_container_candidate:
+        decision = "system-container"
+        visual_fit = "wrapped" if blockers or wrapper_reasons else "layout-native"
+    elif native_composition or candidate_contains_custom:
+        decision = "native-composition"
+        visual_fit = "custom-composition"
+    else:
+        decision = "native-view"
+        visual_fit = "layout-native"
+
+    requires_custom_control = decision == "native-composition" and has_interaction
+    fallback_chain = [
+        "existing-project-component",
+        "system-control-official-configuration",
+        "system-control-with-native-wrapper",
+        "native-control-composition",
+        "custom-native-control" if has_interaction else "custom-native-view",
+        "unsupported",
+    ]
+    return {
+        "policy": "system-first-visual-fit-gated",
+        "decision": decision,
+        "systemCandidate": system_candidate,
+        "candidate": {
+            "swiftUI": native_mapping.get("swiftUI"),
+            "uiKit": native_mapping.get("uiKit"),
+        },
+        "semanticFit": "high" if system_candidate or semantic in NATIVE_COMPOSITION_SEMANTICS else "layout-only",
+        "behaviorFit": "high" if has_interaction and system_control_candidate else "not-interactive" if not has_interaction else "composed",
+        "interactionActions": interaction_actions,
+        "interactionTriggers": interaction_triggers,
+        "visualFit": visual_fit,
+        "visualComplexity": "high" if blockers else "medium" if wrapper_reasons else "low",
+        "customization": ["official-appearance", "configuration", "plain-style", *wrapper_reasons],
+        "blockers": blockers,
+        "fallbackChain": fallback_chain,
+        "requiresCustomControl": requires_custom_control,
+        "preserveSystemSemantics": system_candidate or native_composition,
+        "evidence": [
+            f"semantic:{semantic}",
+            f"interaction:{str(has_interaction).lower()}",
+            *(f"js-action:{item}" for item in interaction_actions),
+            *(f"js-trigger:{item}" for item in interaction_triggers),
+            *(f"visual-wrapper:{item}" for item in wrapper_reasons),
+            *(f"visual-blocker:{item}" for item in blockers),
+        ],
+    }
+
+
 def layout_mode(style: dict) -> str:
     position = style.get("position")
     display = style.get("display")
@@ -1147,13 +1293,24 @@ def infer_screen_regions(
             if y <= max(96, root_height * 0.13):
                 score = 0.0
                 evidence = ["near-top", f"width-fraction:{width_fraction:.2f}"]
-                if position in {"fixed", "sticky"}: score += 2.5; evidence.append(f"position:{position}")
-                elif position == "absolute": score += 1.5; evidence.append("position:absolute-root-anchored")
-                if tag in {"nav", "header"}: score += 3; evidence.append(f"tag:{tag}")
+                if position in {"fixed", "sticky"}:
+                    score += 2.5
+                    evidence.append(f"position:{position}")
+                elif position == "absolute":
+                    score += 1.5
+                    evidence.append("position:absolute-root-anchored")
+                if tag in {"nav", "header"}:
+                    score += 3
+                    evidence.append(f"tag:{tag}")
                 if re.search(r"(?:^|[\s_-])(nav|navbar|topbar|top-bar|appbar|app-bar|toolbar|header)(?:$|[\s_-])", hint):
-                    score += 2; evidence.append("name-pattern")
-                if interactions: score += 1; evidence.append(f"interactive-descendants:{interactions}")
-                if horizontal: score += 0.5; evidence.append("horizontal-layout")
+                    score += 2
+                    evidence.append("name-pattern")
+                if interactions:
+                    score += 1
+                    evidence.append(f"interactive-descendants:{interactions}")
+                if horizontal:
+                    score += 0.5
+                    evidence.append("horizontal-layout")
                 if score >= 3:
                     top_candidates.append((score, width * height, runtime_id, evidence))
 
@@ -1161,14 +1318,27 @@ def infer_screen_regions(
             if y >= root_height * 0.62 and bottom_gap <= max(12, root_height * 0.035):
                 score = 0.0
                 evidence = ["touches-bottom", f"width-fraction:{width_fraction:.2f}"]
-                if position in {"fixed", "sticky"}: score += 2.5; evidence.append(f"position:{position}")
-                elif position == "absolute": score += 1.5; evidence.append("position:absolute-root-anchored")
-                if tag in {"nav", "footer"}: score += 2; evidence.append(f"tag:{tag}")
+                if position in {"fixed", "sticky"}:
+                    score += 2.5
+                    evidence.append(f"position:{position}")
+                elif position == "absolute":
+                    score += 1.5
+                    evidence.append("position:absolute-root-anchored")
+                if tag in {"nav", "footer"}:
+                    score += 2
+                    evidence.append(f"tag:{tag}")
                 if re.search(r"(?:^|[\s_-])(bottom|footer|tabbar|tab-bar|actions?|toolbar|dock)(?:$|[\s_-])", hint):
-                    score += 2; evidence.append("name-pattern")
-                if interactions >= 2: score += 2; evidence.append(f"interactive-descendants:{interactions}")
-                elif interactions == 1: score += 1; evidence.append("interactive-descendants:1")
-                if horizontal: score += 1; evidence.append("horizontal-layout")
+                    score += 2
+                    evidence.append("name-pattern")
+                if interactions >= 2:
+                    score += 2
+                    evidence.append(f"interactive-descendants:{interactions}")
+                elif interactions == 1:
+                    score += 1
+                    evidence.append("interactive-descendants:1")
+                if horizontal:
+                    score += 1
+                    evidence.append("horizontal-layout")
                 if score >= 3:
                     bottom_candidates.append((score, width * height, runtime_id, evidence, interactions))
 
@@ -1516,6 +1686,11 @@ def build_ir(data: dict, args) -> dict:
         node_interactions = interactions_by_runtime.get(runtime_id, [])
         mapping = semantic_mapping(node, bool(node_interactions))
         mapping["nativeMapping"]["availability"] = mapping_availability(mapping["nativeMapping"], args)
+        mapping["nativeMapping"]["nativeControlDecision"] = native_control_decision(
+            node,
+            mapping,
+            node_interactions,
+        )
         rect = node.get("rect") or {}
         attrs = node.get("attributes") or {}
         properties = node.get("properties") or {}

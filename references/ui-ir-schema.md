@@ -357,6 +357,8 @@ UI IR 是浏览器渲染结果与原生代码之间的稳定中间层。不要�
 
 原生生成必须消费该差分：新增节点进入 owner 原生树，presentation 节点从页面主布局中分离，局部节点由状态控制可见性，删除/替换节点进入隐藏或替换集合。文字、样式、尺寸或布局属性变化统一物化为最小受影响子树的替换状态，不能因为某个属性难以原地修改而重新生成整张业务页面。
 
+每个节点的 `nativeMapping.nativeControlDecision` 使用 `system-first-visual-fit-gated` 策略，记录系统候选、HTML/ARIA/JS 行为证据、CSS 视觉复杂度、blocker、官方配置路径和 fallback chain。生成器必须保留系统控件作为交互所有者；只有 `requiresCustomControl=true` 才允许自定义 `UIControl` 承担交互。
+
 状态生成节点必须携带 owner state 标识。后续状态差分只读取基础 owner 节点，不能把已生成的其他状态子树当成新增或删除证据。条件显隐只挂在增量子树根节点，后代保留各自在状态画板中的可见性，避免深层图标、文字或控件被连带过滤。
 
 顶层 `stateDeltaReviews` 为每个重复画板保留自动决策证据，包括策略、操作数量、置信度、被抑制删除、受保护触发节点、复核原因与推荐作者提示。`requiresHumanReview=true` 时，不得把该状态宣称为确定性转换完成。

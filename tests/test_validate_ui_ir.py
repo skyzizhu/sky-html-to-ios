@@ -107,6 +107,23 @@ class ValidateUIIRTests(unittest.TestCase):
         errors, _ = MODULE.validate(ir(payload))
         self.assertTrue(any("invalid state: active" in error for error in errors))
 
+    def test_native_control_decision_requires_system_first_contract(self) -> None:
+        payload = node("button", "none")
+        payload["nativeMapping"]["nativeControlDecision"] = {
+            "policy": "custom-first",
+            "decision": "system-control",
+            "systemCandidate": True,
+            "requiresCustomControl": False,
+            "preserveSystemSemantics": True,
+            "blockers": [],
+            "fallbackChain": [],
+            "evidence": [],
+            "interactionActions": [],
+            "interactionTriggers": [],
+        }
+        errors, _ = MODULE.validate(ir(payload))
+        self.assertTrue(any("nativeControlDecision.policy is invalid" in error for error in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

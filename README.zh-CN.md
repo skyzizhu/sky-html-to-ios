@@ -125,6 +125,13 @@ HTML 可以引用本地 CSS、JavaScript、图片、SVG 和字体。远程资源
 - 保留 prerequisite interaction sequence；
 - 对 owner 得分接近或低置信度路由给出警告，不擅自猜测；可用 `data-ios-state-owner` 明确归属。
 
+### 系统控件优先
+
+- 综合 HTML 语义、ARIA、表单属性、JavaScript 交互、计算后 CSS、项目组件和 SDK availability；
+- 优先使用 Apple 系统控件与官方配置，不因默认皮肤不同就直接自定义；
+- 阴影、渐变、裁切或非对称装饰需要包装时，内部系统控件继续承担交互与无障碍；
+- 只有 UI IR 记录了系统行为或视觉能力不足的证据，才允许生成自定义 `UIControl`。
+
 ### 3. 工程发现
 
 - 检测 `.xcodeproj`、`.xcworkspace` 和 `Package.swift`；
@@ -579,6 +586,8 @@ Web Font 无法合法嵌入时会使用明确 fallback，并在报告中记录�
 9. 生成 comparison、overlay、heatmap 和 regions；
 10. 多模态能力可用时进行人工视觉走查。
 
+视觉门禁失败时生成 `visual-correction-plan.json`，将差异归因到 UI IR 节点，并限定纠偏目标为布局契约、文字标定、资源、Presentation、状态差分或系统控件配置。生成后的 Swift 源码不作为纠偏所有者。
+
 ### 验证内容
 
 - 精确图片尺寸；
@@ -783,6 +792,7 @@ Skill 可以处理普通 HTML，但结构和语义越清楚，自动还原越稳
 | `screens/<id>/scroll-region-behavior.json` | 滚动区域行为 |
 | `screens/<id>/visual-state-manifest.json` | 状态截图契约 |
 | `screens/<id>/state-delta-review.json` | 状态归属、策略置信度、受保护节点和被抑制删除 |
+| `screens/<id>/visual-review/visual-correction-plan.json` | 节点级差异归因与有限纠偏计划 |
 | `screens/<id>/visual-states/html/` | HTML 状态截图 |
 | `screens/<id>/visual-states/ios/` | iOS 状态截图与几何 |
 | `screens/<id>/visual-review/` | diff、overlay、heatmap 和报告 |
@@ -838,7 +848,7 @@ Skill 可以处理普通 HTML，但结构和语义越清楚，自动还原越稳
 
 - SwiftUI 真实工程构建；
 - UIKit 真实工程构建；
-- 当前开发版审计通过 107 项自动化测试；
+- 当前开发版审计通过 111 项自动化测试；
 - UI IR、工程决策、命名和生成器测试；
 - 多页面和交互状态测试；
 - 视觉差异和节点几何测试；

@@ -2,6 +2,8 @@
 
 当系统控件不能同时满足语义、交互和视觉要求时，允许自定义，但必须按层级降级，不能一开始就重写系统能力。
 
+先执行 `native-control-selection-policy.md`，并将判断写入 `nativeMapping.nativeControlDecision`。仅仅“系统默认样式不像 HTML”不构成自定义理由。
+
 ## 降级顺序
 
 1. 目标工程已有 Design System 或业务组件。

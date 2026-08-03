@@ -272,6 +272,14 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                             "swiftUIType": "Button",
                             "uiKitType": "UIButton",
                             "styleStrategy": "native-default",
+                            "nativeControlDecision": {
+                                "policy": "system-first-visual-fit-gated",
+                                "decision": "system-control",
+                                "systemCandidate": True,
+                                "requiresCustomControl": False,
+                            },
+                            "systemControlPreferred": True,
+                            "requiresCustomControl": False,
                             "interactive": True,
                             "accessibilityIdentifier": "home.primary-action",
                             "confidence": 0.98,
@@ -310,7 +318,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("registerTableCell", controller)
             self.assertIn("HTMLToIOSHomeLeafPrimaryActionView", controller)
             uikit_leaf = (out / "Home/Views/HTMLToIOSHomeLeafPrimaryActionView.swift").read_text(encoding="utf-8")
-            self.assertIn("final class HTMLToIOSHomeLeafPrimaryActionView: UIControl", uikit_leaf)
+            self.assertIn("final class HTMLToIOSHomeLeafPrimaryActionView: UIView", uikit_leaf)
+            self.assertIn("let content = renderer.makeView", uikit_leaf)
             self.assertIn("widthAnchor.constraint(equalToConstant: 180.0)", uikit_leaf)
             self.assertIn("heightAnchor.constraint(equalToConstant: 44.0)", uikit_leaf)
             self.assertIn("setContentCompressionResistancePriority(.required", uikit_leaf)

@@ -194,6 +194,7 @@ class Orchestrator:
                 "build": "pending",
                 "iosStateCapture": "pending-agent-runtime",
                 "visualDiff": "pending-agent-runtime",
+                "visualCorrectionPlan": "pending-agent-runtime",
             },
         }
 
@@ -986,6 +987,7 @@ class Orchestrator:
                 review_dir = screen_dir / "visual-review"
                 visual_review_plans.append({
                     "screenId": screen_id,
+                    "uiIR": str(ir_path),
                     "manifest": str(visual_manifest),
                     "htmlDirectory": str(html_capture_dir),
                     "iosDirectory": str(ios_capture_dir),
@@ -1175,9 +1177,11 @@ struct ContentView: View {
         if not plans:
             self.report["qualityGates"]["iosStateCapture"] = "skipped"
             self.report["qualityGates"]["visualDiff"] = "skipped"
+            self.report["qualityGates"]["visualCorrectionPlan"] = "skipped"
             return
         capture_reports: list[str] = []
         review_bundles: list[str] = []
+        correction_plans: list[str] = []
         failed_states: list[str] = []
         kind, container = self.choose_build_container(project)
         for plan in plans:
@@ -1199,6 +1203,7 @@ struct ContentView: View {
             except OrchestrationError:
                 self.report["qualityGates"]["iosStateCapture"] = "failed"
                 self.report["qualityGates"]["visualDiff"] = "blocked-by-ios-state-capture"
+                self.report["qualityGates"]["visualCorrectionPlan"] = "blocked-by-ios-state-capture"
                 raise
             capture_reports.append(str(capture.get("out") or Path(plan["iosDirectory"]) / "captures.json"))
             try:
@@ -1217,17 +1222,34 @@ struct ContentView: View {
                 )
             except OrchestrationError:
                 self.report["qualityGates"]["visualDiff"] = "failed"
+                self.report["qualityGates"]["visualCorrectionPlan"] = "blocked-by-visual-diff"
                 raise
             bundle_path = Path(plan["reviewDirectory"]) / "review-bundle.json"
             review_bundles.append(str(bundle_path))
             bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
             summary = bundle.get("summary") or {}
+            correction_path = Path(plan["reviewDirectory"]) / "visual-correction-plan.json"
+            self.run_command(
+                f"build-visual-correction-plan-{screen_id}",
+                [
+                    sys.executable,
+                    self.scripts / "build_visual_correction_plan.py",
+                    bundle_path,
+                    "--ir", Path(plan["uiIR"]),
+                    "--out", correction_path,
+                ],
+            )
+            correction_plans.append(str(correction_path))
             failed_states.extend(f"{screen_id}:{state_id}" for state_id in summary.get("missingRequired") or [])
             failed_states.extend(f"{screen_id}:{state_id}" for state_id in summary.get("requiredFailures") or [])
         self.artifacts["iosStateCaptures"] = capture_reports
         self.artifacts["visualReviewBundles"] = review_bundles
+        self.artifacts["visualCorrectionPlans"] = correction_plans
         self.report["qualityGates"]["iosStateCapture"] = "passed"
         self.report["qualityGates"]["visualDiff"] = "failed" if failed_states else "passed"
+        self.report["qualityGates"]["visualCorrectionPlan"] = (
+            "generated-review-required" if failed_states else "not-needed"
+        )
         if failed_states:
             self.report["visualQualityGateFailures"] = failed_states
             raise OrchestrationError(
@@ -1343,11 +1365,13 @@ struct ContentView: View {
             self.report["qualityGates"]["build"] = "pending-user-confirmation"
             self.report["qualityGates"]["iosStateCapture"] = "pending-user-confirmation"
             self.report["qualityGates"]["visualDiff"] = "pending-user-confirmation"
+            self.report["qualityGates"]["visualCorrectionPlan"] = "pending-user-confirmation"
             self.report["nextActions"] = ["Confirm build-only or full visual verification."]
         else:
             self.report["qualityGates"]["build"] = "skipped"
             self.report["qualityGates"]["iosStateCapture"] = "skipped"
             self.report["qualityGates"]["visualDiff"] = "skipped"
+            self.report["qualityGates"]["visualCorrectionPlan"] = "skipped"
 
         if self.args.html and not self.args.skip_visual_baselines:
             if verification_mode == "visual" and self.entry_wired:
@@ -1355,6 +1379,7 @@ struct ContentView: View {
             elif verification_mode in {"build", "visual"}:
                 self.report["qualityGates"]["iosStateCapture"] = "required-pending"
                 self.report["qualityGates"]["visualDiff"] = "blocked-pending-ios-captures"
+                self.report["qualityGates"]["visualCorrectionPlan"] = "blocked-pending-ios-captures"
                 self.warnings.append(
                     "HTML visual baselines and node-aligned regions are ready; required simulator states must pass the visual quality gate before claiming completion."
                 )

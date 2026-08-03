@@ -351,7 +351,49 @@ class BuildUIIRTests(unittest.TestCase):
             self.assertEqual(toggle["semanticType"], "switch")
             self.assertEqual(toggle["nativeMapping"]["swiftUI"], "Toggle")
             self.assertEqual(toggle["nativeMapping"]["uiKit"], "UISwitch")
+            decision = toggle["nativeMapping"]["nativeControlDecision"]
+            self.assertEqual(decision["policy"], "system-first-visual-fit-gated")
+            self.assertEqual(decision["decision"], "system-control")
+            self.assertTrue(decision["systemCandidate"])
+            self.assertFalse(decision["requiresCustomControl"])
             self.assertEqual(toggle["iosHints"]["state"], "notifications-enabled")
+
+    def test_complex_css_keeps_system_control_and_adds_native_wrapper(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            nodes = [
+                render_node("app", None, "main", {"x": 0, "y": 0, "width": 393, "height": 852}),
+                render_node("action", "app", "button", {"x": 20, "y": 40, "width": 160, "height": 48}),
+            ]
+            nodes[1]["style"].update({
+                "clipPath": "polygon(0 0, 100% 0, 90% 100%, 0 100%)",
+                "boxShadow": "0px 8px 20px rgba(0, 0, 0, 0.2)",
+                "borderWidths": ["1px", "2px", "1px", "2px"],
+                "borderColors": ["red", "red", "red", "red"],
+                "borderStyles": ["solid"] * 4,
+            })
+            data = {
+                "schemaVersion": "render-tree-1.2",
+                "source": {"kind": "html-file", "entry": "/tmp/example.html"},
+                "document": {"viewport": {"width": 393, "height": 852}},
+                "nodes": nodes,
+                "interactions": [],
+                "phoneCandidates": [],
+            }
+            source, output = root / "render-tree.json", root / "ui-ir.json"
+            source.write_text(json.dumps(data), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), str(source), "--out", str(output),
+                "--root-runtime-id", "app", "--screen-id", "home",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            generated = json.loads(output.read_text(encoding="utf-8"))
+            action = next(node for node in generated["screens"][0]["nodes"] if node["source"]["runtimeId"] == "action")
+            decision = action["nativeMapping"]["nativeControlDecision"]
+            self.assertEqual(decision["decision"], "system-control-with-native-wrapper")
+            self.assertIn("non-rectangular-clip-path", decision["blockers"])
+            self.assertIn("asymmetric-border-widths", decision["customization"])
+            self.assertTrue(decision["preserveSystemSemantics"])
 
     def test_geometry_and_interactions_infer_unnamed_top_and_bottom_bars(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

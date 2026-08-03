@@ -39,6 +39,10 @@ ALLOWED_AVAILABILITY_STATUS = {"pending-verification", "available", "available-r
 ALLOWED_SCROLL_AXES = {"none", "horizontal", "vertical", "both"}
 ALLOWED_DATA_STATE_ROLES = {"loading", "content", "empty", "error"}
 ALLOWED_PAGINATION = {"none", "page", "cursor", "infinite"}
+ALLOWED_CONTROL_DECISIONS = {
+    "system-control", "system-control-with-native-wrapper", "native-composition",
+    "system-view", "system-container", "native-view", "project-component", "unsupported",
+}
 
 
 def validate_rect(rect, location, errors):
@@ -239,6 +243,21 @@ def validate(data):
                             errors.append(f"{nwhere}.nativeMapping.availability.{stack} must be an object")
                         elif stack_availability.get("status") not in ALLOWED_AVAILABILITY_STATUS:
                             errors.append(f"{nwhere}.nativeMapping.availability.{stack}.status has invalid value")
+                control_decision = mapping.get("nativeControlDecision")
+                if control_decision is not None:
+                    if not isinstance(control_decision, dict):
+                        errors.append(f"{nwhere}.nativeMapping.nativeControlDecision must be an object")
+                    else:
+                        if control_decision.get("policy") != "system-first-visual-fit-gated":
+                            errors.append(f"{nwhere}.nativeMapping.nativeControlDecision.policy is invalid")
+                        if control_decision.get("decision") not in ALLOWED_CONTROL_DECISIONS:
+                            errors.append(f"{nwhere}.nativeMapping.nativeControlDecision.decision is invalid")
+                        for key in ("systemCandidate", "requiresCustomControl", "preserveSystemSemantics"):
+                            if not isinstance(control_decision.get(key), bool):
+                                errors.append(f"{nwhere}.nativeMapping.nativeControlDecision.{key} must be a boolean")
+                        for key in ("blockers", "fallbackChain", "evidence", "interactionActions", "interactionTriggers"):
+                            if not isinstance(control_decision.get(key), list):
+                                errors.append(f"{nwhere}.nativeMapping.nativeControlDecision.{key} must be an array")
             if node.get("interactionRef") is not None:
                 interaction_refs.append((node_id, node.get("interactionRef")))
             interaction_refs_value = node.get("interactionRefs")
