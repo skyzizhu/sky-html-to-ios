@@ -23,6 +23,7 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 12. 每个状态必须有独立的结构、交互与 owner 契约。只有进入 `visual` 验证时才要求独立 HTML/iOS 截图、几何区域和门禁结论。低置信度归属、被抑制的删除或目标不明确的上下文操作必须进入 `state-delta-review.json`，不得静默猜测。
 13. 控件选择必须执行系统优先、视觉适配门禁：先用 Apple 系统控件及官方配置；系统本体视觉不足时保留系统控件并增加原生包装层；只有语义、行为或视觉能力确有阻断证据时才生成组合控件或自定义 `UIControl`/View。
 14. `visual` 验证失败时生成节点级 `visual-correction-plan.json`。纠偏只允许修改 UI IR 和派生契约，禁止直接给生成后的 Swift 源码追加截图专用补丁；未运行视觉验收不等于核心转换失败。
+15. 截图之前必须完成确定性结构验收。浏览器来源覆盖、parent-child 归属、视觉顺序、布局关系、scroll owner、原生叶子组件和 screen region 所有权必须进入 `layout-relation-graph.json` 与 `structural-fidelity-report.json`；结构门禁失败时不得生成 Swift。
 
 ## 支持范围
 
@@ -257,6 +258,8 @@ python3 "$SKILL_ROOT/scripts/build_ui_ir.py" render-tree.json \
 - 系统无对应控件 → 项目组件、组合 View、自定义 UIControl/View 或在确有生命周期需要时自定义 ViewController
 
 总控必须运行 `scripts/build_native_architecture_plan.py` 生成 `native-architecture-plan.json`。计划必须完整包含 Application Container、Screen Container、Screen Regions、Content Container、Reusable Section/Item 和 Leaf Component 六层。它将 controller/container 所有权、导航栈、导航栏绘制、滚动行为、Table/Collection/Scroll/静态容器选择、Cell 复用、叶子 View/Control、presentation 和 Safe Area 分开建模。系统导航栈与顶部栏是否使用系统样式是两个独立决策；滚动页面的容器宽高始终等于父容器 bounds，禁止用 `width/height - safeAreaInsets` 计算 frame。
+
+随后读取 `references/structural-fidelity.md`。总控必须生成 `layout-relation-graph.json`，固化 containment、视觉子节点顺序、相邻间距、对齐、等宽/等高、宽高比、overlap 与 scroll axis owner；再生成 `structural-fidelity-report.json`，验证这些关系被六层原生架构完整消费。该门禁不依赖截图或多模态能力，失败时必须回到提取、UI IR 或架构计划修复，不得直接补丁生成后的 Swift。
 
 控件映射必须先判断语义，再选择原生控件，最后还原外观。不要仅按 HTML tag 映射，也不要为了视觉方便把 Button、输入框和选择控件退化成无语义的普通 View。
 

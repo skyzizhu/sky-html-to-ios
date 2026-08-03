@@ -53,6 +53,8 @@ UI IR
         ↓
 原生架构、命名、资源和控件映射
         ↓
+布局关系图与结构还原门禁
+        ↓
 SwiftUI 或 UIKit + Swift
         ↓
 Xcode 构建（核心验证完成）
@@ -74,7 +76,10 @@ Simulator 截图、确定性差异与纠偏
 4. **尽量减少用户操作**  
    总控脚本负责工程发现、提取、生成、接入和验证；只有技术栈、工程归属或交互目标确实不明确时才要求确认。
 
-5. **可选的视觉验收兜底**
+5. **不依赖截图的结构还原门禁**
+   自动检查来源覆盖、父子归属、视觉顺序、间距关系、滚动轴所有权、原生叶子组件和页面区域，不要求模型支持多模态。
+
+6. **可选的视觉验收兜底**
    用户选择 visual 时，每个 HTML 节点可从视觉差异追溯到 UI IR 和原生节点并局部修正；模型不能看图时不影响核心转换。
 
 ## 支持的输入与输出
@@ -178,6 +183,8 @@ UI IR 保存：
 少量固定内容使用静态布局；长单列同构内容使用 Table/Lazy 容器；网格、轮播、数据表和异构 Section 使用 Collection。Table/Collection 自己拥有滚动轴，不再套同轴页面根 ScrollView。
 
 每个 screen 还会生成强类型布局契约，保存子节点视觉顺序、轴向、对齐、分布、换行、间距、尺寸策略、宽高比和抗压缩证据。输入控件、显式/项目组件、特殊媒体和稳定业务控件会生成强类型叶子 View；普通文本、SVG 内部路径、装饰节点和自动编号 DOM 叶子继续由公共运行时处理，不会形成一节点一 Swift 文件。
+
+生成 Swift 之前，`layout-relation-graph-1.0` 会把单节点测量提升为跨节点约束，包括 containment、真实视觉顺序、相邻间距、对齐、等宽/等高、正方形比例、重叠层级和 scroll owner。随后 `structural-fidelity-report-1.0` 检查六层原生架构是否完整消费这些关系。该核心门禁不需要截图、Simulator 或多模态模型。
 
 ## 控件与视图支持
 
@@ -791,6 +798,8 @@ Skill 可以处理普通 HTML，但结构和语义越清楚，自动还原越稳
 | `ios-sdk-report.json` | SDK API 和 availability |
 | `native-naming-plan.json` | 文件名、类型名前缀和冲突 |
 | `native-architecture-plan.json` | Controller、导航、滚动、Safe Area 和 presentation |
+| `layout-relation-graph.json` | 父子归属、视觉顺序、间距、对齐、宽高比、层级和滚动轴所有权 |
+| `structural-fidelity-report.json` | 不依赖截图的来源到原生结构质量门禁 |
 | `screens/<id>/render-tree.json` | 浏览器渲染树 |
 | `screens/<id>/ui-ir.json` | 页面 UI IR |
 | `screens/<id>/text-calibration.json` | 文字校准 |
@@ -855,7 +864,7 @@ Skill 可以处理普通 HTML，但结构和语义越清楚，自动还原越稳
 
 - SwiftUI 真实工程构建；
 - UIKit 真实工程构建；
-- 当前开发版审计通过 117 项自动化测试；
+- 当前开发版审计通过 122 项自动化测试；
 - UI IR、工程决策、命名和生成器测试；
 - 多页面和交互状态测试；
 - 视觉差异和节点几何测试；

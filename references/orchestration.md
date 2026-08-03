@@ -33,11 +33,12 @@ python3 "$SKILL_ROOT/scripts/run_html_to_ios.py" \
 8. HTML 模式逐 screen 提取 render tree、生成并校验 UI IR；只有 verification 为 `visual` 时才在提取阶段附带基准截图。
 9. 默认逐 screen 生成文本标定、多尺寸响应式分析和滚动区域行为探测；只有 verification 为 `visual` 时才生成视觉状态清单和 HTML 状态基准图。
 10. 生成 `native-naming-plan.json` 与 `native-architecture-plan.json`，验证命名冲突及 controller/navigation/presentation/Safe Area 单一所有权。
-11. 生成带稳定项目前缀的原生页面代码和 Payload，接入指定 target。
-12. 新建工程自动接入根 View/根 ViewController；现有工程只检测入口，不覆盖启动架构。
-13. 根据 verification mode 决定停止、构建或启动：已有项目 `auto` 停止并等待确认，新建托管项目 `auto` 只生成并构建；完整视觉验证必须显式选择 `visual`。
-14. 用户选择 `visual` 且入口已接通时，创建隔离的 generator-owned UI Test target，逐 screen 执行状态动作、导出 xcresult 截图并归一化到目标逻辑 viewport。
-15. 对 required states 执行节点分区视觉门禁，并执行转换后门禁；任一状态缺失、超阈值或存在交付阻断项时总控返回 `failed`，保留 review bundle 供 Agent 局部纠偏。
+11. 生成 `layout-relation-graph.json`，再运行不依赖截图的 `structural-fidelity-report.json` 门禁，校验来源覆盖、containment、视觉顺序、布局关系、scroll owner、叶子组件和页面区域所有权。
+12. 生成带稳定项目前缀的原生页面代码和 Payload，接入指定 target。
+13. 新建工程自动接入根 View/根 ViewController；现有工程只检测入口，不覆盖启动架构。
+14. 根据 verification mode 决定停止、构建或启动：已有项目 `auto` 停止并等待确认，新建托管项目 `auto` 只生成并构建；完整视觉验证必须显式选择 `visual`。
+15. 用户选择 `visual` 且入口已接通时，创建隔离的 generator-owned UI Test target，逐 screen 执行状态动作、导出 xcresult 截图并归一化到目标逻辑 viewport。
+16. 对 required states 执行节点分区视觉门禁，并执行转换后门禁；任一状态缺失、超阈值或存在交付阻断项时总控返回 `failed`，保留 review bundle 供 Agent 局部纠偏。
 
 ## 工程决策
 
@@ -109,6 +110,8 @@ python3 "$SKILL_ROOT/scripts/run_html_to_ios.py" \
 - `visual-corrections/iteration-<n>/ui-ir.json` 与 `application-report.json`，保存不覆盖原始 IR 的受控修正及回退证据
 
 跨 screen 的 `<report-dir>/native-architecture-plan.json` 是生成器必须读取的结构契约。其硬约束包括：滚动容器使用父容器完整 bounds，系统 Safe Area 不从宽高预扣，每个 screen 只有一个 Safe Area owner，自绘栏位高度只作为内容 inset 追加一次。
+
+跨 screen 还固定生成 `<report-dir>/layout-relation-graph.json` 与 `<report-dir>/structural-fidelity-report.json`。它们属于核心转换门禁，在 `build`、`visual`、`ask` 和 `none` 模式下都执行，不依赖 Simulator、截图或模型多模态能力。
 
 `<report-dir>/project-generation-decision.json` 记录模块语言、UI 栈证据和 verification mode；`native-naming-plan.json` 记录页面文件/类型前缀、来源、置信度、上一轮继承和已有类型集合。生成器发现类型冲突时必须停止。
 

@@ -189,6 +189,8 @@ class Orchestrator:
                 "scrollBehaviorAnalysis": "pending" if args.html else "not-applicable-with-supplied-ir",
                 "stateDeltaReview": "pending" if args.html else "not-applicable-with-supplied-ir",
                 "nativeArchitecturePlan": "pending",
+                "layoutRelationGraph": "pending",
+                "structuralFidelity": "pending",
                 "projectGenerationDecision": "pending",
                 "nativeNamingPlan": "pending",
                 "htmlVisualBaselines": "pending" if args.html and not args.skip_visual_baselines else "skipped",
@@ -1048,6 +1050,40 @@ class Orchestrator:
         self.report["qualityGates"]["nativeArchitecturePlan"] = "passed"
         return plan
 
+    def build_and_validate_structural_fidelity(
+        self,
+        ir_paths: list[Path],
+        architecture_plan: Path,
+    ) -> tuple[Path, Path]:
+        graph = self.report_dir / "layout-relation-graph.json"
+        graph_command: list[str | Path] = [
+            sys.executable,
+            self.scripts / "build_layout_relation_graph.py",
+        ]
+        for path in ir_paths:
+            graph_command.extend(["--ir", path])
+        graph_command.extend(["--out", graph])
+        self.run_command("build-layout-relation-graph", graph_command)
+        self.artifacts["layoutRelationGraph"] = str(graph)
+        self.report["qualityGates"]["layoutRelationGraph"] = "passed"
+
+        fidelity = self.report_dir / "structural-fidelity-report.json"
+        fidelity_command: list[str | Path] = [
+            sys.executable,
+            self.scripts / "validate_structural_fidelity.py",
+        ]
+        for path in ir_paths:
+            fidelity_command.extend(["--ir", path])
+        fidelity_command.extend([
+            "--layout-graph", graph,
+            "--architecture-plan", architecture_plan,
+            "--out", fidelity,
+        ])
+        self.run_command("validate-structural-fidelity", fidelity_command)
+        self.artifacts["structuralFidelityReport"] = str(fidelity)
+        self.report["qualityGates"]["structuralFidelity"] = "passed"
+        return graph, fidelity
+
     def validate_supplied_irs(self) -> list[Path]:
         paths = [resolve_input(path, self.workspace) for path in self.args.ir or []]
         resolved = [path for path in paths if path is not None]
@@ -1441,6 +1477,7 @@ struct ContentView: View {
         if ir_paths is None:
             raise OrchestrationError("prepare-ui-ir", "No UI IR inputs are available.")
         architecture_plan = self.build_native_architecture_plan(ir_paths, ui_stack, minimum_ios)
+        self.build_and_validate_structural_fidelity(ir_paths, architecture_plan)
         self.generate_and_integrate(ir_paths, project, target, source_root, ui_stack, minimum_ios, architecture_plan, naming_plan)
         self.wire_managed_entry(source_root, ui_stack)
         symbol = "HTMLToIOSGeneratedRootView" if ui_stack == "swiftui" else "HTMLToIOSGeneratedRootViewController"
@@ -1505,6 +1542,7 @@ struct ContentView: View {
                     ir_paths = corrected_irs
                     self.artifacts["uiIRs"] = [str(path) for path in ir_paths]
                     architecture_plan = self.build_native_architecture_plan(ir_paths, ui_stack, minimum_ios)
+                    self.build_and_validate_structural_fidelity(ir_paths, architecture_plan)
                     self.generate_and_integrate(
                         ir_paths,
                         project,

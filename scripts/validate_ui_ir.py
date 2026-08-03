@@ -127,6 +127,33 @@ def validate(data):
         if not isinstance(nodes, list) or not nodes:
             errors.append(f"{where}.nodes must be a non-empty array")
             continue
+        source_coverage = screen.get("sourceCoverage")
+        if source_coverage is not None:
+            if not isinstance(source_coverage, dict):
+                errors.append(f"{where}.sourceCoverage must be an object")
+            else:
+                for key in (
+                    "rootSubtreeNodeCount", "routeScopedNodeCount", "mappedNodeCount",
+                    "excludedByRouteCount", "excludedNonVisualOrUnsupportedTagCount",
+                ):
+                    value = source_coverage.get(key)
+                    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                        errors.append(f"{where}.sourceCoverage.{key} must be a non-negative integer")
+                ratio = source_coverage.get("mappedRatio")
+                if (
+                    not isinstance(ratio, (int, float))
+                    or isinstance(ratio, bool)
+                    or not 0 <= ratio <= 1
+                ):
+                    errors.append(f"{where}.sourceCoverage.mappedRatio must be between 0 and 1")
+                mapped = source_coverage.get("mappedNodeCount")
+                excluded = source_coverage.get("excludedNonVisualOrUnsupportedTagCount")
+                scoped = source_coverage.get("routeScopedNodeCount")
+                if all(isinstance(value, int) and not isinstance(value, bool) for value in (mapped, excluded, scoped)):
+                    if mapped + excluded != scoped:
+                        errors.append(
+                            f"{where}.sourceCoverage mapped and excluded counts must equal routeScopedNodeCount"
+                        )
         local_ids: set[str] = set()
         local_parents: dict[str, str | None] = {}
         for n_index, node in enumerate(nodes):

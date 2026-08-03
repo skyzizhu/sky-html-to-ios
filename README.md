@@ -58,6 +58,9 @@ UI IR
 Native architecture, controls, assets, and naming
           |
           v
+Layout relation graph and structural fidelity gate
+          |
+          v
 SwiftUI or UIKit + Swift
           |
           v
@@ -73,7 +76,8 @@ Simulator captures, deterministic diff, and correction
 2. **High visual fidelity**: use computed styles, rendered rectangles, text line boxes, resolved assets, and observed states rather than guessing from source markup.
 3. **Maintainable iOS architecture**: organize screens, controllers, reusable views, cells, state, navigation, and assets by responsibility.
 4. **Minimal manual work**: orchestrate discovery, extraction, generation, integration, and validation; ask only when essential decisions are ambiguous.
-5. **Optional visual safeguards**: when visual mode is requested, connect stable HTML node IDs to UI IR and native views so a mismatch can be traced and corrected locally without making image understanding a core dependency.
+5. **Deterministic structural fidelity**: verify source coverage, containment, visual order, spacing relations, scroll ownership, native leaves, and screen regions without screenshots or a multimodal model.
+6. **Optional visual safeguards**: when visual mode is requested, connect stable HTML node IDs to UI IR and native views so a mismatch can be traced and corrected locally without making image understanding a core dependency.
 
 ## Inputs and Outputs
 
@@ -170,6 +174,8 @@ Code generation does not translate the DOM directly into a flat view tree. `nati
 Small fixed groups remain static layouts. Long homogeneous rows use Table/Lazy containers; grids, carousels, data tables, and heterogeneous sections use Collection layouts. A Table or Collection owns its scroll axis and is not wrapped in another same-axis root scroll view.
 
 Each screen also receives a typed layout contract containing visual child order, axis, alignment, distribution, wrapping, spacing, sizing policy, aspect ratio, and compression evidence. Inputs, explicit/project components, specialized media, and stable business controls become typed leaf views. Ordinary text, SVG internals, decorative nodes, and auto-numbered DOM leaves stay in the shared runtime instead of creating one Swift file per node.
+
+Before Swift generation, `layout-relation-graph-1.0` promotes those per-node measurements into cross-node constraints: containment, rendered child order, adjacency and gap, alignment, equal sizing, square aspect evidence, overlap order, and one scroll-axis owner. `structural-fidelity-report-1.0` then checks that the six-layer native plan consumes the same relationships. This core gate requires neither screenshots nor multimodal capability.
 
 ## Supported Views and Controls
 
@@ -540,6 +546,8 @@ Reports are written under `<workspace>/.html-to-ios/`.
 | `ios-sdk-report.json` | SDK availability |
 | `native-naming-plan.json` | Prefixes and conflicts |
 | `native-architecture-plan.json` | Navigation, scrolling, Safe Area, and presentation |
+| `layout-relation-graph.json` | Containment, visual order, spacing, alignment, aspect ratio, overlap, and scroll ownership |
+| `structural-fidelity-report.json` | Screenshot-free source-to-native structural quality gate |
 | `screens/<id>/render-tree.json` | Browser render tree |
 | `screens/<id>/ui-ir.json` | Screen UI IR |
 | `screens/<id>/text-calibration.json` | Text calibration |
@@ -574,7 +582,7 @@ High-risk inputs include runtime-generated DOM, closed Shadow DOM, cross-origin 
 The first usable release has passed:
 
 - real SwiftUI and UIKit builds;
-- 117 automated tests in the current development audit;
+- 122 automated tests in the current development audit;
 - UI IR, decision, naming, generator, route, and interaction tests;
 - visual-difference and geometry tests;
 - real Simulator responsive matrices;

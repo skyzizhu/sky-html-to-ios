@@ -95,6 +95,8 @@ UI IR 是浏览器渲染结果与原生代码之间的稳定中间层。不要�
 
 `regions` 保存持久页面区域的节点、类型、放置方式、置信度和证据。底栏 `placement` 只能是 `safe-area-inset` 或 `viewport-overlay`；区域识别依据几何、固定/吸顶行为、交互子项和语义综合判断，详见 `page-regions-and-system-chrome.md`。
 
+`sourceCoverage` 保存从选定 app root 到当前 route UI IR 的来源覆盖统计，包括 `rootSubtreeNodeCount`、`routeScopedNodeCount`、`mappedNodeCount`、`excludedByRouteCount`、`excludedNonVisualOrUnsupportedTagCount` 和 `mappedRatio`。HTML 模式必须生成且计数闭合；直接传入已有 UI IR 时允许缺失，并在结构验收中标记来源核算不适用。
+
 `navigation` 明确系统导航、自绘顶部栏、隐藏或沉浸式所有权；不得只用一个显示布尔值表达。`tabContainer` 仅用于 App 级主 Tab，每个 item 必须具有稳定 ID 和有效 `targetScreenId`。页面内筛选 Tab 继续使用 `tab-control` 或 segmented state，不生成 `UITabBarController`。
 
 ## Node
@@ -204,6 +206,7 @@ UI IR 是浏览器渲染结果与原生代码之间的稳定中间层。不要�
 - `dataBinding` 只在存在明确动态数据标注时生成，并默认作为视觉 fixture 元数据。`ownership=external` 必须具有 `sourceID`，但基础转换不生成接口或 ViewModel；loading/content/empty/error 只用于区分需要还原的画面结构。
 - `controlVisualStates` 保存浏览器实测的 `pressed|focused|disabled|selected` 紧凑样式。它只记录与 normal 状态不同或来源当前明确激活的状态；原生 Button/UIControl/输入焦点消费该字段，不能靠统一高亮效果替代。
 - 横向 repeat item、紧凑图标容器和比例媒体的来源 rect 是生成 `fixed/min/intrinsic/aspectRatio` 策略的证据。生成器可派生运行时样式，但不得删除原始 rect 与 CSS 证据。
+- UI IR 校验后必须派生 `layout-relation-graph-1.0`，把 parent-child、视觉顺序、相邻间距、对齐、等宽/等高、square aspect、overlap 和 scroll owner 从单节点属性提升为跨节点约束；原生架构不得改变这些关系。
 - `support` 使用 `native`、`native-fallback`、`placeholder` 或 `unsupported`。
 - `source.synthetic` 记录 pseudo-element 等浏览器生成节点；`layout.estimated` 表示边界需要截图纠偏。
 - 自动视觉纠偏生成新的 IR 副本，并在根级 `visualCorrectionHistory` 与节点级 `calibration.visualCorrections` 记录来源 IR hash、计划、迭代、前后值和操作。该记录不得改写 `sourceRectCssPx`，也不得成为跳过重新截图的理由。

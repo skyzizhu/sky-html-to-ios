@@ -1564,13 +1564,30 @@ def matches_descendant_selector(node: dict, selector: str, node_by_runtime: dict
 def build_ir(data: dict, args) -> dict:
     root = select_root(data, args.root_runtime_id, args.root_selector)
     all_nodes = data.get("nodes") or []
-    selected = descendants(all_nodes, root["runtimeId"])
-    selected = filter_other_route_screens(all_nodes, selected, args.route_graph_data, args.screen_id)
+    root_subtree = descendants(all_nodes, root["runtimeId"])
+    route_scoped = filter_other_route_screens(
+        all_nodes, root_subtree, args.route_graph_data, args.screen_id
+    )
+    selected = route_scoped
     selected = [
         node for node in selected
         if node.get("tag") not in SKIP_TAGS
         and not (node.get("tag") == "input" and node.get("attributes", {}).get("type", "text").lower() == "hidden")
     ]
+    route_scoped_ids = {node.get("runtimeId") for node in route_scoped}
+    selected_ids = {node.get("runtimeId") for node in selected}
+    source_coverage = {
+        "rootSubtreeNodeCount": len(root_subtree),
+        "routeScopedNodeCount": len(route_scoped),
+        "mappedNodeCount": len(selected),
+        "excludedByRouteCount": sum(
+            node.get("runtimeId") not in route_scoped_ids for node in root_subtree
+        ),
+        "excludedNonVisualOrUnsupportedTagCount": sum(
+            node.get("runtimeId") not in selected_ids for node in route_scoped
+        ),
+        "mappedRatio": round(len(selected) / len(route_scoped), 6) if route_scoped else 1.0,
+    }
     included_runtime_ids = {node.get("runtimeId") for node in selected}
     raw_interactions = [item for item in data.get("interactions", []) if item.get("sourceRuntimeId") in included_runtime_ids]
     raw_normalized_interactions = [normalize_interaction(item, args.screen_id, index) for index, item in enumerate(raw_interactions)]
@@ -1935,6 +1952,7 @@ def build_ir(data: dict, args) -> dict:
             "navigation": navigation,
             "tabContainer": tab_container,
             "regions": regions,
+            "sourceCoverage": source_coverage,
             "nodes": nodes_out,
         }],
         "interactions": normalized_interactions,

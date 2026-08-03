@@ -76,6 +76,19 @@ def ir(payload_node: dict) -> dict:
 
 
 class ValidateUIIRTests(unittest.TestCase):
+    def test_source_coverage_counts_must_close(self) -> None:
+        document = ir(node("scroll", "vertical"))
+        document["screens"][0]["sourceCoverage"] = {
+            "rootSubtreeNodeCount": 4,
+            "routeScopedNodeCount": 3,
+            "mappedNodeCount": 1,
+            "excludedByRouteCount": 1,
+            "excludedNonVisualOrUnsupportedTagCount": 1,
+            "mappedRatio": 0.5,
+        }
+        errors, _ = MODULE.validate(document)
+        self.assertTrue(any("must equal routeScopedNodeCount" in error for error in errors))
+
     def test_carousel_requires_horizontal_axis(self) -> None:
         errors, _ = MODULE.validate(ir(node("carousel", "vertical")))
         self.assertTrue(any("carousel must declare" in error for error in errors))
