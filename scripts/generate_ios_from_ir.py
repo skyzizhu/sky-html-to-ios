@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.37.0"
+GENERATOR_VERSION = "1.38.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -53,6 +53,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--module-name", default="HTMLToIOSGenerated")
     parser.add_argument("--architecture-plan", type=Path)
     parser.add_argument("--layout-relation-graph", type=Path)
+    parser.add_argument("--native-layout-plan", type=Path)
     parser.add_argument("--native-structure-manifest", type=Path)
     parser.add_argument("--naming-plan", type=Path)
     parser.add_argument("--conflict-dir", type=Path)
@@ -140,6 +141,22 @@ def load_layout_relation_graph(path: Path | None) -> tuple[dict[str, Any], dict[
     }
     if not screens or "" in screens:
         raise ValueError(f"{path}: every layout graph screen needs a screenId")
+    return data, screens
+
+
+def load_native_layout_plan(path: Path | None) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    if path is None:
+        return {}, {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("schemaVersion") != "native-layout-plan-1.0":
+        raise ValueError(f"{path}: expected native-layout-plan-1.0")
+    screens = {
+        str(screen.get("screenId") or ""): screen
+        for screen in data.get("screens") or []
+        if isinstance(screen, dict)
+    }
+    if not screens or "" in screens:
+        raise ValueError(f"{path}: every native layout plan screen needs a screenId")
     return data, screens
 
 
@@ -563,6 +580,10 @@ class ScreenBuildContext:
     detached_root_ids: set[str]
     bottom_bar_placement: str
     native_container_kinds: dict[str, str]
+    layout_containers: dict[str, dict[str, Any]]
+    layout_nodes: dict[str, dict[str, Any]]
+    layout_sizing: dict[str, dict[str, Any]]
+    compound_controls: dict[str, dict[str, Any]]
 
 
 def rich_text_runs(
@@ -1104,6 +1125,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     mode = str(layout.get("mode") or "flow")
     display = str(style.get("display") or "").lower()
     flex_direction = str(style.get("flexDirection") or "row").lower()
+    layout_container = context.layout_containers.get(node_id) or {}
     absolute_child_count = len(absolute_child_payloads)
     flow_child_count = len(flow_child_payloads)
     if absolute_child_count > 0 and flow_child_count == 0:
@@ -1118,6 +1140,8 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         axis = "grid"
     else:
         axis = "vertical"
+    if layout_container.get("axis") in {"horizontal", "vertical", "grid", "overlay"}:
+        axis = str(layout_container["axis"])
     if (
         axis == "vertical"
         and semantic in {"text", "label", "heading"}
@@ -1132,6 +1156,12 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         str(style.get("flexWrap") or "nowrap").lower(),
         flex_direction,
     )
+    planned_child_order = [str(item) for item in layout_container.get("orderedChildNodeIds") or []]
+    if planned_child_order:
+        planned_index = {child_id: index for index, child_id in enumerate(planned_child_order)}
+        child_payloads.sort(
+            key=lambda child: planned_index.get(str(child.get("id") or ""), len(planned_index))
+        )
     inline_runs = rich_text_runs(context, node, allow_block_children=True)
     inline_text_container = bool(
         semantic == "container"
@@ -1148,6 +1178,13 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         content_items = []
     else:
         content_items = ordered_content_items(context, node, child_payloads, axis, text)
+        compound_layout = context.compound_controls.get(node_id) or {}
+        planned_slot_ids = [str(item) for item in compound_layout.get("orderedSlotIds") or []]
+        if planned_slot_ids:
+            planned_slot_index = {slot_id: index for index, slot_id in enumerate(planned_slot_ids)}
+            content_items.sort(
+                key=lambda item: planned_slot_index.get(str(item.get("id") or ""), len(planned_slot_index))
+            )
         child_by_id = {str(child.get("id") or ""): child for child in child_payloads}
         for item in content_items:
             child = child_by_id.get(str(item.get("childID") or ""))
@@ -1158,9 +1195,17 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
                 child_margin[3] = 0
             elif axis == "vertical" and item.get("gapBefore") is not None:
                 child_margin[0] = 0
-    padding = scaled_edges(style.get("padding"), context.design_scale)
-    margin = scaled_edges(style.get("margin"), context.design_scale)
-    border_widths = scaled_edges(style.get("borderWidths"), context.design_scale)
+    layout_node = context.layout_nodes.get(node_id) or {}
+    box_model = layout_node.get("boxModel") or {}
+    padding = [number(item) * context.design_scale for item in box_model.get("paddingPt") or []]
+    margin = [number(item) * context.design_scale for item in box_model.get("marginPt") or []]
+    border_widths = [number(item) * context.design_scale for item in box_model.get("borderWidthsPt") or []]
+    if len(padding) != 4:
+        padding = scaled_edges(style.get("padding"), context.design_scale)
+    if len(margin) != 4:
+        margin = scaled_edges(style.get("margin"), context.design_scale)
+    if len(border_widths) != 4:
+        border_widths = scaled_edges(style.get("borderWidths"), context.design_scale)
     border_index = max(range(4), key=lambda index: border_widths[index])
     border_colors = style.get("borderColors") or []
     border_styles = style.get("borderStyles") or []
@@ -1192,6 +1237,8 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         and str(layout.get("position") or "static") not in {"absolute", "fixed"}
     ) else 0
     min_height = max(control_min_height, bordered_flow_min_height)
+    if box_model.get("minHeightPt") is not None:
+        min_height = max(min_height, number(box_model.get("minHeightPt")) * context.design_scale)
     decorative = bool(content.get("isDecorative"))
     has_visual_style = (
         color_string(style.get("backgroundColor")) is not None
@@ -1345,6 +1392,9 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         or compact_styled_inline_geometry
         or compact_overlay_geometry
     )
+    layout_sizing = context.layout_sizing.get(node_id) or {}
+    layout_width_policy = str(layout_sizing.get("widthPolicy") or "")
+    layout_height_policy = str(layout_sizing.get("heightPolicy") or "")
     fixed_width = width if (
         compact_visual_container
         or measured_visual_leaf
@@ -1360,6 +1410,10 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         or (horizontal_scroll_item and semantic not in {"image", "icon"})
         or (semantic == "carousel" and scroll_axis == "horizontal")
     ) else None
+    if layout_width_policy == "fixed" and number(layout_sizing.get("measuredWidth")) > 0:
+        fixed_width = number(layout_sizing.get("measuredWidth"))
+    if layout_height_policy == "fixed" and number(layout_sizing.get("measuredHeight")) > 0:
+        fixed_height = number(layout_sizing.get("measuredHeight"))
     preserves_aspect_ratio = bool(
         ratio is not None
         and (
@@ -1447,6 +1501,11 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "options": control_options,
             "allowsMultipleSelection": semantic == "multi-select",
         }
+    layout_spacing = (
+        number(layout_container.get("gapPt")) * context.design_scale
+        if layout_container.get("gapPt") is not None
+        else scaled_css_value(style.get("gap"), context.design_scale)
+    )
     payload = {
         "id": node_id,
         "semantic": semantic,
@@ -1472,6 +1531,18 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         "children": child_payloads,
         "overlayChildren": overlay_child_payloads,
         "contentItems": content_items,
+        "compoundLayout": (
+            {
+                "axis": str((context.compound_controls.get(node_id) or {}).get("axis") or axis),
+                "orderedSlotIds": [
+                    str(item)
+                    for item in (context.compound_controls.get(node_id) or {}).get("orderedSlotIds") or []
+                ],
+                "singleLine": bool((context.compound_controls.get(node_id) or {}).get("singleLine")),
+            }
+            if node_id in context.compound_controls
+            else None
+        ),
         "action": action,
         "style": {
             "fontSize": min(max(number(style.get("fontSize"), 16) * context.design_scale, 8), 72),
@@ -1508,10 +1579,20 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
                 or str(style.get("overflowY") or "visible") in {"hidden", "clip"},
             "padding": padding,
             "margin": margin,
-            "spacing": min(max(scaled_css_value(style.get("gap"), context.design_scale), 0), 40),
-            "flexGrow": max(number(style.get("flexGrow")), 0),
+            "spacing": (
+                max(layout_spacing, 0)
+                if layout_container.get("gapPt") is not None
+                else min(max(layout_spacing, 0), 40)
+            ),
+            "flexGrow": max(number(layout_sizing.get("flexGrow"), number(style.get("flexGrow"))), 0),
             "widthFraction": width_fraction,
             "minHeight": min_height,
+            "minWidth": number(box_model.get("minWidthPt")) * context.design_scale if box_model.get("minWidthPt") is not None else None,
+            "maxWidth": number(box_model.get("maxWidthPt")) * context.design_scale if box_model.get("maxWidthPt") is not None else None,
+            "maxHeight": number(box_model.get("maxHeightPt")) * context.design_scale if box_model.get("maxHeightPt") is not None else None,
+            "boxSizing": str(box_model.get("boxSizing") or style.get("boxSizing") or "content-box"),
+            "contentWidth": number(box_model.get("contentWidthPt")) * context.design_scale if box_model.get("contentWidthPt") is not None else None,
+            "contentHeight": number(box_model.get("contentHeightPt")) * context.design_scale if box_model.get("contentHeightPt") is not None else None,
             "preferredWidth": min(max(width, 0), context.root_width),
             "preferredHeight": min(max(number(rect.get("height")), 0), max(context.root_width * 3, 1200)),
             "textMeasureWidth": (
@@ -1531,8 +1612,8 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
                 if last_baseline_y is not None else None
             ),
             "baselineAligned": baseline_aligned,
-            "resistsCompression": str(style.get("flexShrink") or "1") == "0",
-            "preservesIntrinsicWidth": preserves_intrinsic_width,
+            "resistsCompression": str(style.get("flexShrink") or "1") == "0" or bool(layout_sizing.get("resistsHorizontalCompression")),
+            "preservesIntrinsicWidth": preserves_intrinsic_width or layout_width_policy == "intrinsic",
             "fixedWidth": min(max(fixed_width, 0), context.root_width) if fixed_width is not None else None,
             "fixedHeight": min(max(fixed_height, 0), 240) if fixed_height is not None else None,
             "aspectRatio": ratio if preserves_aspect_ratio else None,
@@ -1540,8 +1621,8 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "textLineLimit": text_line_limit,
             "textOverflow": str(style.get("textOverflow") or "clip"),
             "textAlignment": str(style.get("textAlign") or "start"),
-            "justifyContent": str(style.get("justifyContent") or "normal"),
-            "alignItems": str(style.get("alignItems") or "normal"),
+            "justifyContent": str(layout_container.get("distribution") or style.get("justifyContent") or "normal"),
+            "alignItems": str(layout_container.get("alignment") or style.get("alignItems") or "normal"),
             "gridColumnCount": grid_column_count(style.get("gridTemplateColumns")) if axis == "grid" else None,
             "mediaContentMode": str(asset.get("renderMode") or style.get("objectFit") or "contain"),
             "mediaPosition": str(asset.get("position") or style.get("objectPosition") or "50% 50%"),
@@ -1575,7 +1656,11 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     return payload
 
 
-def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None) -> dict[str, Any]:
+def build_screen(
+    ir: dict[str, Any],
+    architecture: dict[str, Any] | None = None,
+    native_layout: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     screen = ir["screens"][0]
     screen_id = str(screen.get("id") or "screen")
     architecture = architecture or {}
@@ -1586,6 +1671,28 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
         str(item.get("nodeId") or ""): str(item.get("kind") or "")
         for item in node_strategies
         if isinstance(item, dict) and item.get("nodeId") and item.get("kind")
+    }
+    native_layout = native_layout or {}
+    layout_containers = {
+        str(item.get("containerNodeId") or ""): item
+        for item in native_layout.get("containers") or []
+        if isinstance(item, dict) and item.get("containerNodeId")
+    }
+    layout_nodes = {
+        str(item.get("nodeId") or ""): item
+        for item in native_layout.get("nodes") or []
+        if isinstance(item, dict) and item.get("nodeId")
+    }
+    layout_sizing = {
+        str(item.get("nodeId") or ""): item
+        for container in layout_containers.values()
+        for item in container.get("childSizing") or []
+        if isinstance(item, dict) and item.get("nodeId")
+    }
+    compound_controls = {
+        str(item.get("nodeId") or ""): item
+        for item in native_layout.get("compoundControls") or []
+        if isinstance(item, dict) and item.get("nodeId")
     }
     nodes_list = screen.get("nodes") or []
     nodes = {str(node["id"]): node for node in nodes_list}
@@ -2026,6 +2133,10 @@ def build_screen(ir: dict[str, Any], architecture: dict[str, Any] | None = None)
         detached_root_ids=detached_root_ids,
         bottom_bar_placement=bottom_bar_placement,
         native_container_kinds=native_container_kinds,
+        layout_containers=layout_containers,
+        layout_nodes=layout_nodes,
+        layout_sizing=layout_sizing,
+        compound_controls=compound_controls,
     )
     root = node_payload(context, root_id) or {
         "id": root_id,
@@ -2345,6 +2456,7 @@ struct HTMLToIOSNodeSpec: Codable, Identifiable {{
     let children: [HTMLToIOSNodeSpec]
     let overlayChildren: [HTMLToIOSNodeSpec]
     let contentItems: [HTMLToIOSContentItemSpec]
+    let compoundLayout: HTMLToIOSCompoundLayoutSpec?
     let action: HTMLToIOSActionSpec?
     let style: HTMLToIOSStyleSpec
     let systemImage: String?
@@ -2455,6 +2567,12 @@ struct HTMLToIOSContentItemSpec: Codable, Identifiable {{
     let flexibleGapBefore: Bool?
 }}
 
+struct HTMLToIOSCompoundLayoutSpec: Codable {{
+    let axis: String
+    let orderedSlotIds: [String]
+    let singleLine: Bool
+}}
+
 struct HTMLToIOSMotionSpec: Codable, Identifiable {{
     let id: String
     let durationMilliseconds: Int
@@ -2522,6 +2640,12 @@ struct HTMLToIOSStyleSpec: Codable {{
     let flexGrow: Double?
     let widthFraction: Double?
     let minHeight: Double?
+    let minWidth: Double?
+    let maxWidth: Double?
+    let maxHeight: Double?
+    let boxSizing: String?
+    let contentWidth: Double?
+    let contentHeight: Double?
     let preferredWidth: Double?
     let preferredHeight: Double?
     let textMeasureWidth: Double?
@@ -3103,13 +3227,14 @@ private struct HTMLToIOSFrameModifier: ViewModifier {
     let idealWidth: CGFloat?
     let maxWidth: CGFloat?
     let minHeight: CGFloat?
+    let maxHeight: CGFloat?
 
     @ViewBuilder func body(content: Content) -> some View {
         if fixedWidth != nil || fixedHeight != nil {
             content.frame(width: fixedWidth, height: fixedHeight)
         } else if minWidth != nil || idealWidth != nil {
             firstFrame(content)
-        } else if maxWidth != nil || minHeight != nil {
+        } else if maxWidth != nil || minHeight != nil || maxHeight != nil {
             secondFrame(content)
         } else {
             content
@@ -3118,15 +3243,15 @@ private struct HTMLToIOSFrameModifier: ViewModifier {
 
     @ViewBuilder private func firstFrame(_ content: Content) -> some View {
         let framed = content.frame(minWidth: minWidth, idealWidth: idealWidth)
-        if maxWidth != nil || minHeight != nil {
-            framed.frame(maxWidth: maxWidth, minHeight: minHeight)
+        if maxWidth != nil || minHeight != nil || maxHeight != nil {
+            framed.frame(maxWidth: maxWidth, minHeight: minHeight, maxHeight: maxHeight)
         } else {
             framed
         }
     }
 
     private func secondFrame(_ content: Content) -> some View {
-        content.frame(maxWidth: maxWidth, minHeight: minHeight)
+        content.frame(maxWidth: maxWidth, minHeight: minHeight, maxHeight: maxHeight)
     }
 }
 
@@ -3216,14 +3341,17 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
         let alignment: TextAlignment = style.textAlignment == "center" ? .center : (style.textAlignment == "end" ? .trailing : .leading)
         let preferredWidth = constrainsPreferredWidth ? CGFloat(style.preferredWidth ?? 0) : 0
         let measuredTextWidth = style.textMeasureWidth.map { CGFloat($0) }
-        let maxWidth: CGFloat? = measuredTextWidth
+        let inferredMaxWidth: CGFloat? = measuredTextWidth
             ?? ((style.flexGrow ?? 0) > 0 || (constrainsPreferredWidth && (style.widthFraction ?? 0) > 0.88)
                 ? .infinity
                 : nil)
+        let maxWidth: CGFloat? = style.maxWidth.map { CGFloat($0) } ?? inferredMaxWidth
         let idealWidth: CGFloat? = preferredWidth > 0 && maxWidth == nil ? preferredWidth : nil
-        let minWidth: CGFloat? = (enforcesPreferredWidth || style.resistsCompression == true) && preferredWidth > 0 ? preferredWidth : nil
+        let inferredMinWidth: CGFloat? = (enforcesPreferredWidth || style.resistsCompression == true) && preferredWidth > 0 ? preferredWidth : nil
+        let minWidth: CGFloat? = style.minWidth.map { CGFloat($0) } ?? inferredMinWidth
         let rawMinHeight = style.minHeight ?? 0
         let minHeight: CGFloat? = rawMinHeight > 0 ? CGFloat(rawMinHeight) : nil
+        let maxHeight: CGFloat? = style.maxHeight.map { CGFloat($0) }
         let sourceFixedWidth: CGFloat? = style.fixedWidth.map { CGFloat($0) }
         let sourceFixedHeight: CGFloat? = style.fixedHeight.map { CGFloat($0) }
         let fixedWidth: CGFloat? = sizeOverride?.width.map { CGFloat($0) } ?? sourceFixedWidth
@@ -3277,7 +3405,8 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
                 minWidth: minWidth,
                 idealWidth: idealWidth,
                 maxWidth: maxWidth,
-                minHeight: minHeight
+                minHeight: minHeight,
+                maxHeight: maxHeight
             ))
         return framedContent
             .modifier(HTMLToIOSBackgroundModifier(style: style, assetName: assetName, backgroundOverride: backgroundOverride, gradientOverride: gradientOverride))
@@ -5913,6 +6042,15 @@ final class HTMLToIOSNodeRenderer {
         if let height = spec.style.minHeight, height > 0, height < 161 {
             view.heightAnchor.constraint(greaterThanOrEqualToConstant: height).isActive = true
         }
+        if let width = spec.style.minWidth, width > 0 {
+            view.widthAnchor.constraint(greaterThanOrEqualToConstant: width).isActive = true
+        }
+        if let width = spec.style.maxWidth, width > 0 {
+            view.widthAnchor.constraint(lessThanOrEqualToConstant: width).isActive = true
+        }
+        if let height = spec.style.maxHeight, height > 0 {
+            view.heightAnchor.constraint(lessThanOrEqualToConstant: height).isActive = true
+        }
         if let padding = spec.style.padding, padding.count == 4, let stack = view as? UIStackView {
             stack.isLayoutMarginsRelativeArrangement = true
             stack.directionalLayoutMargins = NSDirectionalEdgeInsets(top: padding[0], leading: padding[3], bottom: padding[2], trailing: padding[1])
@@ -7446,11 +7584,13 @@ def build_native_structure_manifest(
     architecture_by_screen: dict[str, dict[str, Any]],
     layout_graph: dict[str, Any],
     graph_by_screen: dict[str, dict[str, Any]],
+    native_layout_by_screen: dict[str, dict[str, Any]],
     screen_source_files: dict[str, list[str]],
     generation_manifest: dict[str, Any],
     out_dir: Path,
     architecture_path: Path | None,
     graph_path: Path,
+    native_layout_path: Path | None,
     ui_stack: str,
 ) -> dict[str, Any]:
     ir_by_screen = {
@@ -7461,6 +7601,7 @@ def build_native_structure_manifest(
     manifest_screens = []
     for screen_id, graph_screen in graph_by_screen.items():
         ir_screen = (ir_by_screen.get(screen_id) or {}).get("screens", [{}])[0]
+        design_scale = min(max(number(((ir_by_screen.get(screen_id) or {}).get("target") or {}).get("scale"), 1), 0.5), 3.0)
         ir_nodes = {str(node.get("id") or ""): node for node in ir_screen.get("nodes") or [] if node.get("id")}
         payload_screen = payload_by_screen.get(screen_id) or {}
         payload_nodes, represented_ids, payload_order = recursive_payload_evidence(payload_screen)
@@ -7480,6 +7621,7 @@ def build_native_structure_manifest(
         )
         detached_native_ids.discard("")
         architecture = architecture_by_screen.get(screen_id) or {}
+        native_layout = native_layout_by_screen.get(screen_id) or {}
         architecture_relations = {
             str(item.get("containerNodeId") or ""): item
             for item in (((architecture.get("layers") or {}).get("contentContainer") or {}).get("layoutRelations") or [])
@@ -7507,6 +7649,55 @@ def build_native_structure_manifest(
             )
             for relation in graph_screen.get("relations") or []
         ]
+        container_consumption = []
+        for container_plan in native_layout.get("containers") or []:
+            container_id = str(container_plan.get("containerNodeId") or "")
+            payload_container = payload_nodes.get(container_id) or {}
+            actual_children = direct_payload_child_ids(payload_container)
+            expected_children = [
+                str(item)
+                for item in container_plan.get("orderedChildNodeIds") or []
+                if str(item) in actual_children
+            ]
+            actual_expected_order = [item for item in actual_children if item in expected_children]
+            style = payload_container.get("style") or {}
+            checks = {
+                "axis": str(payload_container.get("axis") or "") == str(container_plan.get("axis") or ""),
+                "visualOrder": actual_expected_order == expected_children,
+                "gap": abs(number(style.get("spacing")) - number(container_plan.get("gapPt")) * design_scale) <= 0.01,
+                "alignment": str(style.get("alignItems") or "normal") == str(container_plan.get("alignment") or "normal"),
+                "distribution": str(style.get("justifyContent") or "normal") == str(container_plan.get("distribution") or "normal"),
+            }
+            container_consumption.append({
+                "containerNodeId": container_id,
+                "status": "consumed" if payload_container and all(checks.values()) else "not-consumed",
+                "checks": checks,
+                "expectedChildNodeIds": expected_children,
+                "actualChildNodeIds": actual_children,
+                "relationIds": container_plan.get("relationIds") or [],
+            })
+        compound_consumption = []
+        for compound_plan in native_layout.get("compoundControls") or []:
+            node_id = str(compound_plan.get("nodeId") or "")
+            payload_node = payload_nodes.get(node_id) or {}
+            generated_compound = payload_node.get("compoundLayout") or {}
+            expected_slots = [str(item) for item in compound_plan.get("orderedSlotIds") or []]
+            generated_slots = [str(item) for item in generated_compound.get("orderedSlotIds") or []]
+            content_slots = [str(item.get("id") or "") for item in payload_node.get("contentItems") or []]
+            checks = {
+                "slotContract": generated_slots == expected_slots,
+                "contentOrder": [item for item in content_slots if item in expected_slots] == [
+                    item for item in expected_slots if item in content_slots
+                ],
+                "axis": str(payload_node.get("axis") or "") == str(compound_plan.get("axis") or ""),
+            }
+            compound_consumption.append({
+                "nodeId": node_id,
+                "status": "consumed" if payload_node and all(checks.values()) else "not-consumed",
+                "checks": checks,
+                "expectedSlotIds": expected_slots,
+                "actualSlotIds": content_slots,
+            })
         source_paths = [
             "Resources/Payload/HTMLToIOSGeneratedPayload.json",
             "Core/Runtime/HTMLToIOSGeneratedRuntime.swift",
@@ -7528,6 +7719,16 @@ def build_native_structure_manifest(
             "screenId": screen_id,
             "nodes": node_records,
             "relations": relation_records,
+            "layoutPlanConsumption": {
+                "containers": container_consumption,
+                "compoundControls": compound_consumption,
+                "summary": {
+                    "containerCount": len(container_consumption),
+                    "unconsumedContainerCount": sum(item["status"] == "not-consumed" for item in container_consumption),
+                    "compoundControlCount": len(compound_consumption),
+                    "unconsumedCompoundControlCount": sum(item["status"] == "not-consumed" for item in compound_consumption),
+                },
+            },
             "contentContainer": payload_screen.get("contentContainer"),
             "regions": {
                 "top": {
@@ -7556,6 +7757,8 @@ def build_native_structure_manifest(
         "layoutRelationGraph": str(graph_path.resolve()),
         "layoutRelationGraphSha256": sha256_file(graph_path),
         "layoutRelationGraphSchemaVersion": layout_graph.get("schemaVersion"),
+        "nativeLayoutPlan": str(native_layout_path.resolve()) if native_layout_path else None,
+        "nativeLayoutPlanSha256": sha256_file(native_layout_path) if native_layout_path else None,
         "generationManifest": str((out_dir / MANIFEST_NAME).resolve()),
         "generationManifestSha256": sha256_file(out_dir / MANIFEST_NAME),
         "screens": manifest_screens,
@@ -7591,6 +7794,7 @@ def main() -> int:
 
     architecture_by_screen = load_architecture_plan(args.architecture_plan)
     layout_graph, graph_by_screen = load_layout_relation_graph(args.layout_relation_graph)
+    native_layout_plan, native_layout_by_screen = load_native_layout_plan(args.native_layout_plan)
     if args.native_structure_manifest and not args.layout_relation_graph:
         raise ValueError("--native-structure-manifest requires --layout-relation-graph")
     name_prefix, naming_source, existing_type_names = load_naming_prefix(args.naming_plan)
@@ -7602,7 +7806,18 @@ def main() -> int:
         missing = sorted(set(ir_screen_ids) - set(graph_by_screen))
         extra = sorted(set(graph_by_screen) - set(ir_screen_ids))
         raise ValueError(f"layout relation graph screen mismatch; missing={missing}, extra={extra}")
-    screens = [build_screen(ir, architecture_by_screen.get(screen_id)) for ir, screen_id in zip(irs, ir_screen_ids)]
+    if native_layout_by_screen and set(native_layout_by_screen) != set(ir_screen_ids):
+        missing = sorted(set(ir_screen_ids) - set(native_layout_by_screen))
+        extra = sorted(set(native_layout_by_screen) - set(ir_screen_ids))
+        raise ValueError(f"native layout plan screen mismatch; missing={missing}, extra={extra}")
+    screens = [
+        build_screen(
+            ir,
+            architecture_by_screen.get(screen_id),
+            native_layout_by_screen.get(screen_id),
+        )
+        for ir, screen_id in zip(irs, ir_screen_ids)
+    ]
     ids = [screen["id"] for screen in screens]
     if len(ids) != len(set(ids)):
         raise ValueError("screen IDs must be unique")
@@ -7694,6 +7909,8 @@ def main() -> int:
         "inputs": [{"path": str(path.resolve()), "sha256": sha256_file(path)} for path in args.ir],
         "architecturePlan": str(args.architecture_plan.resolve()) if args.architecture_plan else None,
         "layoutRelationGraph": str(args.layout_relation_graph.resolve()) if args.layout_relation_graph else None,
+        "nativeLayoutPlan": str(args.native_layout_plan.resolve()) if args.native_layout_plan else None,
+        "nativeLayoutPlanSha256": sha256_file(args.native_layout_plan) if args.native_layout_plan else None,
         "namingPlan": str(args.naming_plan.resolve()) if args.naming_plan else None,
         "namePrefix": name_prefix,
         "namingSource": naming_source,
@@ -7709,11 +7926,13 @@ def main() -> int:
             architecture_by_screen,
             layout_graph,
             graph_by_screen,
+            native_layout_by_screen,
             screen_source_files,
             manifest,
             args.out_dir,
             args.architecture_plan,
             args.layout_relation_graph,
+            args.native_layout_plan,
             ui_stack,
         )
         native_structure_path.parent.mkdir(parents=True, exist_ok=True)

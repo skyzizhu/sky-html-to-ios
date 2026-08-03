@@ -40,6 +40,7 @@ def main() -> int:
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--layout-graph", required=True, type=Path)
     parser.add_argument("--architecture-plan", required=True, type=Path)
+    parser.add_argument("--native-layout-plan", required=True, type=Path)
     parser.add_argument("--generated-dir", required=True, type=Path)
     parser.add_argument("--generation-manifest", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
@@ -48,6 +49,7 @@ def main() -> int:
     manifest = load_json(args.manifest)
     graph = load_json(args.layout_graph)
     architecture = load_json(args.architecture_plan)
+    native_layout = load_json(args.native_layout_plan)
     generation = load_json(args.generation_manifest)
     if manifest.get("schemaVersion") != "native-structure-manifest-1.0":
         raise ValueError("--manifest must use native-structure-manifest-1.0")
@@ -55,6 +57,8 @@ def main() -> int:
         raise ValueError("--layout-graph must use layout-relation-graph-1.0")
     if architecture.get("schemaVersion") != "native-architecture-plan-1.1":
         raise ValueError("--architecture-plan must use native-architecture-plan-1.1")
+    if native_layout.get("schemaVersion") != "native-layout-plan-1.0":
+        raise ValueError("--native-layout-plan must use native-layout-plan-1.0")
     if generation.get("schemaVersion") != "html-to-ios-generation-1.0":
         raise ValueError("--generation-manifest must use html-to-ios-generation-1.0")
 
@@ -69,6 +73,11 @@ def main() -> int:
         issues.append(issue(
             "STALE_ARCHITECTURE_PLAN_PROVENANCE", None,
             "Native structure manifest was not generated from the current native architecture plan.",
+        ))
+    if manifest.get("nativeLayoutPlanSha256") != sha256_file(args.native_layout_plan):
+        issues.append(issue(
+            "STALE_NATIVE_LAYOUT_PLAN_PROVENANCE", None,
+            "Native structure manifest was not generated from the current executable layout plan.",
         ))
     if manifest.get("generationManifestSha256") != sha256_file(args.generation_manifest):
         issues.append(issue(
@@ -127,6 +136,22 @@ def main() -> int:
                 issues.append(issue(
                     "NATIVE_RELATION_PROOF_FAILED", screen_id,
                     "One or more native relation evidence checks failed.", relation_id,
+                ))
+
+        layout_consumption = native_screen.get("layoutPlanConsumption") or {}
+        for record in layout_consumption.get("containers") or []:
+            if record.get("status") != "consumed":
+                issues.append(issue(
+                    "NATIVE_LAYOUT_CONTAINER_NOT_CONSUMED", screen_id,
+                    "Generated native container did not consume its executable layout plan.",
+                    str(record.get("containerNodeId") or "") or None,
+                ))
+        for record in layout_consumption.get("compoundControls") or []:
+            if record.get("status") != "consumed":
+                issues.append(issue(
+                    "NATIVE_COMPOUND_LAYOUT_NOT_CONSUMED", screen_id,
+                    "Generated compound control did not preserve planned slot order.",
+                    str(record.get("nodeId") or "") or None,
                 ))
 
         architecture_screen = architecture_screens.get(screen_id) or {}

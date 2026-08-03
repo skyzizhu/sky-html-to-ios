@@ -14,6 +14,7 @@ GRAPH_SCRIPT = ROOT / "scripts" / "build_layout_relation_graph.py"
 ARCHITECTURE_SCRIPT = ROOT / "scripts" / "build_native_architecture_plan.py"
 GENERATOR_SCRIPT = ROOT / "scripts" / "generate_ios_from_ir.py"
 VALIDATOR_SCRIPT = ROOT / "scripts" / "validate_native_structure_manifest.py"
+LAYOUT_PLAN_SCRIPT = ROOT / "scripts" / "build_native_layout_plan.py"
 
 
 def node(
@@ -118,13 +119,19 @@ class NativeStructureManifestTests(unittest.TestCase):
             self.fail(result.stderr or result.stdout)
         return result
 
-    def build_chain(self, root: Path, ui_stack: str) -> tuple[Path, Path, Path, Path]:
+    def build_chain(
+        self,
+        root: Path,
+        ui_stack: str,
+        payload: dict | None = None,
+    ) -> tuple[Path, Path, Path, Path, Path]:
         ir_path = root / "ui-ir.json"
         graph_path = root / "layout-relation-graph.json"
         architecture_path = root / "native-architecture-plan.json"
         native_manifest_path = root / "native-structure-manifest.json"
+        native_layout_path = root / "native-layout-plan.json"
         out_dir = root / "Generated" / "HTMLToIOS"
-        ir_path.write_text(json.dumps(make_ir(ui_stack)), encoding="utf-8")
+        ir_path.write_text(json.dumps(payload or make_ir(ui_stack)), encoding="utf-8")
         self.run_command([
             "python3", str(GRAPH_SCRIPT), "--ir", str(ir_path), "--out", str(graph_path),
         ])
@@ -133,19 +140,26 @@ class NativeStructureManifestTests(unittest.TestCase):
             "--out", str(architecture_path), "--ui-stack", ui_stack,
         ])
         self.run_command([
+            "python3", str(LAYOUT_PLAN_SCRIPT), "--ir", str(ir_path),
+            "--architecture-plan", str(architecture_path),
+            "--layout-graph", str(graph_path), "--out", str(native_layout_path),
+        ])
+        self.run_command([
             "python3", str(GENERATOR_SCRIPT), "--ir", str(ir_path),
             "--out-dir", str(out_dir), "--ui-stack", ui_stack,
             "--architecture-plan", str(architecture_path),
             "--layout-relation-graph", str(graph_path),
+            "--native-layout-plan", str(native_layout_path),
             "--native-structure-manifest", str(native_manifest_path),
         ])
-        return graph_path, architecture_path, native_manifest_path, out_dir
+        return graph_path, architecture_path, native_layout_path, native_manifest_path, out_dir
 
     def validate_chain(
         self,
         root: Path,
         graph_path: Path,
         architecture_path: Path,
+        native_layout_path: Path,
         native_manifest_path: Path,
         out_dir: Path,
         *,
@@ -157,6 +171,7 @@ class NativeStructureManifestTests(unittest.TestCase):
             "--manifest", str(native_manifest_path),
             "--layout-graph", str(graph_path),
             "--architecture-plan", str(architecture_path),
+            "--native-layout-plan", str(native_layout_path),
             "--generated-dir", str(out_dir),
             "--generation-manifest", str(out_dir / ".html-to-ios-generation.json"),
             "--out", str(report_path),
@@ -169,7 +184,7 @@ class NativeStructureManifestTests(unittest.TestCase):
                 root = Path(temporary)
                 outputs = self.build_chain(root, ui_stack)
                 _, report = self.validate_chain(root, *outputs)
-                manifest = json.loads(outputs[2].read_text(encoding="utf-8"))
+                manifest = json.loads(outputs[3].read_text(encoding="utf-8"))
                 self.assertEqual(report["status"], "passed")
                 self.assertFalse(report["qualityGate"]["requiresScreenshots"])
                 self.assertFalse(report["qualityGate"]["requiresMultimodalModel"])
@@ -180,7 +195,7 @@ class NativeStructureManifestTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             outputs = self.build_chain(root, "swiftui")
-            runtime = outputs[3] / "Core/Runtime/HTMLToIOSGeneratedRuntime.swift"
+            runtime = outputs[4] / "Core/Runtime/HTMLToIOSGeneratedRuntime.swift"
             runtime.write_text(runtime.read_text(encoding="utf-8") + "\n// changed\n", encoding="utf-8")
             result, report = self.validate_chain(root, *outputs, expect_success=False)
             self.assertEqual(result.returncode, 1)
@@ -202,6 +217,76 @@ class NativeStructureManifestTests(unittest.TestCase):
                 "STALE_ARCHITECTURE_PLAN_PROVENANCE",
                 {item["code"] for item in report["issues"]},
             )
+
+    def test_compound_slot_order_and_box_model_drive_both_native_stacks(self) -> None:
+        for ui_stack in ("swiftui", "uikit"):
+            with self.subTest(ui_stack=ui_stack), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                payload = make_ir(ui_stack)
+                nodes = payload["screens"][0]["nodes"]
+                toolbar = next(item for item in nodes if item["id"] == "home.toolbar")
+                toolbar["semanticType"] = "button"
+                toolbar["style"].update({
+                    "boxSizing": "border-box",
+                    "width": "361px",
+                    "minWidth": "280px",
+                    "maxWidth": "361px",
+                    "padding": ["4px", "8px", "4px", "8px"],
+                    "borderWidths": ["1px", "1px", "1px", "1px"],
+                    "whiteSpace": "nowrap",
+                })
+                toolbar["content"] = {
+                    "text": "Pending 3",
+                    "placeholder": None,
+                    "accessibilityLabel": None,
+                    "isDecorative": False,
+                    "runs": [
+                        {"kind": "node", "nodeId": "home.icon", "rect": {"x": 16, "y": 30, "width": 24, "height": 24}, "domIndex": 1},
+                        {"kind": "text", "text": "Pending", "rect": {"x": 52, "y": 30, "width": 88, "height": 24}, "domIndex": 0},
+                        {"kind": "node", "nodeId": "home.count", "rect": {"x": 214, "y": 30, "width": 24, "height": 24}, "domIndex": 2},
+                    ],
+                }
+                count = next(item for item in nodes if item["id"] == "home.count")
+                count["style"].update({
+                    "boxSizing": "content-box",
+                    "minWidth": "12px",
+                    "padding": ["2px", "2px", "2px", "2px"],
+                    "borderWidths": ["1px", "1px", "1px", "1px"],
+                })
+                nodes[:] = [item for item in nodes if item["id"] != "home.title"]
+                outputs = self.build_chain(root, ui_stack, payload)
+                _, report = self.validate_chain(root, *outputs)
+                self.assertEqual(report["status"], "passed")
+                layout_plan = json.loads(outputs[2].read_text(encoding="utf-8"))
+                compound = next(item for item in layout_plan["screens"][0]["compoundControls"] if item["nodeId"] == "home.toolbar")
+                self.assertEqual(compound["orderedSlotIds"], ["home.icon", "home.toolbar.__text.0", "home.count"])
+                self.assertEqual(
+                    [item["kind"] for item in compound["orderedSlots"]],
+                    ["leadingIcon", "title", "badge"],
+                )
+                generated = json.loads((outputs[4] / "Resources/Payload/HTMLToIOSGeneratedPayload.json").read_text(encoding="utf-8"))
+                indexed: dict[str, dict] = {}
+
+                def visit(value: object) -> None:
+                    if isinstance(value, dict):
+                        if isinstance(value.get("id"), str) and "semantic" in value and "style" in value:
+                            indexed[value["id"]] = value
+                        for child in value.values():
+                            visit(child)
+                    elif isinstance(value, list):
+                        for child in value:
+                            visit(child)
+
+                visit(generated)
+                native_toolbar = indexed["home.toolbar"]
+                self.assertEqual(
+                    [item["id"] for item in native_toolbar["contentItems"]],
+                    ["home.icon", "home.toolbar.__text.0", "home.count"],
+                )
+                self.assertEqual(native_toolbar["style"]["boxSizing"], "border-box")
+                self.assertEqual(native_toolbar["style"]["minWidth"], 280)
+                self.assertEqual(native_toolbar["style"]["maxWidth"], 361)
+                self.assertEqual(indexed["home.count"]["style"]["minWidth"], 18)
 
 
 if __name__ == "__main__":

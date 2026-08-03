@@ -9,11 +9,12 @@
 - `native-structure-manifest.json`：由生成器写出，记录实际原生消费证据。
 - `native-structure-validation.json`：独立验证器输出的门禁报告。
 
-`native-structure-manifest-1.0` 必须绑定当前 `native-architecture-plan.json`、`layout-relation-graph.json` 与 `.html-to-ios-generation.json` 的 SHA-256，并按 screen 保存：
+`native-structure-manifest-1.0` 必须绑定当前 `native-architecture-plan.json`、`layout-relation-graph.json`、`native-layout-plan.json` 与 `.html-to-ios-generation.json` 的 SHA-256，并按 screen 保存：
 
 - 每个关系图节点是 `represented`、`optimized-equivalent` 还是 `missing`；
 - containment、视觉顺序、等宽/等高、正方形比例、对齐、重叠层级与滚动轴的消费策略和证据；
 - Content Container 及 top/bottom Screen Region 的实际所有权；
+- 每个容器对 axis、visual order、gap、alignment、distribution 的实际消费，以及复合控件槽位顺序；
 - 承载该 screen 的 Swift、Runtime 与 Payload 文件路径和内容哈希；
 - 未消费关系、缺失节点与生成冲突汇总。
 

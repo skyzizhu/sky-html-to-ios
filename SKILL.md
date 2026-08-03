@@ -25,6 +25,7 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 14. `visual` 验证失败时生成节点级 `visual-correction-plan.json`。纠偏只允许修改 UI IR 和派生契约，禁止直接给生成后的 Swift 源码追加截图专用补丁；未运行视觉验收不等于核心转换失败。
 15. 截图之前必须完成确定性结构验收。浏览器来源覆盖、parent-child 归属、视觉顺序、布局关系、scroll owner、原生叶子组件和 screen region 所有权必须进入 `layout-relation-graph.json` 与 `structural-fidelity-report.json`；结构门禁失败时不得生成 Swift。
 16. Swift 生成后、Xcode target 接入前必须完成原生消费验收。生成器必须输出 `native-structure-manifest.json`，独立门禁必须输出通过的 `native-structure-validation.json`，证明实际 Swift/Payload 消费了关系图；禁止只验证计划而不验证生成结果。
+17. 六层架构到 Swift 之间必须只有一份可执行布局契约。总控生成并校验 `native-layout-plan.json`，SwiftUI 与 UIKit 必须共同消费其中的容器顺序、尺寸策略、盒模型和复合控件槽位，不得各自重新猜测。
 
 ## 支持范围
 
@@ -261,6 +262,8 @@ python3 "$SKILL_ROOT/scripts/build_ui_ir.py" render-tree.json \
 总控必须运行 `scripts/build_native_architecture_plan.py` 生成 `native-architecture-plan.json`。计划必须完整包含 Application Container、Screen Container、Screen Regions、Content Container、Reusable Section/Item 和 Leaf Component 六层。它将 controller/container 所有权、导航栈、导航栏绘制、滚动行为、Table/Collection/Scroll/静态容器选择、Cell 复用、叶子 View/Control、presentation 和 Safe Area 分开建模。系统导航栈与顶部栏是否使用系统样式是两个独立决策；滚动页面的容器宽高始终等于父容器 bounds，禁止用 `width/height - safeAreaInsets` 计算 frame。
 
 随后读取 `references/structural-fidelity.md`。总控必须生成 `layout-relation-graph.json`，固化 containment、视觉子节点顺序、相邻间距、对齐、等宽/等高、宽高比、overlap 与 scroll axis owner；再生成 `structural-fidelity-report.json`，验证这些关系能被六层原生架构完整表达。该生成前门禁不依赖截图或多模态能力，失败时必须回到提取、UI IR 或架构计划修复，不得直接补丁生成后的 Swift。
+
+随后读取 `references/native-layout-lowering.md`。总控必须运行 `build_native_layout_plan.py` 与 `validate_native_layout_plan.py`，把架构关系降级为容器 axis、视觉顺序、gap、尺寸策略、CSS border-box 约束和复合控件槽位。该门禁通过后生成器才能运行，并必须通过 `--native-layout-plan` 消费同一份计划。
 
 控件映射必须先判断语义，再选择原生控件，最后还原外观。不要仅按 HTML tag 映射，也不要为了视觉方便把 Button、输入框和选择控件退化成无语义的普通 View。
 
