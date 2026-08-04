@@ -171,11 +171,11 @@ Code generation does not translate the DOM directly into a flat view tree. `nati
 5. **Reusable Section and Item**: sections, headers, footers, item templates, Cell strategy, order, and scroll-axis ownership.
 6. **Leaf Component**: the final `UIView`, `UIImageView`, `UILabel`, `UIButton`, input, status control, Shape, Layer, or project component with mapping evidence.
 
-Small fixed groups remain static layouts. Long homogeneous rows use Table/Lazy containers; grids, carousels, data tables, and heterogeneous sections use Collection layouts. A Table or Collection owns its scroll axis and is not wrapped in another same-axis root scroll view.
+Small fixed groups remain static layouts. Long homogeneous rows use Table/Lazy containers; grids, carousels, data tables, and heterogeneous sections use Collection layouts. A collection can replace the root scroll only when it is a direct, dominant, same-axis content owner. A nested horizontal Collection keeps only the horizontal axis and never disables the page's vertical scroll. Table and Collection containers are not wrapped in another same-axis root scroll view.
 
 Each screen also receives a typed layout contract containing visual child order, axis, alignment, distribution, wrapping, spacing, sizing policy, aspect ratio, and compression evidence. Inputs, explicit/project components, specialized media, and stable business controls become typed leaf views. Ordinary text, SVG internals, decorative nodes, and auto-numbered DOM leaves stay in the shared runtime instead of creating one Swift file per node.
 
-Before Swift generation, `layout-relation-graph-1.0` promotes those per-node measurements into cross-node constraints. `structural-fidelity-report-1.0` checks that the six-layer architecture can express them, then `native-layout-plan-1.1` lowers the result into the single executable contract shared by SwiftUI and UIKit: stack/wrapping/grid/overlay algorithms, child order, CSS length and box-model constraints, Grid tracks, positioning ownership, state-layout deltas, and compound-control slots. After generation, `native-structure-manifest-1.0` proves that Swift/Payload consumed the plan before Xcode target integration. These core gates require neither screenshots nor multimodal capability.
+Before Swift generation, `layout-relation-graph-1.0` promotes those per-node measurements into cross-node constraints. `structural-fidelity-report-1.0` checks that the six-layer architecture can express them, then `native-layout-plan-1.1` lowers the result into the single executable contract shared by SwiftUI and UIKit: stack/wrapping/grid/overlay algorithms, visual child order, authored CSS length expressions, computed geometry, box-model constraints, Grid tracks and item placement, positioning ownership, state-layout deltas, and compound-control slots. Parent-relative `%` and resolvable `calc()` expressions execute as parent-affine native constraints. After generation, `native-structure-manifest-1.0` proves that Swift/Payload and the native runtime consumed the required capabilities before Xcode target integration. These core gates require neither screenshots nor multimodal capability.
 
 ## Supported Views and Controls
 
@@ -586,7 +586,7 @@ High-risk inputs include runtime-generated DOM, closed Shadow DOM, cross-origin 
 The first usable release has passed:
 
 - real SwiftUI and UIKit builds;
-- 127 automated tests in the current development audit;
+- 130 automated tests in the current development audit;
 - UI IR, decision, naming, generator, route, and interaction tests;
 - visual-difference and geometry tests;
 - real Simulator responsive matrices;

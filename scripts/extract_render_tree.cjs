@@ -399,7 +399,126 @@ async function main() {
         }
         return [];
       });
-      const styleObject = (style) => ({
+      const layoutProperties = [
+        "width", "height", "min-width", "max-width", "min-height", "max-height",
+        "top", "right", "bottom", "left", "gap", "row-gap", "column-gap",
+        "flex-basis", "grid-template-columns", "grid-template-rows",
+        "grid-auto-columns", "grid-auto-rows",
+      ];
+      const authoredRules = [];
+      let authoredOrder = 0;
+      const collectRules = (rules) => {
+        for (const rule of Array.from(rules || [])) {
+          if (rule instanceof CSSStyleRule) {
+            authoredRules.push({ rule, order: authoredOrder++ });
+          } else if (typeof CSSMediaRule !== "undefined" && rule instanceof CSSMediaRule) {
+            if (matchMedia(rule.conditionText).matches) collectRules(rule.cssRules);
+          } else if (typeof CSSSupportsRule !== "undefined" && rule instanceof CSSSupportsRule) {
+            if (CSS.supports(rule.conditionText)) collectRules(rule.cssRules);
+          } else if (rule.cssRules) {
+            collectRules(rule.cssRules);
+          }
+        }
+      };
+      for (const sheet of Array.from(document.styleSheets)) {
+        try { collectRules(sheet.cssRules); } catch (_) { /* Cross-origin CSS stays computed-only. */ }
+      }
+      const selectorSpecificity = (selector) => {
+        const withoutWhere = selector.replace(/:where\([^)]*\)/g, "");
+        const ids = (withoutWhere.match(/#[\w-]+/g) || []).length;
+        const classes = (withoutWhere.match(/\.[\w-]+|\[[^\]]+\]|:(?!:)[\w-]+(?:\([^)]*\))?/g) || []).length;
+        const elements = (withoutWhere.match(/(^|[\s>+~,(])(?:[a-z][\w-]*|\*)/gi) || [])
+          .filter((value) => !value.trim().endsWith("*")).length;
+        return [ids, classes, elements];
+      };
+      const selectorBranches = (selectorText) => {
+        const result = [];
+        let current = "";
+        let depth = 0;
+        let quote = null;
+        for (const character of selectorText) {
+          if (quote) {
+            current += character;
+            if (character === quote) quote = null;
+          } else if (character === "\"" || character === "'") {
+            quote = character;
+            current += character;
+          } else if (character === "(" || character === "[") {
+            depth += 1;
+            current += character;
+          } else if (character === ")" || character === "]") {
+            depth = Math.max(depth - 1, 0);
+            current += character;
+          } else if (character === "," && depth === 0) {
+            if (current.trim()) result.push(current.trim());
+            current = "";
+          } else {
+            current += character;
+          }
+        }
+        if (current.trim()) result.push(current.trim());
+        return result;
+      };
+      const compareRank = (left, right) => {
+        for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+          if ((left[index] || 0) !== (right[index] || 0)) return (left[index] || 0) - (right[index] || 0);
+        }
+        return 0;
+      };
+      const authoredLayout = (element) => {
+        if (!element) return null;
+        const winners = new Map();
+        const consider = (property, value, important, specificity, order, selector, source) => {
+          if (!value) return;
+          const rank = [important ? 1 : 0, source === "inline" ? 1 : 0, ...specificity, order];
+          const previous = winners.get(property);
+          if (!previous || compareRank(rank, previous.rank) > 0) {
+            winners.set(property, { value, important, selector, source, rank });
+          }
+        };
+        for (const { rule, order } of authoredRules) {
+          const matchingBranches = selectorBranches(rule.selectorText).filter((selector) => {
+            try { return element.matches(selector); } catch (_) { return false; }
+          });
+          if (!matchingBranches.length) continue;
+          const specificity = matchingBranches
+            .map(selectorSpecificity)
+            .sort((left, right) => compareRank(right, left))[0];
+          for (const property of layoutProperties) {
+            consider(
+              property,
+              rule.style.getPropertyValue(property).trim(),
+              rule.style.getPropertyPriority(property) === "important",
+              specificity,
+              order,
+              rule.selectorText,
+              "stylesheet"
+            );
+          }
+        }
+        for (const property of layoutProperties) {
+          consider(
+            property,
+            element.style.getPropertyValue(property).trim(),
+            element.style.getPropertyPriority(property) === "important",
+            [1, 0, 0],
+            Number.MAX_SAFE_INTEGER,
+            "style",
+            "inline"
+          );
+        }
+        const result = {};
+        for (const [property, winner] of winners) {
+          result[property.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = {
+            value: winner.value,
+            important: winner.important,
+            selector: winner.selector,
+            source: winner.source,
+          };
+        }
+        return Object.keys(result).length ? result : null;
+      };
+      const styleObject = (style, element = null) => ({
         display: style.display,
         visibility: style.visibility,
         position: style.position,
@@ -454,6 +573,7 @@ async function main() {
         zIndex: style.zIndex,
         transform: style.transform,
         transformOrigin: style.transformOrigin,
+        authoredLayout: authoredLayout(element),
         fontFamily: style.fontFamily,
         fontSize: style.fontSize,
         fontWeight: style.fontWeight,
@@ -771,7 +891,7 @@ async function main() {
           rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height, top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left },
           scroll: { scrollWidth: element.scrollWidth, scrollHeight: element.scrollHeight, clientWidth: element.clientWidth, clientHeight: element.clientHeight },
           visible: effectivelyVisible && rect.width > 0 && rect.height > 0,
-          style: styleObject(style),
+          style: styleObject(style, element),
           placeholderStyle,
           pseudo: { before: pseudoObject(element, "::before"), after: pseudoObject(element, "::after") },
           asset: clean(asset),

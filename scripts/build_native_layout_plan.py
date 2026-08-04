@@ -103,6 +103,15 @@ def length_contract(value: Any, reference_axis: str) -> dict[str, Any]:
         kind = "intrinsic-keyword"
     else:
         kind = "automatic"
+    affine_multiplier = None
+    affine_constant = None
+    if kind == "fixed":
+        affine_multiplier, affine_constant = 0.0, fixed
+    elif kind == "percentage":
+        affine_multiplier, affine_constant = relative_factor, 0.0
+    elif kind == "calculation" and terms and all(item["unit"] in {"px", "%"} for item in terms):
+        affine_multiplier = sum(item["coefficient"] / 100 for item in terms if item["unit"] == "%")
+        affine_constant = sum(item["coefficient"] for item in terms if item["unit"] == "px")
     return {
         "raw": raw,
         "kind": kind,
@@ -110,6 +119,9 @@ def length_contract(value: Any, reference_axis: str) -> dict[str, Any]:
         "fixedValuePt": fixed,
         "relativeFactor": relative_factor,
         "terms": terms,
+        "affineMultiplier": affine_multiplier,
+        "affineConstantPt": affine_constant,
+        "nativeResolution": "parent-affine" if affine_multiplier is not None else "measured-fallback",
         "requiresRuntimeResolution": kind in {
             "percentage", "calculation", "viewport-relative", "font-relative",
         },
@@ -159,9 +171,38 @@ def grid_tracks(value: Any, axis: str) -> list[dict[str, Any]]:
     return result
 
 
+def grid_item_contract(style: dict[str, Any]) -> dict[str, Any]:
+    column_start = grid_line(style.get("gridColumnStart"))
+    column_end = grid_line(style.get("gridColumnEnd"))
+    row_start = grid_line(style.get("gridRowStart"))
+    row_end = grid_line(style.get("gridRowEnd"))
+    column_span = column_end.get("span")
+    if column_span is None and column_start.get("index") is not None and column_end.get("index") is not None:
+        column_span = max(int(column_end["index"]) - int(column_start["index"]), 1)
+    row_span = row_end.get("span")
+    if row_span is None and row_start.get("index") is not None and row_end.get("index") is not None:
+        row_span = max(int(row_end["index"]) - int(row_start["index"]), 1)
+    return {
+        "columnStart": column_start,
+        "columnEnd": column_end,
+        "columnSpan": column_span,
+        "rowStart": row_start,
+        "rowEnd": row_end,
+        "rowSpan": row_span,
+        "area": str(style.get("gridArea") or "auto"),
+        "justifySelf": str(style.get("justifySelf") or "auto"),
+        "alignSelf": str(style.get("alignSelf") or "auto"),
+    }
+
+
 def edges(values: Any) -> list[float]:
     source = values if isinstance(values, list) else []
     return [max(number(source[index]) if index < len(source) else 0, 0) for index in range(4)]
+
+
+def authored_value(style: dict[str, Any], key: str) -> Any:
+    evidence = (style.get("authoredLayout") or {}).get(key) or {}
+    return evidence.get("value") if evidence.get("value") not in {None, ""} else style.get(key)
 
 
 def rect(node: dict[str, Any]) -> dict[str, float]:
@@ -335,6 +376,8 @@ def build_screen(
             "gapPt": measured_gap,
             "rowGapPt": row_gap if row_gap is not None else measured_gap,
             "columnGapPt": column_gap if column_gap is not None else measured_gap,
+            "rowGapContract": length_contract(authored_value(container_style, "rowGap"), "vertical"),
+            "columnGapContract": length_contract(authored_value(container_style, "columnGap"), "horizontal"),
             "alignment": str(relation.get("alignment") or "normal"),
             "distribution": str(relation.get("distribution") or "normal"),
             "alignContent": str(container_style.get("alignContent") or "normal"),
@@ -344,11 +387,11 @@ def build_screen(
             "writingDirection": str(container_style.get("direction") or "ltr"),
             "childSizing": relation.get("childSizing") or [],
             "grid": {
-                "columnTracks": grid_tracks(container_style.get("gridTemplateColumns"), "horizontal"),
-                "rowTracks": grid_tracks(container_style.get("gridTemplateRows"), "vertical"),
+                "columnTracks": grid_tracks(authored_value(container_style, "gridTemplateColumns"), "horizontal"),
+                "rowTracks": grid_tracks(authored_value(container_style, "gridTemplateRows"), "vertical"),
                 "autoFlow": str(container_style.get("gridAutoFlow") or "row"),
-                "autoColumns": grid_tracks(container_style.get("gridAutoColumns"), "horizontal"),
-                "autoRows": grid_tracks(container_style.get("gridAutoRows"), "vertical"),
+                "autoColumns": grid_tracks(authored_value(container_style, "gridAutoColumns"), "horizontal"),
+                "autoRows": grid_tracks(authored_value(container_style, "gridAutoRows"), "vertical"),
             } if axis == "grid" else None,
             "relationIds": sorted(set(graph_relations_by_container.get(container_id) or [])),
         })
@@ -394,12 +437,12 @@ def build_screen(
                 "paddingPt": padding,
                 "borderWidthsPt": border,
                 "marginPt": margin,
-                "widthContract": length_contract(style.get("width"), "horizontal"),
-                "heightContract": length_contract(style.get("height"), "vertical"),
-                "minWidthContract": length_contract(style.get("minWidth"), "horizontal"),
-                "maxWidthContract": length_contract(style.get("maxWidth"), "horizontal"),
-                "minHeightContract": length_contract(style.get("minHeight"), "vertical"),
-                "maxHeightContract": length_contract(style.get("maxHeight"), "vertical"),
+                "widthContract": length_contract(authored_value(style, "width"), "horizontal"),
+                "heightContract": length_contract(authored_value(style, "height"), "vertical"),
+                "minWidthContract": length_contract(authored_value(style, "minWidth"), "horizontal"),
+                "maxWidthContract": length_contract(authored_value(style, "maxWidth"), "horizontal"),
+                "minHeightContract": length_contract(authored_value(style, "minHeight"), "vertical"),
+                "maxHeightContract": length_contract(authored_value(style, "maxHeight"), "vertical"),
                 "minWidthPt": min_width,
                 "maxWidthPt": max_width,
                 "minHeightPt": min_height,
@@ -409,26 +452,20 @@ def build_screen(
             "flex": {
                 "grow": number(style.get("flexGrow")),
                 "shrink": number(style.get("flexShrink"), 1),
-                "basis": str(style.get("flexBasis") or "auto"),
+                "basis": str(authored_value(style, "flexBasis") or "auto"),
+                "basisContract": length_contract(authored_value(style, "flexBasis"), "horizontal"),
                 "order": int(number(style.get("order"))),
                 "alignSelf": str(style.get("alignSelf") or "auto"),
             },
-            "gridItem": {
-                "columnStart": grid_line(style.get("gridColumnStart")),
-                "columnEnd": grid_line(style.get("gridColumnEnd")),
-                "rowStart": grid_line(style.get("gridRowStart")),
-                "rowEnd": grid_line(style.get("gridRowEnd")),
-                "area": str(style.get("gridArea") or "auto"),
-                "justifySelf": str(style.get("justifySelf") or "auto"),
-                "alignSelf": str(style.get("alignSelf") or "auto"),
-            },
+            "gridItem": grid_item_contract(style),
             "positioning": {
                 "scheme": position,
                 "coordinateSpace": coordinate_space,
                 "containingBlockNodeId": containing_block_id,
+                "nativeOwnerNodeId": (root_node_id if position == "fixed" else containing_block_id),
                 "offsetFromContainingBlockPt": position_offset,
                 "insets": {
-                    edge: length_contract(style.get(edge), "vertical" if edge in {"top", "bottom"} else "horizontal")
+                    edge: length_contract(authored_value(style, edge), "vertical" if edge in {"top", "bottom"} else "horizontal")
                     for edge in ("top", "right", "bottom", "left")
                 },
                 "zIndex": number(style.get("zIndex")),

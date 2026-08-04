@@ -180,11 +180,11 @@ UI IR 保存：
 5. **Reusable Section and Item**：Section、Header、Footer、Item Template、Cell 策略、顺序和滚动轴所有权。
 6. **Leaf Component**：最终的 `UIView`、`UIImageView`、`UILabel`、`UIButton`、输入控件、状态控件、Shape、Layer 或项目组件，并保留映射证据。
 
-少量固定内容使用静态布局；长单列同构内容使用 Table/Lazy 容器；网格、轮播、数据表和异构 Section 使用 Collection。Table/Collection 自己拥有滚动轴，不再套同轴页面根 ScrollView。
+少量固定内容使用静态布局；长单列同构内容使用 Table/Lazy 容器；网格、轮播、数据表和异构 Section 使用 Collection。集合容器只有在主 Scroll 的直接内容层中占主导且轴向一致时，才能替换页面根 Scroll；嵌套横向 Collection 只拥有横轴，不能关闭页面纵向滚动。Table/Collection 不再套同轴页面根 ScrollView。
 
 每个 screen 还会生成强类型布局契约，保存子节点视觉顺序、轴向、对齐、分布、换行、间距、尺寸策略、宽高比和抗压缩证据。输入控件、显式/项目组件、特殊媒体和稳定业务控件会生成强类型叶子 View；普通文本、SVG 内部路径、装饰节点和自动编号 DOM 叶子继续由公共运行时处理，不会形成一节点一 Swift 文件。
 
-生成 Swift 之前，`layout-relation-graph-1.0` 会把单节点测量提升为跨节点约束，`structural-fidelity-report-1.0` 检查六层架构能否表达这些关系；随后 `native-layout-plan-1.1` 把结果降级为 SwiftUI/UIKit 共用的唯一可执行契约，包括 Stack/Wrapping/Grid/Overlay 算法、子节点顺序、CSS 长度与盒模型、Grid 轨道、定位所有权、状态布局增量和复合控件槽位。代码生成后，`native-structure-manifest-1.0` 再证明 Swift/Payload 已实际消费该计划。整套核心门禁不需要截图、Simulator 或多模态模型。
+生成 Swift 之前，`layout-relation-graph-1.0` 会把单节点测量提升为跨节点约束，`structural-fidelity-report-1.0` 检查六层架构能否表达这些关系；随后 `native-layout-plan-1.1` 把结果降级为 SwiftUI/UIKit 共用的唯一可执行契约，包括 Stack/Wrapping/Grid/Overlay 算法、子节点视觉顺序、原始 CSS 长度表达式、computed 几何、盒模型、Grid 轨道与 item placement、定位所有权、状态布局增量和复合控件槽位。可求解的 `%` 与 `calc()` 会作为父容器仿射约束执行。代码生成后，`native-structure-manifest-1.0` 再证明 Swift/Payload 和原生运行时已实际消费所需能力。整套核心门禁不需要截图、Simulator 或多模态模型。
 
 ## 控件与视图支持
 
@@ -868,7 +868,7 @@ Skill 可以处理普通 HTML，但结构和语义越清楚，自动还原越稳
 
 - SwiftUI 真实工程构建；
 - UIKit 真实工程构建；
-- 当前开发版审计通过 127 项自动化测试；
+- 当前开发版审计通过 130 项自动化测试；
 - UI IR、工程决策、命名和生成器测试；
 - 多页面和交互状态测试；
 - 视觉差异和节点几何测试；

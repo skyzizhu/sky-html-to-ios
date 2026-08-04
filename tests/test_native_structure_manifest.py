@@ -369,13 +369,29 @@ class NativeStructureManifestTests(unittest.TestCase):
                 plans = {item["nodeId"]: item for item in layout["nodes"]}
                 self.assertEqual(plans["home.title"]["boxModel"]["widthContract"]["kind"], "calculation")
                 self.assertEqual(len(plans["home.title"]["boxModel"]["widthContract"]["terms"]), 2)
+                self.assertEqual(plans["home.title"]["boxModel"]["widthContract"]["affineMultiplier"], 0.5)
+                self.assertEqual(plans["home.title"]["boxModel"]["widthContract"]["affineConstantPt"], -8)
+                self.assertEqual(plans["home.title"]["boxModel"]["widthContract"]["nativeResolution"], "parent-affine")
                 self.assertEqual(plans["home.count"]["positioning"]["containingBlockNodeId"], "home.toolbar")
+                self.assertEqual(plans["home.count"]["positioning"]["nativeOwnerNodeId"], "home.toolbar")
                 self.assertEqual(plans["home.filter.1"]["gridItem"]["columnEnd"]["span"], 2)
+                self.assertEqual(plans["home.filter.1"]["gridItem"]["columnSpan"], 2)
                 self.assertEqual(layout["stateLayouts"][0]["stateId"], "home.expanded")
 
                 generated_payload = json.loads((outputs[4] / "Resources/Payload/HTMLToIOSGeneratedPayload.json").read_text(encoding="utf-8"))
                 screen = generated_payload["screens"][0]
                 self.assertEqual(screen["stateLayouts"][0]["stateId"], "home.expanded")
+                runtime = (outputs[4] / "Core/Runtime/HTMLToIOSGeneratedRuntime.swift").read_text(encoding="utf-8")
+                if ui_stack == "swiftui":
+                    self.assertIn("HTMLToIOSRelativeConstraintLayout", runtime)
+                    self.assertIn("HTMLToIOSGridPlacementLayout", runtime)
+                else:
+                    self.assertIn("installRelativeConstraints", runtime)
+                    self.assertIn("HTMLToIOSGridPlacementView", runtime)
+                manifest = json.loads(outputs[3].read_text(encoding="utf-8"))
+                self.assertTrue(manifest["runtimeCapabilities"]["relativeConstraints"]["consumed"])
+                self.assertTrue(manifest["runtimeCapabilities"]["gridPlacement"]["consumed"])
+                self.assertTrue(manifest["runtimeCapabilities"]["stateReflow"]["consumed"])
 
 
 if __name__ == "__main__":

@@ -63,6 +63,12 @@ def main() -> int:
         raise ValueError("--generation-manifest must use html-to-ios-generation-1.0")
 
     issues: list[dict[str, Any]] = []
+    for capability, record in (manifest.get("runtimeCapabilities") or {}).items():
+        if record.get("required") is True and record.get("consumed") is not True:
+            issues.append(issue(
+                "NATIVE_LAYOUT_RUNTIME_CAPABILITY_MISSING", None,
+                f"Generated runtime does not execute required layout capability {capability!r}.", capability,
+            ))
     actual_graph_hash = sha256_file(args.layout_graph)
     if manifest.get("layoutRelationGraphSha256") != actual_graph_hash:
         issues.append(issue(

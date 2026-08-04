@@ -60,6 +60,10 @@ Screen 负责状态、页面级事件、Safe Area 所有权、键盘避让和 pr
 - 页面根仅在计划为 `scroll-view` 时增加外层滚动容器；
 - Table/Collection 自己拥有滚动轴，禁止再套同轴根 ScrollView。
 
+主滚动容器替换必须同时满足：候选集合是主 Scroll 的直接流式子节点、候选轴与页面主轴一致、候选确实占据主体内容。唯一直接内容子节点可以直接认定为主导；存在兄弟内容时，使用浏览器实测高度判断候选是否覆盖主视口的大部分，或兄弟总高度是否只占候选的小部分。横向 carousel 无论条目多少都只能成为嵌套 Collection，不能替换纵向页面 Scroll。
+
+选择结果必须记录 `selectionPolicy`、`ownsScrollAxis`、`rejectedAlternatives` 和 `rejectsSameAxisScrollWrapper`。生成器必须以该结果决定根 Scroll 是否存在，不能在 SwiftUI/UIKit 阶段重新猜测。
+
 ## 5. Reusable Section And Item
 
 Table/Collection 计划必须保存：

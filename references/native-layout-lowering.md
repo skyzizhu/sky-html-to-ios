@@ -33,7 +33,7 @@
 
 SwiftUI 使用这些证据选择 Stack/Grid/Overlay、spacing、frame 和 layout priority。UIKit 使用相同证据配置 `UIStackView`、Auto Layout、Table/Collection item sizing 与 hugging/compression priority。禁止技术栈各自重排子节点。
 
-Wrapping stack 在 SwiftUI 中使用原生 `Layout` 协议实现，在 UIKit 中使用独立 wrapping `UIView`；不得用横向滚动或缩小文字代替换行。Grid 必须保存 column/row tracks、auto flow、auto tracks，以及每个 item 的 start/end/span。固定轨道映射为固定原生尺寸，其他轨道保留 flexible/intrinsic 语义。
+Wrapping stack 在 SwiftUI 中使用原生 `Layout` 协议实现，在 UIKit 中使用独立 wrapping `UIView`；不得用横向滚动或缩小文字代替换行。Grid 必须保存 column/row tracks、auto flow、auto tracks，以及每个 item 的 start/end/span。固定轨道映射为固定原生尺寸，其他轨道保留 flexible/intrinsic 语义。显式 Grid placement 必须由 SwiftUI `Layout` 或 UIKit 原生布局容器执行，不能只记录 span 后仍按普通顺序平均分列。
 
 ## CSS 盒模型
 
@@ -46,7 +46,9 @@ Wrapping stack 在 SwiftUI 中使用原生 `Layout` 协议实现，在 UIKit 中
 - transform 原始值；
 - fixed、percentage、calculation、viewport-relative、font-relative、intrinsic-keyword 或 automatic 长度分类。
 
-`content-box` 的固定 min/max 约束在进入原生布局前必须加上 padding 与 border，转换成 border-box 参考值。百分比、`calc()` 和相对单位不得被正则截断成错误常量；计划保存 reference axis、relative factor 和 calculation terms，由父容器和响应式规则解析。
+`content-box` 的固定 min/max 约束在进入原生布局前必须加上 padding 与 border，转换成 border-box 参考值。提取器同时保存最终 computed style 和当前 cascade 中获胜的 authored layout 声明；前者证明浏览器最终结果，后者保留 `%`、`calc()`、Grid track 和 flex basis 等表达式语义。跨域不可读样式表允许 computed-only 降级，但不得伪造原始表达式。
+
+百分比、`calc()` 和相对单位不得被正则截断成错误常量。只含 `%` 与 `px` 的表达式必须降级为 `parent * affineMultiplier + affineConstantPt`，由 SwiftUI `Layout` 或 UIKit Auto Layout 相对父容器执行；无法确定性求解的 viewport/font 相对表达式才进入 measured fallback，并保留原表达式和 reference axis。
 
 原生运行时必须消费可确定的 min/max、padding、border、margin 和 compression 证据。transform 只改变视觉绘制时，不得反向污染正常流尺寸。
 
@@ -84,7 +86,7 @@ Wrapping stack 在 SwiftUI 中使用原生 `Layout` 协议实现，在 UIKit 中
 7. 状态布局集合与 UI IR state delta 一致；
 8. 复合槽位唯一、完整并保持视觉顺序。
 
-生成后，`native-structure-manifest.json` 再逐容器核对算法、axis、child order、row/column gap、wrap、alignment 和 distribution，逐节点核对尺寸/定位契约，逐状态核对布局操作，并逐复合控件核对 `compoundLayout` 与 `contentItems`。任一项未消费时不得接入 Xcode target。
+生成后，`native-structure-manifest.json` 再逐容器核对算法、axis、child order、row/column gap、wrap、alignment 和 distribution，逐节点核对尺寸/定位契约，逐状态核对布局操作，并逐复合控件核对 `compoundLayout` 与 `contentItems`。Manifest 还必须证明生成运行时具备并消费当前页面要求的相对约束、显式 Grid placement 和状态重排能力。任一项未消费时不得接入 Xcode target。
 
 ## 单阶段调试
 

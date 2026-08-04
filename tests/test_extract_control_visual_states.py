@@ -23,6 +23,35 @@ NODE_MODULES = Path(
 
 @unittest.skipUnless(NODE.is_file() and NODE_MODULES.is_dir(), "bundled Node/Playwright runtime unavailable")
 class ExtractControlVisualStatesTests(unittest.TestCase):
+    def test_authored_relative_lengths_survive_computed_style_extraction(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.html"
+            output = root / "render-tree.json"
+            source.write_text("""
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <style>
+                  html,body{margin:0}
+                  main{width:393px;height:852px}
+                  .panel{width:calc(50% - 8px);min-width:40%;height:80px}
+                  #unmatched, .panel{width:55%}
+                  @media (min-width:390px){main .panel{width:60%}}
+                </style>
+                <main id="app"><div id="panel" class="panel"></div></main>
+            """, encoding="utf-8")
+            environment = dict(os.environ)
+            environment["NODE_PATH"] = str(NODE_MODULES)
+            result = subprocess.run([
+                str(NODE), str(SCRIPT), "--html", str(source), "--out", str(output),
+                "--selector", "#app", "--width", "393", "--height", "852",
+            ], text=True, capture_output=True, check=False, env=environment)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            panel = next(item for item in payload["nodes"] if item.get("domId") == "panel")
+            self.assertTrue(panel["style"]["width"].endswith("px"))
+            self.assertEqual(panel["style"]["authoredLayout"]["width"]["value"], "60%")
+            self.assertEqual(panel["style"]["authoredLayout"]["minWidth"]["value"], "40%")
+
     def test_pressed_and_focused_styles_are_measured(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

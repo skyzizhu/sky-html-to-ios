@@ -317,6 +317,58 @@ def content_container_plan(
         if str(node.get("semanticType") or "") == "scroll"
     ]
     direct_repeated = repeated_groups(root_id, nodes, children)
+    primary_scroll_id = str(primary_vertical_scrolls[0].get("id") or "") if primary_vertical_scrolls else ""
+    primary_scroll_children = set(children.get(primary_scroll_id) or [])
+
+    def measured_height(node: dict[str, Any]) -> float:
+        return max(css_number(((node.get("layout") or {}).get("rect") or {}).get("height")), 0)
+
+    def reusable_candidate(node: dict[str, Any]) -> bool:
+        node_id = str(node.get("id") or "")
+        semantic = str(node.get("semanticType") or "")
+        item_count = len(children.get(node_id) or [])
+        repeated = bool(repeated_groups(node_id, nodes, children))
+        return (
+            semantic in {"carousel", "collection", "data-table"}
+            or semantic == "grid" and (item_count >= 4 or repeated)
+            or semantic in {"list", "sectioned-list"} and (semantic == "sectioned-list" or item_count >= 5 or repeated)
+        )
+
+    direct_flow_children = [
+        nodes[node_id] for node_id in children.get(primary_scroll_id) or []
+        if node_id in nodes
+        and str(((nodes[node_id].get("style") or {}).get("position") or "static")) not in {"absolute", "fixed"}
+    ]
+
+    def dominates_primary_scroll(node: dict[str, Any]) -> bool:
+        if str(node.get("parentId") or "") != primary_scroll_id:
+            return False
+        # A horizontal collection is a nested axis owner. It must never replace
+        # the page's vertical scroll owner.
+        if scroll_axis(node) == "horizontal" or str(node.get("semanticType") or "") == "carousel":
+            return False
+        if len(direct_flow_children) == 1:
+            return True
+        candidate_height = measured_height(node)
+        scroll_height = measured_height(nodes.get(primary_scroll_id) or {})
+        node_id = str(node.get("id") or "")
+        sibling_height = sum(
+            measured_height(item) for item in direct_flow_children
+            if str(item.get("id") or "") != node_id
+        )
+        return bool(
+            candidate_height > 0
+            and (
+                scroll_height > 0 and candidate_height >= scroll_height * 0.7
+                or sibling_height <= candidate_height * 0.35
+            )
+        )
+
+    dominant_collections = [
+        node for node in structured_collections
+        if reusable_candidate(node) and dominates_primary_scroll(node)
+    ]
+    dominant_collection = dominant_collections[0] if len(dominant_collections) == 1 else None
 
     kind = "static-view"
     swiftui = "VStack/HStack/ZStack"
@@ -324,7 +376,17 @@ def content_container_plan(
     selected_node_id = root_id
     confidence = 0.86
     reasons = ["No native collection evidence; use intrinsic layout."]
-    if primary_vertical_scrolls:
+    if dominant_collection is not None:
+        selected_node_id = str(dominant_collection.get("id") or root_id)
+        selected_semantic = str(dominant_collection.get("semanticType") or "")
+        if selected_semantic in {"list", "sectioned-list"}:
+            kind, swiftui, uikit = "table-view", "List/LazyVStack", "UITableView"
+            reasons = ["A dominant single-column repeated list replaces the enclosing same-axis scroll view."]
+        else:
+            kind, swiftui, uikit = "collection-view", "Lazy grid/stack", "UICollectionView"
+            reasons = ["A dominant grid or data table replaces the enclosing same-axis scroll view."]
+        confidence = 0.94
+    elif primary_vertical_scrolls:
         selected_node_id = str(primary_vertical_scrolls[0].get("id") or root_id)
         kind, swiftui, uikit = "scroll-view", "ScrollView", "UIScrollView"
         confidence = 0.96
@@ -420,14 +482,17 @@ def content_container_plan(
                 has_vertical_scroll_ancestor = True
                 break
             current_parent = str(parent.get("parentId") or "")
+        selected_native_owner = node_id == selected_node_id and kind in {
+            "table-view", "collection-view", "compositional-collection",
+        }
         if semantic == "data-table":
-            node_kind = "static-grid" if has_vertical_scroll_ancestor else "collection-view"
+            node_kind = "collection-view" if selected_native_owner or not has_vertical_scroll_ancestor else "static-grid"
         elif semantic in {"carousel", "collection"}:
-            node_kind = "collection-view" if semantic == "carousel" or scroll_axis(node) == "horizontal" or not has_vertical_scroll_ancestor else "static-grid"
+            node_kind = "collection-view" if selected_native_owner or semantic == "carousel" or scroll_axis(node) == "horizontal" or not has_vertical_scroll_ancestor else "static-grid"
         elif semantic == "grid":
-            node_kind = "collection-view" if not has_vertical_scroll_ancestor and (item_count >= 4 or has_repeated_items) else "static-grid"
+            node_kind = "collection-view" if (selected_native_owner or not has_vertical_scroll_ancestor) and (item_count >= 4 or has_repeated_items) else "static-grid"
         elif semantic in {"list", "sectioned-list"}:
-            node_kind = "table-view" if not has_vertical_scroll_ancestor and (semantic == "sectioned-list" or item_count >= 5 or has_repeated_items) else "static-list"
+            node_kind = "table-view" if (selected_native_owner or not has_vertical_scroll_ancestor) and (semantic == "sectioned-list" or item_count >= 5 or has_repeated_items) else "static-list"
         elif semantic == "scroll":
             node_kind = "scroll-view"
         else:
@@ -437,6 +502,14 @@ def content_container_plan(
             "kind": node_kind,
             "itemCount": item_count,
             "usesReuse": node_kind in {"table-view", "collection-view"},
+            "ownsScrollAxis": node_kind in {"table-view", "collection-view"},
+            "selectionPolicy": "minimal-native-container",
+            "rejectedAlternatives": (
+                ["scroll-view", "static-list"] if node_kind == "table-view"
+                else ["scroll-view", "static-grid"] if node_kind == "collection-view"
+                else ["table-view", "collection-view"] if node_kind.startswith("static")
+                else []
+            ),
         })
     if kind == "compositional-collection" and not any(item["nodeId"] == root_id for item in node_strategies):
         node_strategies.insert(0, {
@@ -472,15 +545,26 @@ def content_container_plan(
         })
         existing_section_node_ids.add(source_id)
 
+    selected_node = nodes.get(selected_node_id) or {}
+    selected_semantic = str(selected_node.get("semanticType") or "")
+    selected_axis = (
+        "none" if kind in {"static-view", "static-grid", "static-list"}
+        else "horizontal" if kind == "collection-view" and (
+            selected_semantic == "carousel" or scroll_axis(selected_node) == "horizontal"
+        )
+        else "vertical"
+    )
     return {
         "nodeId": selected_node_id,
         "kind": kind,
         "swiftUIType": swiftui,
         "uiKitType": uikit,
-        "scrollAxis": "horizontal" if kind == "collection-view" and carousels else "vertical" if kind not in {"static-view", "static-grid", "static-list"} else "none",
+        "scrollAxis": selected_axis,
         "usesCellReuse": kind in {"table-view", "collection-view", "compositional-collection"},
         "confidence": confidence,
         "reasons": reasons,
+        "selectionPolicy": "minimal-native-container",
+        "rejectsSameAxisScrollWrapper": kind in {"table-view", "collection-view", "compositional-collection"},
         "detectedSemantics": sorted(semantics & CONTENT_SEMANTICS),
         "nodeStrategies": node_strategies,
     }, sections

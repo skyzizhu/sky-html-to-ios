@@ -37,6 +37,74 @@ def make_ir(screen_id: str = "home") -> dict:
 
 
 class BuildNativeArchitecturePlanTests(unittest.TestCase):
+    def test_dominant_vertical_list_replaces_same_axis_scroll_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = make_ir("results")
+            screen = payload["screens"][0]
+            root_id = screen["rootNodeId"]
+            screen["nodes"][0]["layout"] = {
+                "scrollAxis": "vertical",
+                "rect": {"x": 0, "y": 0, "width": 393, "height": 852},
+            }
+            list_id = "results.list"
+            screen["nodes"].append({
+                "id": list_id, "parentId": root_id, "semanticType": "list",
+                "layout": {"scrollAxis": "vertical", "rect": {"x": 0, "y": 0, "width": 393, "height": 852}},
+            })
+            for index in range(8):
+                screen["nodes"].append({
+                    "id": f"{list_id}.row.{index}", "parentId": list_id,
+                    "semanticType": "list-item",
+                })
+            ir_path = root / "ui-ir.json"
+            output = root / "plan.json"
+            ir_path.write_text(json.dumps(payload), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), "--ir", str(ir_path), "--out", str(output), "--ui-stack", "uikit",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            content = json.loads(output.read_text(encoding="utf-8"))["screens"][0]["layers"]["contentContainer"]
+            self.assertEqual(content["nodeId"], list_id)
+            self.assertEqual(content["kind"], "table-view")
+            self.assertEqual(content["scrollAxis"], "vertical")
+            self.assertTrue(content["rejectsSameAxisScrollWrapper"])
+
+    def test_nested_horizontal_collection_does_not_replace_vertical_scroll_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = make_ir("feed")
+            screen = payload["screens"][0]
+            root_id = screen["rootNodeId"]
+            screen["nodes"][0]["layout"] = {
+                "scrollAxis": "vertical",
+                "rect": {"x": 0, "y": 0, "width": 393, "height": 852},
+            }
+            carousel_id = "feed.carousel"
+            screen["nodes"].append({
+                "id": carousel_id, "parentId": root_id, "semanticType": "carousel",
+                "layout": {"scrollAxis": "horizontal", "rect": {"x": 16, "y": 100, "width": 361, "height": 80}},
+            })
+            for index in range(5):
+                screen["nodes"].append({
+                    "id": f"{carousel_id}.item.{index}", "parentId": carousel_id,
+                    "semanticType": "container",
+                })
+            ir_path = root / "ui-ir.json"
+            output = root / "plan.json"
+            ir_path.write_text(json.dumps(payload), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), "--ir", str(ir_path), "--out", str(output), "--ui-stack", "uikit",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            content = json.loads(output.read_text(encoding="utf-8"))["screens"][0]["layers"]["contentContainer"]
+            self.assertEqual(content["nodeId"], root_id)
+            self.assertEqual(content["kind"], "scroll-view")
+            self.assertEqual(content["scrollAxis"], "vertical")
+            carousel = next(item for item in content["nodeStrategies"] if item["nodeId"] == carousel_id)
+            self.assertEqual(carousel["kind"], "collection-view")
+            self.assertTrue(carousel["ownsScrollAxis"])
+
     def test_multiple_top_level_collections_use_compositional_root(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

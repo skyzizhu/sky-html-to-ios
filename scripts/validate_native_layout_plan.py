@@ -119,6 +119,10 @@ def main() -> int:
                 if contract.get("kind") == "calculation" and not contract.get("terms"):
                     add("UNRESOLVED_CALC_CONTRACT", screen_id, f"{key} calc() expression has no executable terms.", node_id)
             positioning = node_plan.get("positioning") or {}
+            grid_item = node_plan.get("gridItem") or {}
+            for key in ("columnSpan", "rowSpan"):
+                if grid_item.get(key) is not None and int(grid_item[key]) < 1:
+                    add("INVALID_GRID_SPAN", screen_id, f"{key} must be at least one.", node_id)
             scheme = positioning.get("scheme")
             if scheme not in {"static", "relative", "absolute", "fixed", "sticky"}:
                 add("INVALID_POSITIONING_SCHEME", screen_id, "Node positioning scheme is unsupported.", node_id)
@@ -126,6 +130,8 @@ def main() -> int:
                 add("POSITIONING_OWNER_MISSING", screen_id, "Positioned node has no containing-block owner.", node_id)
             if scheme == "fixed" and positioning.get("coordinateSpace") != "viewport":
                 add("FIXED_COORDINATE_SPACE_INVALID", screen_id, "Fixed nodes must use the viewport coordinate space.", node_id)
+            if scheme in {"absolute", "fixed"} and not positioning.get("nativeOwnerNodeId"):
+                add("NATIVE_POSITIONING_OWNER_MISSING", screen_id, "Positioned node has no executable native owner.", node_id)
         for compound in screen_plan.get("compoundControls") or []:
             slot_ids = [str(item) for item in compound.get("orderedSlotIds") or []]
             slots = [str(item.get("slotId") or "") for item in compound.get("orderedSlots") or []]
