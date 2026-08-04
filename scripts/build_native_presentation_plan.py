@@ -16,6 +16,11 @@ PRESENTATION_KINDS = {
     "sheet", "full-screen", "fullscreen", "full-screen-overlay", "popover",
     "popover-overlay", "overlay", "dialog", "alert", "confirmation", "menu",
 }
+PRESENTATION_ACTIONS = {
+    "present-sheet", "present-fullscreen", "present-full-screen", "present-popover",
+    "present-menu", "present-alert", "present-confirmation", "present-overlay",
+    "overlay", "show-dialog",
+}
 
 
 def load(path: Path) -> dict[str, Any]:
@@ -162,6 +167,8 @@ def build_screen(screen: dict[str, Any], ir: dict[str, Any]) -> dict[str, Any]:
     for interaction in ir.get("interactions") or []:
         candidates = []
         for item in (interaction.get("payload") or {}).get("transitions") or []:
+            if str(item.get("action") or "").lower() not in PRESENTATION_ACTIONS:
+                continue
             state_id = str(item.get("targetStateId") or "")
             state = states.get(state_id) or {}
             if not state_id or str(state.get("kind") or "") not in PRESENTATION_KINDS:

@@ -2589,8 +2589,19 @@ def build_screen(
                 if uses_custom_overlay:
                     presentation_node["style"]["fixedWidth"] = source_rect[2]
                     presentation_node["style"]["fixedHeight"] = source_rect[3]
+                presentation_actions = [
+                    {
+                        "id": str(item.get("id") or ""),
+                        "title": str(item.get("title") or "Action"),
+                        "role": str(item.get("role") or "default"),
+                        "action": actions.get(str(item.get("id") or "")),
+                    }
+                    for item in (planned.get("content") or {}).get("actions") or []
+                    if isinstance(item, dict) and item.get("id")
+                ]
                 presentations.append({
                     "stateID": str(state.get("id")),
+                    "sourceNodeID": planned.get("sourceNodeId"),
                     "kind": str(state.get("kind") or "sheet"),
                     "node": presentation_node,
                     "style": presentation_style,
@@ -2615,7 +2626,7 @@ def build_screen(
                     "transitionInteractive": bool((planned.get("transition") or {}).get("interactive", False)),
                     "title": str((planned.get("content") or {}).get("title") or compact_text((nodes.get(target_id) or {}).get("content", {}).get("text"), 160)),
                     "message": str((planned.get("content") or {}).get("message") or ""),
-                    "actions": planned.get("content", {}).get("actions") or [],
+                    "actions": presentation_actions,
                     "focusRestoration": str(planned.get("focusRestoration") or "source-control"),
                 })
                 break
@@ -2803,6 +2814,7 @@ struct HTMLToIOSTabItemSpec: Codable, Identifiable {{
 struct HTMLToIOSPresentationSpec: Codable, Identifiable {{
     var id: String {{ stateID }}
     let stateID: String
+    let sourceNodeID: String?
     let kind: String
     let node: HTMLToIOSNodeSpec
     let style: String
@@ -2835,6 +2847,7 @@ struct HTMLToIOSPresentationActionSpec: Codable, Identifiable {{
     let id: String
     let title: String
     let role: String
+    let action: HTMLToIOSActionSpec?
 }}
 
 struct HTMLToIOSActionSpec: Codable {{
@@ -3537,6 +3550,8 @@ final class HTMLToIOSGeneratedStore: ObservableObject {
     @Published var overlay: PresentedState?
     @Published var alert: PresentedState?
     @Published var confirmation: PresentedState?
+    @Published var focusRequestNodeID: String?
+    @Published var scrollOffsets: [String: CGFloat] = [:]
     private var tabIDByTargetScreen: [String: String] = [:]
     private var tabBarVisibilityMode = "automatic"
 
@@ -3665,19 +3680,19 @@ final class HTMLToIOSGeneratedStore: ObservableObject {
         case "switch-tab", "select-tab":
             if let routeID { selectedTab = tabIDByTargetScreen[routeID] ?? routeID }
         case "present-sheet":
-            if let stateID { sheet = PresentedState(id: stateID) }
+            if let stateID { replacePrimaryPresentation(); sheet = PresentedState(id: stateID) }
         case "present-fullscreen", "present-full-screen":
-            if let stateID { fullScreen = PresentedState(id: stateID) }
+            if let stateID { replacePrimaryPresentation(); fullScreen = PresentedState(id: stateID) }
         case "present-popover":
-            if let stateID { popover = PresentedState(id: stateID) }
+            if let stateID { replacePrimaryPresentation(); popover = PresentedState(id: stateID) }
         case "present-alert":
-            if let stateID { alert = PresentedState(id: stateID) }
+            if let stateID { alert = PresentedState(id: stateID); confirmation = nil }
         case "present-confirmation":
-            if let stateID { confirmation = PresentedState(id: stateID) }
+            if let stateID { confirmation = PresentedState(id: stateID); alert = nil }
         case "present-menu":
-            if let stateID { popover = PresentedState(id: stateID) }
+            if let stateID { replacePrimaryPresentation(); popover = PresentedState(id: stateID) }
         case "overlay", "present-overlay", "show-dialog":
-            if let stateID { overlay = PresentedState(id: stateID) }
+            if let stateID { replacePrimaryPresentation(); overlay = PresentedState(id: stateID) }
         case "dismiss", "dismiss-sheet", "dismiss-fullscreen", "dismiss-popover", "dismiss-overlay":
             sheet = nil; fullScreen = nil; popover = nil; overlay = nil; alert = nil; confirmation = nil
         case "toggle-state", "toggle-selection", "toggle-expanded":
@@ -3716,6 +3731,15 @@ final class HTMLToIOSGeneratedStore: ObservableObject {
         default:
             break
         }
+    }
+
+    private func replacePrimaryPresentation() {
+        sheet = nil
+        fullScreen = nil
+        popover = nil
+        overlay = nil
+        alert = nil
+        confirmation = nil
     }
 }
 
@@ -4549,11 +4573,20 @@ struct HTMLToIOSNativeNodeView: View {
                 .buttonStyle(HTMLToIOSControlButtonStyle())
                 .disabled(!spec.isEnabled)
                 .modifier(HTMLToIOSAccessibilityModifier(spec: spec))
+                .onChange(of: store.focusRequestNodeID) { requested in restoreRequestedFocus(requested) }
         } else {
             styledContent
                 .disabled(isNativeControl && !spec.isEnabled)
                 .modifier(HTMLToIOSAccessibilityModifier(spec: spec))
+                .onChange(of: store.focusRequestNodeID) { requested in restoreRequestedFocus(requested) }
         }
+    }
+
+    private func restoreRequestedFocus(_ requested: String?) {
+        guard requested == spec.id else { return }
+        if spec.textBehavior?.editable == true { isInputFocused = true }
+        UIAccessibility.post(notification: .layoutChanged, argument: spec.accessibilityLabel ?? spec.text)
+        DispatchQueue.main.async { if store.focusRequestNodeID == spec.id { store.focusRequestNodeID = nil } }
     }
 
     private var constrainedContent: some View {
@@ -5035,7 +5068,11 @@ struct HTMLToIOSNativeNodeView: View {
             }
             .clipped()
         case "both":
-            ScrollView([.horizontal, .vertical]) { childContent }
+            ScrollView([.horizontal, .vertical]) {
+                nodeScrollOffsetProbe
+                childContent
+            }
+                .coordinateSpace(name: nodeScrollCoordinateSpace)
                 .scrollDismissesKeyboard(.interactively)
                 .clipped()
         case "none":
@@ -5043,19 +5080,35 @@ struct HTMLToIOSNativeNodeView: View {
         default:
             if let refresh = spec.children.first(where: { $0.semantic == "refresh-control" }) {
                 ScrollView(.vertical, showsIndicators: true) {
+                    nodeScrollOffsetProbe
                     childContent.frame(maxWidth: .infinity, alignment: .topLeading)
                 }
+                .coordinateSpace(name: nodeScrollCoordinateSpace)
                 .refreshable { store.perform(refresh.action) }
                 .scrollDismissesKeyboard(.interactively)
                 .clipped()
             } else {
                 ScrollView(.vertical, showsIndicators: true) {
+                    nodeScrollOffsetProbe
                     childContent.frame(maxWidth: .infinity, alignment: .topLeading)
                 }
+                .coordinateSpace(name: nodeScrollCoordinateSpace)
                 .scrollDismissesKeyboard(.interactively)
                 .clipped()
             }
         }
+    }
+
+    private var nodeScrollCoordinateSpace: String { "html-to-ios-node-scroll-\(spec.id)" }
+
+    private var nodeScrollOffsetProbe: some View {
+        GeometryReader { proxy in
+            Color.clear.preference(
+                key: HTMLToIOSNodeScrollOffsetPreferenceKey.self,
+                value: [spec.id: max(-proxy.frame(in: .named(nodeScrollCoordinateSpace)).minY, 0)]
+            )
+        }
+        .frame(height: 0)
     }
 
     private var effectiveScrollAxis: String {
@@ -5456,6 +5509,13 @@ private struct HTMLToIOSScrollOffsetPreferenceKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
+struct HTMLToIOSNodeScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: [String: CGFloat] = [:]
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
+    }
+}
+
 struct HTMLToIOSGeneratedScrollContent: View {
     @ObservedObject var store: HTMLToIOSGeneratedStore
     let screen: HTMLToIOSScreenSpec
@@ -5665,13 +5725,19 @@ struct HTMLToIOSGeneratedRootView: View {
             if let state = store.popover { presentationView(state.id) }
         }
         .overlay(alignment: .topLeading) { customPopoverOverlay }
+        .onPreferenceChange(HTMLToIOSNodeScrollOffsetPreferenceKey.self) { offsets in
+            store.scrollOffsets.merge(offsets, uniquingKeysWith: { _, latest in latest })
+        }
         .alert(alertTitle, isPresented: alertIsPresented) {
             if let presentation = activeAlertPresentation, !presentation.actions.isEmpty {
                 ForEach(presentation.actions) { action in
-                    Button(action.title, role: buttonRole(action.role)) { store.alert = nil }
+                    Button(action.title, role: buttonRole(action.role)) { performPresentationAction(action, presentation: presentation, kind: "alert") }
                 }
             } else {
-                Button("OK") { store.alert = nil }
+                Button("OK") {
+                    if let presentation = activeAlertPresentation { restorePresentationFocus(presentation) }
+                    store.alert = nil
+                }
             }
         } message: {
             if let presentation = activeAlertPresentation, !presentation.message.isEmpty { Text(presentation.message) }
@@ -5679,11 +5745,17 @@ struct HTMLToIOSGeneratedRootView: View {
         .confirmationDialog(confirmationTitle, isPresented: confirmationIsPresented, titleVisibility: .visible) {
             if let presentation = activeConfirmationPresentation, !presentation.actions.isEmpty {
                 ForEach(presentation.actions) { action in
-                    Button(action.title, role: buttonRole(action.role)) { store.confirmation = nil }
+                    Button(action.title, role: buttonRole(action.role)) { performPresentationAction(action, presentation: presentation, kind: "confirmation") }
                 }
             } else {
-                Button("OK") { store.confirmation = nil }
-                Button("Cancel", role: .cancel) { store.confirmation = nil }
+                Button("OK") {
+                    if let presentation = activeConfirmationPresentation { restorePresentationFocus(presentation) }
+                    store.confirmation = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    if let presentation = activeConfirmationPresentation { restorePresentationFocus(presentation) }
+                    store.confirmation = nil
+                }
             }
         }
     }
@@ -5696,7 +5768,12 @@ struct HTMLToIOSGeneratedRootView: View {
                       !presentation.usesCustomOverlay else { return nil }
                 return state
             },
-            set: { if $0 == nil { store.sheet = nil } }
+            set: {
+                if $0 == nil, let state = store.sheet, let presentation = catalog.presentation(state.id) {
+                    store.sheet = nil
+                    restorePresentationFocus(presentation)
+                }
+            }
         )
     }
 
@@ -5708,7 +5785,12 @@ struct HTMLToIOSGeneratedRootView: View {
                       !presentation.usesCustomOverlay else { return nil }
                 return state
             },
-            set: { if $0 == nil { store.fullScreen = nil } }
+            set: {
+                if $0 == nil, let state = store.fullScreen, let presentation = catalog.presentation(state.id) {
+                    store.fullScreen = nil
+                    restorePresentationFocus(presentation)
+                }
+            }
         )
     }
 
@@ -5729,11 +5811,21 @@ struct HTMLToIOSGeneratedRootView: View {
     }
 
     private var alertIsPresented: Binding<Bool> {
-        Binding(get: { store.alert != nil }, set: { if !$0 { store.alert = nil } })
+        Binding(get: { store.alert != nil }, set: {
+            if !$0 {
+                if let presentation = activeAlertPresentation { restorePresentationFocus(presentation) }
+                store.alert = nil
+            }
+        })
     }
 
     private var confirmationIsPresented: Binding<Bool> {
-        Binding(get: { store.confirmation != nil }, set: { if !$0 { store.confirmation = nil } })
+        Binding(get: { store.confirmation != nil }, set: {
+            if !$0 {
+                if let presentation = activeConfirmationPresentation { restorePresentationFocus(presentation) }
+                store.confirmation = nil
+            }
+        })
     }
 
     private func buttonRole(_ role: String) -> ButtonRole? {
@@ -5742,13 +5834,29 @@ struct HTMLToIOSGeneratedRootView: View {
         return nil
     }
 
+    private func performPresentationAction(_ action: HTMLToIOSPresentationActionSpec, presentation: HTMLToIOSPresentationSpec, kind: String) {
+        if action.action?.action != "dismiss" { store.perform(action.action) }
+        if kind == "alert" { store.alert = nil } else { store.confirmation = nil }
+        restorePresentationFocus(presentation)
+    }
+
+    private func restorePresentationFocus(_ presentation: HTMLToIOSPresentationSpec) {
+        guard presentation.focusRestoration == "source-control", let sourceNodeID = presentation.sourceNodeID else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { store.focusRequestNodeID = sourceNodeID }
+    }
+
     private var systemPopoverIsPresented: Binding<Bool> {
         Binding(
             get: {
                 guard let state = store.popover, let presentation = catalog.presentation(state.id) else { return false }
                 return !presentation.usesCustomOverlay
             },
-            set: { if !$0 { store.popover = nil } }
+            set: {
+                if !$0, let state = store.popover, let presentation = catalog.presentation(state.id) {
+                    store.popover = nil
+                    restorePresentationFocus(presentation)
+                }
+            }
         )
     }
 
@@ -5809,13 +5917,7 @@ struct HTMLToIOSGeneratedRootView: View {
 
     @ViewBuilder private func presentationView(_ stateID: String) -> some View {
         if let presentation = catalog.presentation(stateID) {
-            Group {
-                if presentation.scrollOwnership == "presentation-content" {
-                    ScrollView { HTMLToIOSNativeNodeView(store: store, spec: presentation.node) }
-                } else {
-                    HTMLToIOSNativeNodeView(store: store, spec: presentation.node)
-                }
-            }
+            presentationNodeContent(presentation)
                 .presentationDetents(presentationDetents(presentation.detents))
                 .presentationDragIndicator(presentation.grabberVisible == false ? .hidden : .visible)
                 .interactiveDismissDisabled(presentation.interactiveDismissDisabled)
@@ -5843,19 +5945,24 @@ struct HTMLToIOSGeneratedRootView: View {
                         .opacity(presentation.backdropOpacity)
                         .contentShape(Rectangle())
                         .onTapGesture { if presentation.backdropDismisses { dismissCustomPresentation() } }
-                    HTMLToIOSNativeNodeView(store: store, spec: presentation.node)
+                    presentationNodeContent(presentation)
                         .frame(width: width, height: height, alignment: .topLeading)
                         .position(x: centerX, y: centerY)
                         .offset(y: max(customPresentationDragOffset, 0))
                         .simultaneousGesture(
                             DragGesture(minimumDistance: 8)
                                 .onChanged { value in
-                                    if presentation.transitionInteractive && presentation.scrollOwnership == "none" && value.translation.height > 0 {
+                                    if presentation.transitionInteractive && canTransferScrollGesture(to: presentation) && value.translation.height > 0 {
                                         customPresentationDragOffset = value.translation.height
+                                    } else {
+                                        customPresentationDragOffset = 0
                                     }
                                 }
                                 .onEnded { value in
-                                    guard presentation.transitionInteractive && presentation.scrollOwnership == "none" else { return }
+                                    guard presentation.transitionInteractive && canTransferScrollGesture(to: presentation) else {
+                                        customPresentationDragOffset = 0
+                                        return
+                                    }
                                     if value.translation.height > min(max(height * 0.25, 96), 180) || value.predictedEndTranslation.height > 260 {
                                         dismissCustomPresentation()
                                     }
@@ -5879,12 +5986,52 @@ struct HTMLToIOSGeneratedRootView: View {
         return nil
     }
 
+    @ViewBuilder private func presentationNodeContent(_ presentation: HTMLToIOSPresentationSpec) -> some View {
+        if presentation.scrollOwnership == "presentation-content" && !containsScrollNode(presentation.node) {
+            let coordinateSpace = "html-to-ios-presentation-scroll-\(presentation.id)"
+            ScrollView(.vertical) {
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: HTMLToIOSNodeScrollOffsetPreferenceKey.self,
+                        value: [presentation.node.id: max(-proxy.frame(in: .named(coordinateSpace)).minY, 0)]
+                    )
+                }
+                .frame(height: 0)
+                HTMLToIOSNativeNodeView(store: store, spec: presentation.node)
+            }
+            .coordinateSpace(name: coordinateSpace)
+            .scrollDismissesKeyboard(.interactively)
+        } else {
+            HTMLToIOSNativeNodeView(store: store, spec: presentation.node)
+        }
+    }
+
+    private func containsScrollNode(_ node: HTMLToIOSNodeSpec) -> Bool {
+        if node.semantic == "scroll", node.style.scrollAxis != "horizontal" { return true }
+        return node.children.contains(where: containsScrollNode)
+    }
+
+    private func canTransferScrollGesture(to presentation: HTMLToIOSPresentationSpec) -> Bool {
+        if presentation.scrollOwnership == "none" { return true }
+        let ownedNodeIDs = descendantNodeIDs(of: presentation.node)
+        let measuredOffsets = store.scrollOffsets.compactMap { ownedNodeIDs.contains($0.key) ? $0.value : nil }
+        return !measuredOffsets.isEmpty && measuredOffsets.allSatisfy { $0 <= 0.5 }
+    }
+
+    private func descendantNodeIDs(of node: HTMLToIOSNodeSpec) -> Set<String> {
+        node.children.reduce(into: Set([node.id])) { result, child in
+            result.formUnion(descendantNodeIDs(of: child))
+        }
+    }
+
     private func dismissCustomPresentation() {
+        let presentation = activeCustomPresentationState.flatMap { catalog.presentation($0.id) }
         store.sheet = nil
         store.fullScreen = nil
         store.popover = nil
         store.overlay = nil
         customPresentationDragOffset = 0
+        if let presentation { restorePresentationFocus(presentation) }
     }
 
     private func presentationDetents(_ values: [String]) -> Set<PresentationDetent> {
@@ -8698,6 +8845,8 @@ final class HTMLToIOSGeneratedCoordinator: NSObject, UITabBarControllerDelegate 
     private var tabBarController: UITabBarController?
     private var tabNavigationControllers: [String: UINavigationController] = [:]
     private var lastSelectedTabIndex: Int?
+    private var lastPresentationSourceNodeID: String?
+    private var presentationStateIDsInFlight: Set<String> = []
 
     init(hostController: UIViewController) { self.hostController = hostController }
 
@@ -8765,6 +8914,54 @@ final class HTMLToIOSGeneratedCoordinator: NSObject, UITabBarControllerDelegate 
         return primaryNavigationController
     }
 
+    private var presentationHost: UIViewController? {
+        var controller: UIViewController? = currentNavigationController
+        while let presented = controller?.presentedViewController, !presented.isBeingDismissed { controller = presented }
+        return controller
+    }
+
+    private func presentationAccessibilityIdentifier(_ stateID: String) -> String {
+        "html-to-ios-presentation-\(stateID)"
+    }
+
+    private func isPresentationActive(_ stateID: String) -> Bool {
+        if presentationStateIDsInFlight.contains(stateID) { return true }
+        let identifier = presentationAccessibilityIdentifier(stateID)
+        var controller = currentNavigationController?.presentedViewController
+        while let current = controller {
+            if current.view.accessibilityIdentifier == identifier { return true }
+            controller = current.presentedViewController
+        }
+        return false
+    }
+
+    private func presentController(_ controller: UIViewController, stateID: String) {
+        guard !isPresentationActive(stateID), let host = presentationHost else { return }
+        presentationStateIDsInFlight.insert(stateID)
+        controller.view.accessibilityIdentifier = presentationAccessibilityIdentifier(stateID)
+        host.present(controller, animated: true) { [weak self] in
+            self?.presentationStateIDsInFlight.remove(stateID)
+        }
+    }
+
+    private func view(withAccessibilityIdentifier identifier: String, in root: UIView?) -> UIView? {
+        guard let root else { return nil }
+        if root.accessibilityIdentifier == identifier { return root }
+        for child in root.subviews {
+            if let match = view(withAccessibilityIdentifier: identifier, in: child) { return match }
+        }
+        return nil
+    }
+
+    private func restorePresentationFocus(_ sourceNodeID: String?) {
+        guard let sourceNodeID else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self else { return }
+            let target = self.view(withAccessibilityIdentifier: sourceNodeID, in: self.currentNavigationController?.view)
+            UIAccessibility.post(notification: .screenChanged, argument: target)
+        }
+    }
+
     private func perform(_ spec: HTMLToIOSActionSpec?) {
         guard let spec else { return }
         let routeID = spec.targetScreenID ?? spec.target
@@ -8787,29 +8984,49 @@ final class HTMLToIOSGeneratedCoordinator: NSObject, UITabBarControllerDelegate 
                 lastSelectedTabIndex = index
             }
         case "dismiss", "dismiss-sheet", "dismiss-fullscreen", "dismiss-popover", "dismiss-overlay":
-            currentNavigationController?.presentedViewController?.dismiss(animated: true)
+            let sourceNodeID = lastPresentationSourceNodeID
+            presentationHost?.dismiss(animated: true) { [weak self] in self?.restorePresentationFocus(sourceNodeID) }
         case "present-alert", "present-confirmation":
             guard let stateID, let presentation = catalog.presentation(stateID) else { return }
+            lastPresentationSourceNodeID = presentation.sourceNodeID
             let preferredStyle: UIAlertController.Style = spec.action == "present-confirmation" ? .actionSheet : .alert
             let controller = UIAlertController(title: presentation.title, message: presentation.message.isEmpty ? nil : presentation.message, preferredStyle: preferredStyle)
             if presentation.actions.isEmpty {
-                controller.addAction(UIAlertAction(title: "OK", style: .default))
-                if preferredStyle == .actionSheet { controller.addAction(UIAlertAction(title: "Cancel", style: .cancel)) }
+                controller.addAction(UIAlertAction(title: "OK", style: .default) { [weak self] _ in self?.restorePresentationFocus(presentation.sourceNodeID) })
+                if preferredStyle == .actionSheet {
+                    controller.addAction(UIAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in self?.restorePresentationFocus(presentation.sourceNodeID) })
+                }
             } else {
                 for action in presentation.actions {
                     let style: UIAlertAction.Style = action.role == "destructive" ? .destructive : (action.role == "cancel" ? .cancel : .default)
-                    controller.addAction(UIAlertAction(title: action.title, style: style))
+                    controller.addAction(UIAlertAction(title: action.title, style: style) { [weak self] _ in
+                        if action.action?.action != "dismiss" {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { self?.perform(action.action) }
+                        }
+                        self?.restorePresentationFocus(presentation.sourceNodeID)
+                    })
                 }
             }
-            currentNavigationController?.present(controller, animated: true)
+            if let popover = controller.popoverPresentationController {
+                popover.sourceView = currentNavigationController?.view
+                let rect = presentation.sourceRect
+                popover.sourceRect = CGRect(
+                    x: CGFloat(rect.indices.contains(0) ? rect[0] : 0),
+                    y: CGFloat(rect.indices.contains(1) ? rect[1] : 0),
+                    width: CGFloat(rect.indices.contains(2) ? rect[2] : 1),
+                    height: CGFloat(rect.indices.contains(3) ? rect[3] : 1)
+                )
+            }
+            presentController(controller, stateID: stateID)
         case "present-sheet", "present-fullscreen", "present-full-screen", "present-popover", "present-menu", "overlay", "present-overlay", "show-dialog":
             guard let stateID, let presentation = catalog.presentation(stateID) else { return }
+            lastPresentationSourceNodeID = presentation.sourceNodeID
             if presentation.usesCustomOverlay {
                 let controller = HTMLToIOSGeneratedCustomOverlayController(
                     presentation: presentation,
                     actionHandler: { [weak self] action in self?.perform(action) }
                 )
-                currentNavigationController?.present(controller, animated: true)
+                presentController(controller, stateID: stateID)
                 return
             }
             let controller = HTMLToIOSGeneratedScreenViewController(
@@ -8880,7 +9097,7 @@ final class HTMLToIOSGeneratedCoordinator: NSObject, UITabBarControllerDelegate 
                 }
                 controller.isModalInPresentation = presentation.interactiveDismissDisabled
             }
-            currentNavigationController?.present(controller, animated: true)
+            presentController(controller, stateID: stateID)
         default: break
         }
     }
@@ -10562,7 +10779,10 @@ def build_native_structure_manifest(
                 "aliases": list(generated.get("aliasStateIDs") or []) == list(planned.get("aliasStateIds") or []),
                 "content": generated.get("title") == (planned.get("content") or {}).get("title")
                     and generated.get("message") == (planned.get("content") or {}).get("message")
-                    and list(generated.get("actions") or []) == list((planned.get("content") or {}).get("actions") or []),
+                    and [
+                        {key: item.get(key) for key in ("id", "title", "role")}
+                        for item in generated.get("actions") or []
+                    ] == list((planned.get("content") or {}).get("actions") or []),
                 "keyboard": generated.get("keyboardAvoidance") == planned.get("keyboardAvoidance"),
             }
             presentation_consumption.append({"stateId": state_id, "status": "consumed" if all(checks.values()) else "not-consumed", "checks": checks})

@@ -12,6 +12,10 @@
 6. `alert` 和 `confirmation` 从目标子树提取标题、正文和按钮角色。删除/移除/清空映射 destructive，取消/关闭映射 cancel，其余映射 default；一个 presentation 最多只能有一个 cancel action。
 7. 自定义可交互面板只处理垂直向下手势。内部滚动未到顶部时滚动视图拥有手势；达到顶部后，才根据位移、预测终点和速度决定关闭或回弹。
 8. 含可编辑输入控件的 presentation 使用焦点感知键盘避让，不通过预减 Safe Area 或固定键盘高度修改面板尺寸。
+9. 弹层内容按钮必须保留对应 source action。关闭后按 `sourceNodeId` 恢复输入或无障碍焦点；找不到来源控件时允许安全降级为空焦点恢复。
+10. 自定义可交互弹层仅在归属它的纵向滚动容器全部到达顶部时接管向下拖拽。UIKit 使用手势代理检查命中的 `UIScrollView`，SwiftUI 使用节点级滚动偏移契约；禁止通过再套一层同轴 ScrollView 实现接力。
+11. 同一 presentation state 的连续呈现请求必须去重，不同 state 可以按交互证据嵌套。UIKit 的 action sheet 与 popover 必须配置有效 source view/rect，保证 iPad 环境可呈现。
+12. presentation 规划器只能把 `present-*`、`show-dialog` 等打开动作作为 source owner；`dismiss-*` 即使指向同一 state，也不得覆盖打开锚点与焦点恢复来源。
 3. 读取原型可观察行为：URL/历史变化、遮罩、覆盖范围、返回方式、交互手势。
 4. 根据页面关系推断并写入 confidence；低置信度保持 `unknown`。
 

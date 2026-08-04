@@ -12,6 +12,7 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "generate_ios_from_ir.py"
 CONTROL_PLAN_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "build_native_control_configuration_plan.py"
+PRESENTATION_PLAN_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "build_native_presentation_plan.py"
 PAYLOAD = Path("Resources/Payload/HTMLToIOSGeneratedPayload.json")
 SWIFTUI_ROOT_FILE = Path("Application/HTMLToIOSGeneratedRoot.swift")
 MODELS_FILE = Path("Core/Models/HTMLToIOSGeneratedModels.swift")
@@ -91,6 +92,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
         naming_plan: Path | None = None,
         architecture_plan: Path | None = None,
         control_configuration_plan: Path | None = None,
+        presentation_plan: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         command = ["python3", str(SCRIPT)]
         for path in paths:
@@ -102,6 +104,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             command.extend(["--architecture-plan", str(architecture_plan)])
         if control_configuration_plan:
             command.extend(["--control-configuration-plan", str(control_configuration_plan)])
+        if presentation_plan:
+            command.extend(["--presentation-plan", str(presentation_plan)])
         if out_dir.parts[-2:] != ("Generated", "HTMLToIOS"):
             command.append("--allow-nonstandard-output")
         result = subprocess.run(command, text=True, capture_output=True, check=False)
@@ -1272,6 +1276,73 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("func scrollViewDidScroll(_ scrollView: UIScrollView)", uikit_runtime)
             self.assertIn('case "appearance-change":', uikit_runtime)
             self.assertIn("navigationController?.hidesBarsOnSwipe", uikit_runtime)
+
+    def test_presentation_actions_focus_and_scroll_handoff_are_generated_for_both_stacks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            open_sheet = transition("open-actions", "present-sheet", "actions-sheet")
+            open_sheet["presentation"] = {
+                "style": "page-sheet",
+                "detents": ["medium", "large"],
+                "grabberVisible": True,
+            }
+            payload = ir("home", open_sheet, states=[{
+                "id": "actions-sheet",
+                "kind": "sheet",
+                "targetNodeIds": ["home.sheet"],
+            }])
+            sheet = next(item for item in payload["screens"][0]["nodes"] if item["id"] == "home.sheet")
+            sheet["layout"]["scrollAxis"] = "vertical"
+            sheet["style"]["opacity"] = "0"
+            delete = node("home.sheet.delete", sheet["id"], "button", "Delete")
+            cancel = node("home.sheet.cancel", sheet["id"], "button", "Cancel")
+            payload["screens"][0]["nodes"].extend([delete, cancel])
+            for source_node_id, action_id in ((delete["id"], "delete-action"), (cancel["id"], "cancel-action")):
+                action = transition(action_id, "dismiss-sheet", "actions-sheet")
+                action["sourceNodeId"] = source_node_id
+                action["sourceNodeIds"] = [source_node_id]
+                payload["interactions"].append(action)
+
+            path = root / "home.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            presentation_plan = root / "native-presentation-plan.json"
+            subprocess.run(
+                ["python3", str(PRESENTATION_PLAN_SCRIPT), "--ir", str(path), "--out", str(presentation_plan)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            swiftui_dir = root / "swiftui"
+            self.run_generator([path], swiftui_dir, presentation_plan=presentation_plan)
+            generated = json.loads((swiftui_dir / PAYLOAD).read_text(encoding="utf-8"))
+            presentation = generated["screens"][0]["presentations"][0]
+            self.assertEqual(presentation["sourceNodeID"], "home.button")
+            self.assertEqual(
+                [item["action"]["action"] for item in presentation["actions"]],
+                ["dismiss-sheet", "dismiss-sheet"],
+            )
+            swiftui_root = (swiftui_dir / NAVIGATION_FILE).read_text(encoding="utf-8")
+            swiftui_runtime = (swiftui_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn("store.perform(action.action)", swiftui_root)
+            self.assertIn("restorePresentationFocus(presentation)", swiftui_root)
+            self.assertIn("canTransferScrollGesture(to: presentation)", swiftui_root)
+            self.assertIn("presentation.scrollOwnership == \"presentation-content\"", swiftui_root)
+            self.assertIn("HTMLToIOSNodeScrollOffsetPreferenceKey", swiftui_runtime)
+            self.assertIn("replacePrimaryPresentation()", swiftui_runtime)
+            self.assertIn("focusRequestNodeID", swiftui_runtime)
+
+            uikit_dir = root / "uikit"
+            self.run_generator([path], uikit_dir, ui_stack="uikit", presentation_plan=presentation_plan)
+            uikit_root = (uikit_dir / NAVIGATION_FILE).read_text(encoding="utf-8")
+            self.assertIn("action.action?.action != \"dismiss\"", uikit_root)
+            self.assertIn("restorePresentationFocus(presentation.sourceNodeID)", uikit_root)
+            self.assertIn("view(withAccessibilityIdentifier:", uikit_root)
+            self.assertIn("private var presentationHost", uikit_root)
+            self.assertIn("presentationStateIDsInFlight", uikit_root)
+            self.assertIn("isPresentationActive(stateID)", uikit_root)
+            self.assertIn("controller.popoverPresentationController", uikit_root)
+            self.assertIn("scroll.contentOffset.y > -scroll.adjustedContentInset.top + 0.5", uikit_root)
 
     def test_viewport_bar_releases_large_direct_children_without_relaxing_icons(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
