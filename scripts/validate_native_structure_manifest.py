@@ -155,6 +155,7 @@ def main() -> int:
         "native-decoration-merged",
         "native-animation-merged",
         "compound-control-merged",
+        "presentation-backdrop-merged",
     }
 
     def valid_optimized_record(record: dict[str, Any]) -> bool:

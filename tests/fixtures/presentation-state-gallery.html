@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 15px system-ui; background: rgb(241, 243, 247); }
+    main { width: 393px; min-height: 852px; padding: 20px; display: grid; gap: 16px; }
+    section { padding: 18px; border-radius: 18px; background: white; box-shadow: 0 8px 24px rgba(0,0,0,.08); }
+    h2 { margin: 0 0 8px; font-size: 19px; }
+    p { margin: 0 0 14px; color: rgb(90, 96, 108); }
+    button, input { min-height: 44px; padding: 10px 14px; border: 0; border-radius: 10px; }
+    button { color: white; background: rgb(24, 91, 214); }
+    .destructive { background: rgb(205, 48, 55); }
+    .cancel { color: rgb(40, 44, 52); background: rgb(230, 233, 239); }
+    .actions { display: flex; gap: 10px; }
+  </style>
+</head>
+<body>
+<main id="app" data-ios-app-root="true" data-ios-screen="presentation-gallery">
+  <button data-ios-action="present-sheet" data-ios-target="editor-sheet">Open editor</button>
+  <section id="editor-sheet" data-ios-component="sheet" data-ios-presentation-style="page-sheet" data-ios-detents="height:420,large" data-ios-backdrop-dismiss="false" data-ios-interactive-dismiss="true">
+    <h2>Edit title</h2>
+    <p>The keyboard must not cover the actions.</p>
+    <input aria-label="Title" value="Draft title">
+    <button data-ios-action="dismiss">Save</button>
+  </section>
+  <button data-ios-action="present-alert" data-ios-target="delete-alert">Delete draft</button>
+  <section id="delete-alert" role="alertdialog" data-ios-component="alert" data-ios-presentation-style="alert">
+    <h2>Delete draft?</h2>
+    <p>This cannot be undone.</p>
+    <div class="actions">
+      <button class="destructive" data-ios-action="dismiss">Delete</button>
+      <button class="cancel" data-ios-action="dismiss">Cancel</button>
+    </div>
+  </section>
+  <button data-ios-action="present-popover" data-ios-target="format-menu">Format</button>
+  <section id="format-menu" role="menu" data-ios-presentation-style="popover">
+    <button role="menuitem" data-ios-action="dismiss">Bold</button>
+    <button role="menuitem" data-ios-action="dismiss">Italic</button>
+  </section>
+</main>
+</body>
+</html>

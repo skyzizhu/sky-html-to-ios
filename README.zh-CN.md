@@ -348,6 +348,8 @@ UI IR 保存：
 
 代码生成前，总控会产出 `native-presentation-plan.json`，为每个 presentation 状态确定唯一归属和原生策略。SwiftUI 与 UIKit 共用该契约，并保留 detent、grabber、圆角、遮罩颜色与透明度、点击遮罩关闭、交互式关闭、内容滚动归属、键盘规避、popover 锚点与箭头方向，以及来源驱动的转场。默认优先苹果系统 presentation API；只有实测几何或行为无法由系统控件准确表达时，才降级为自定义 overlay。
 
+同一次动作产生的遮罩和面板状态会归并到一个 presentation owner，不会生成两个页面或弹层。alert/confirmation 会提取原生标题、正文及 default/cancel/destructive 按钮角色；包含可编辑控件时采用焦点感知的系统键盘避让。自定义交互式面板按下滑距离和速度决定关闭，并在内部滚动尚未回到顶部时让出下拉手势。
+
 ### 页面容器
 
 | 场景 | SwiftUI | UIKit |

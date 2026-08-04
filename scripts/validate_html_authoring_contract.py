@@ -24,11 +24,11 @@ COMPONENTS = {
 }
 ACTIONS = {
     "add-child", "dismiss", "open-url", "pop", "pop-to-root", "present-fullscreen",
-    "present-popover", "present-sheet", "push", "remove-child", "replace-root",
+    "present-popover", "present-sheet", "present-alert", "present-confirmation", "present-menu", "push", "remove-child", "replace-root",
     "select-tab", "show-alert", "show-context-menu", "toggle-state", "update-state",
 }
 TARGET_ACTIONS = {
-    "add-child", "present-fullscreen", "present-popover", "present-sheet", "push",
+    "add-child", "present-fullscreen", "present-popover", "present-sheet", "present-alert", "present-confirmation", "present-menu", "push",
     "replace-root", "select-tab", "show-alert", "toggle-state", "update-state",
 }
 PRESENTATIONS = {

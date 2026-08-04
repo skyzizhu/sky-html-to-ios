@@ -8,6 +8,10 @@
 2. 使用 HTML 的显式标注：`data-ios-action`、`data-ios-target`、`data-ios-presentation-style`、`data-ios-detents`。
 3. 总控生成并校验 `native-presentation-plan.json`。它统一记录原生策略、detent、圆角、遮罩、外部点击关闭、交互式关闭、滚动归属、键盘规避、popover 锚点和过渡；SwiftUI 与 UIKit 必须消费同一份契约。
 4. 截图与多模态对比只负责验收兜底，不参与上述策略成立与否的判断。
+5. 同一触发动作同时改变 backdrop/mask 与 panel 时，只创建一个原生 presentation owner；遮罩节点作为 `presentation-backdrop-merged` 证据保留，状态 ID 作为 owner 的 alias。
+6. `alert` 和 `confirmation` 从目标子树提取标题、正文和按钮角色。删除/移除/清空映射 destructive，取消/关闭映射 cancel，其余映射 default；一个 presentation 最多只能有一个 cancel action。
+7. 自定义可交互面板只处理垂直向下手势。内部滚动未到顶部时滚动视图拥有手势；达到顶部后，才根据位移、预测终点和速度决定关闭或回弹。
+8. 含可编辑输入控件的 presentation 使用焦点感知键盘避让，不通过预减 Safe Area 或固定键盘高度修改面板尺寸。
 3. 读取原型可观察行为：URL/历史变化、遮罩、覆盖范围、返回方式、交互手势。
 4. 根据页面关系推断并写入 confidence；低置信度保持 `unknown`。
 

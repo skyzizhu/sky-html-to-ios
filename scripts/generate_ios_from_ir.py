@@ -1995,6 +1995,11 @@ def build_screen(
         for item in presentation_plan.get("presentations") or []
         if isinstance(item, dict) and item.get("stateId")
     }
+    presentation_state_aliases = {
+        str(alias): state_id
+        for state_id, item in planned_presentations.items()
+        for alias in item.get("aliasStateIds") or []
+    }
     control_configurations = {
         str(item.get("nodeId") or ""): item
         for item in control_configuration.get("controls") or []
@@ -2115,6 +2120,8 @@ def build_screen(
     presentation_by_state: dict[str, dict[str, Any]] = {}
     for interaction in ir.get("interactions") or []:
         action = primary_transition(interaction)
+        if str(action.get("targetStateID") or "") in presentation_state_aliases:
+            action["targetStateID"] = presentation_state_aliases[str(action["targetStateID"])]
         if (
             interaction.get("automatic")
             and int(action.get("delayMilliseconds") or 0) < 1000
@@ -2333,6 +2340,8 @@ def build_screen(
     for state in ir.get("states") or []:
         kind = str(state.get("kind") or "")
         if kind not in PRESENTATION_KINDS:
+            continue
+        if planned_presentations and str(state.get("id") or "") not in planned_presentations:
             continue
         target_ids = [str(item) for item in state.get("targetNodeIds") or []]
         presentation_root_ids.update(target_ids)
@@ -2586,6 +2595,7 @@ def build_screen(
                     "node": presentation_node,
                     "style": presentation_style,
                     "strategy": strategy or ("custom-overlay" if uses_custom_overlay else "system-sheet"),
+                    "aliasStateIDs": planned.get("aliasStateIds") or [],
                     "detents": planned.get("detents") or presentation_contract.get("detents") or [],
                     "grabberVisible": planned.get("grabberVisible", presentation_contract.get("grabberVisible")),
                     "interactiveDismissDisabled": bool(planned.get("interactiveDismissDisabled", presentation_contract.get("interactiveDismissDisabled", False))),
@@ -2603,6 +2613,10 @@ def build_screen(
                     "transitionKind": str((planned.get("transition") or {}).get("kind") or "fade"),
                     "transitionDurationMilliseconds": int(number((planned.get("transition") or {}).get("durationMilliseconds"), 280)),
                     "transitionInteractive": bool((planned.get("transition") or {}).get("interactive", False)),
+                    "title": str((planned.get("content") or {}).get("title") or compact_text((nodes.get(target_id) or {}).get("content", {}).get("text"), 160)),
+                    "message": str((planned.get("content") or {}).get("message") or ""),
+                    "actions": planned.get("content", {}).get("actions") or [],
+                    "focusRestoration": str(planned.get("focusRestoration") or "source-control"),
                 })
                 break
 
@@ -2664,7 +2678,7 @@ struct HTMLToIOSGeneratedCatalog: Codable {{
     }}
 
     func presentation(_ stateID: String) -> HTMLToIOSPresentationSpec? {{
-        screens.lazy.flatMap(\.presentations).first {{ $0.stateID == stateID }}
+        screens.lazy.flatMap(\.presentations).first {{ $0.stateID == stateID || $0.aliasStateIDs.contains(stateID) }}
     }}
 }}
 
@@ -2793,6 +2807,7 @@ struct HTMLToIOSPresentationSpec: Codable, Identifiable {{
     let node: HTMLToIOSNodeSpec
     let style: String
     let strategy: String
+    let aliasStateIDs: [String]
     let detents: [String]
     let grabberVisible: Bool?
     let interactiveDismissDisabled: Bool
@@ -2810,6 +2825,16 @@ struct HTMLToIOSPresentationSpec: Codable, Identifiable {{
     let transitionKind: String
     let transitionDurationMilliseconds: Int
     let transitionInteractive: Bool
+    let title: String
+    let message: String
+    let actions: [HTMLToIOSPresentationActionSpec]
+    let focusRestoration: String
+}}
+
+struct HTMLToIOSPresentationActionSpec: Codable, Identifiable {{
+    let id: String
+    let title: String
+    let role: String
 }}
 
 struct HTMLToIOSActionSpec: Codable {{
@@ -5629,34 +5654,78 @@ import SwiftUI
 
 struct HTMLToIOSGeneratedRootView: View {
     @StateObject private var store = HTMLToIOSGeneratedStore()
+    @State private var customPresentationDragOffset: CGFloat = 0
     private let catalog = HTMLToIOSGeneratedData.catalog
 
     var body: some View {
         rootContent
-        .sheet(item: $store.sheet) { state in presentationView(state.id) }
-        .fullScreenCover(item: $store.fullScreen) { state in presentationView(state.id) }
+        .sheet(item: systemSheetItem) { state in presentationView(state.id) }
+        .fullScreenCover(item: systemFullScreenItem) { state in presentationView(state.id) }
         .popover(isPresented: systemPopoverIsPresented) {
             if let state = store.popover { presentationView(state.id) }
         }
         .overlay(alignment: .topLeading) { customPopoverOverlay }
-        .overlay { if let state = store.overlay { presentationView(state.id) } }
         .alert(alertTitle, isPresented: alertIsPresented) {
-            Button("OK") { store.alert = nil }
+            if let presentation = activeAlertPresentation, !presentation.actions.isEmpty {
+                ForEach(presentation.actions) { action in
+                    Button(action.title, role: buttonRole(action.role)) { store.alert = nil }
+                }
+            } else {
+                Button("OK") { store.alert = nil }
+            }
+        } message: {
+            if let presentation = activeAlertPresentation, !presentation.message.isEmpty { Text(presentation.message) }
         }
         .confirmationDialog(confirmationTitle, isPresented: confirmationIsPresented, titleVisibility: .visible) {
-            Button("OK") { store.confirmation = nil }
-            Button("Cancel", role: .cancel) { store.confirmation = nil }
+            if let presentation = activeConfirmationPresentation, !presentation.actions.isEmpty {
+                ForEach(presentation.actions) { action in
+                    Button(action.title, role: buttonRole(action.role)) { store.confirmation = nil }
+                }
+            } else {
+                Button("OK") { store.confirmation = nil }
+                Button("Cancel", role: .cancel) { store.confirmation = nil }
+            }
         }
+    }
+
+    private var systemSheetItem: Binding<HTMLToIOSGeneratedStore.PresentedState?> {
+        Binding(
+            get: {
+                guard let state = store.sheet,
+                      let presentation = catalog.presentation(state.id),
+                      !presentation.usesCustomOverlay else { return nil }
+                return state
+            },
+            set: { if $0 == nil { store.sheet = nil } }
+        )
+    }
+
+    private var systemFullScreenItem: Binding<HTMLToIOSGeneratedStore.PresentedState?> {
+        Binding(
+            get: {
+                guard let state = store.fullScreen,
+                      let presentation = catalog.presentation(state.id),
+                      !presentation.usesCustomOverlay else { return nil }
+                return state
+            },
+            set: { if $0 == nil { store.fullScreen = nil } }
+        )
+    }
+
+    private var activeAlertPresentation: HTMLToIOSPresentationSpec? {
+        store.alert.flatMap { catalog.presentation($0.id) }
+    }
+
+    private var activeConfirmationPresentation: HTMLToIOSPresentationSpec? {
+        store.confirmation.flatMap { catalog.presentation($0.id) }
     }
 
     private var alertTitle: String {
-        guard let state = store.alert, let presentation = catalog.presentation(state.id) else { return "" }
-        return presentation.node.text
+        activeAlertPresentation?.title ?? ""
     }
 
     private var confirmationTitle: String {
-        guard let state = store.confirmation, let presentation = catalog.presentation(state.id) else { return "" }
-        return presentation.node.text
+        activeConfirmationPresentation?.title ?? ""
     }
 
     private var alertIsPresented: Binding<Bool> {
@@ -5665,6 +5734,12 @@ struct HTMLToIOSGeneratedRootView: View {
 
     private var confirmationIsPresented: Binding<Bool> {
         Binding(get: { store.confirmation != nil }, set: { if !$0 { store.confirmation = nil } })
+    }
+
+    private func buttonRole(_ role: String) -> ButtonRole? {
+        if role == "destructive" { return .destructive }
+        if role == "cancel" { return .cancel }
+        return nil
     }
 
     private var systemPopoverIsPresented: Binding<Bool> {
@@ -5750,7 +5825,7 @@ struct HTMLToIOSGeneratedRootView: View {
     }
 
     @ViewBuilder private var customPopoverOverlay: some View {
-        if let state = store.popover,
+        if let state = activeCustomPresentationState,
            let presentation = catalog.presentation(state.id),
            presentation.usesCustomOverlay {
             GeometryReader { proxy in
@@ -5767,17 +5842,49 @@ struct HTMLToIOSGeneratedRootView: View {
                     presentationColor(presentation.backdropColor)
                         .opacity(presentation.backdropOpacity)
                         .contentShape(Rectangle())
-                        .onTapGesture { if presentation.backdropDismisses { store.popover = nil } }
+                        .onTapGesture { if presentation.backdropDismisses { dismissCustomPresentation() } }
                     HTMLToIOSNativeNodeView(store: store, spec: presentation.node)
                         .frame(width: width, height: height, alignment: .topLeading)
                         .position(x: centerX, y: centerY)
+                        .offset(y: max(customPresentationDragOffset, 0))
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 8)
+                                .onChanged { value in
+                                    if presentation.transitionInteractive && presentation.scrollOwnership == "none" && value.translation.height > 0 {
+                                        customPresentationDragOffset = value.translation.height
+                                    }
+                                }
+                                .onEnded { value in
+                                    guard presentation.transitionInteractive && presentation.scrollOwnership == "none" else { return }
+                                    if value.translation.height > min(max(height * 0.25, 96), 180) || value.predictedEndTranslation.height > 260 {
+                                        dismissCustomPresentation()
+                                    }
+                                    withAnimation(.easeOut(duration: 0.22)) { customPresentationDragOffset = 0 }
+                                }
+                        )
                 }
             }
             .ignoresSafeArea()
             .transition(presentationTransition(presentation.transitionKind))
-            .animation(.easeInOut(duration: Double(presentation.transitionDurationMilliseconds) / 1000), value: store.popover?.id)
+            .animation(.easeInOut(duration: Double(presentation.transitionDurationMilliseconds) / 1000), value: state.id)
             .zIndex(1000)
         }
+    }
+
+    private var activeCustomPresentationState: HTMLToIOSGeneratedStore.PresentedState? {
+        if let state = store.sheet, catalog.presentation(state.id)?.usesCustomOverlay == true { return state }
+        if let state = store.fullScreen, catalog.presentation(state.id)?.usesCustomOverlay == true { return state }
+        if let state = store.popover, catalog.presentation(state.id)?.usesCustomOverlay == true { return state }
+        if let state = store.overlay, catalog.presentation(state.id)?.usesCustomOverlay == true { return state }
+        return nil
+    }
+
+    private func dismissCustomPresentation() {
+        store.sheet = nil
+        store.fullScreen = nil
+        store.popover = nil
+        store.overlay = nil
+        customPresentationDragOffset = 0
     }
 
     private func presentationDetents(_ values: [String]) -> Set<PresentationDetent> {
@@ -8454,7 +8561,7 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController, UIScrollViewDele
 UIKIT_ROOT = r'''// Generated by sky-html-to-ios. App entry surface for UIKit integration.
 import UIKit
 
-final class HTMLToIOSGeneratedCustomOverlayController: UIViewController {
+final class HTMLToIOSGeneratedCustomOverlayController: UIViewController, UIGestureRecognizerDelegate {
     private let presentation: HTMLToIOSPresentationSpec
     private let actionHandler: (HTMLToIOSActionSpec?) -> Void
     private let generatedState = HTMLToIOSUIKitState()
@@ -8500,6 +8607,11 @@ final class HTMLToIOSGeneratedCustomOverlayController: UIViewController {
         self.panel = panel
         panel.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(panel)
+        if presentation.transitionInteractive && !presentation.interactiveDismissDisabled {
+            let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePresentationPan(_:)))
+            pan.delegate = self
+            panel.addGestureRecognizer(pan)
+        }
         let rect = presentation.sourceRect
         let width = CGFloat(rect.indices.contains(2) ? rect[2] : 0)
         let height = CGFloat(generatedState.sizeOverrides[presentation.node.id]?.height ?? (rect.indices.contains(3) ? rect[3] : 0))
@@ -8507,13 +8619,16 @@ final class HTMLToIOSGeneratedCustomOverlayController: UIViewController {
         let sourceTop = panel.topAnchor.constraint(equalTo: view.topAnchor, constant: CGFloat(rect.indices.contains(1) ? rect[1] : 0))
         sourceLeading.priority = .defaultHigh
         sourceTop.priority = .defaultHigh
+        let bottomLimit = presentation.keyboardAvoidance == "system-focus-aware"
+            ? view.keyboardLayoutGuide.topAnchor
+            : view.bottomAnchor
         NSLayoutConstraint.activate([
             sourceLeading,
             sourceTop,
             panel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor),
             panel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
             panel.topAnchor.constraint(greaterThanOrEqualTo: view.topAnchor),
-            panel.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor),
+            panel.bottomAnchor.constraint(lessThanOrEqualTo: bottomLimit),
             panel.widthAnchor.constraint(equalToConstant: width),
             panel.heightAnchor.constraint(equalToConstant: height),
         ])
@@ -8521,6 +8636,42 @@ final class HTMLToIOSGeneratedCustomOverlayController: UIViewController {
             panel.alpha = 0
             UIView.animate(withDuration: Double(presentation.transitionDurationMilliseconds) / 1000) { panel.alpha = 1; self.view.layoutIfNeeded() }
         }
+        UIAccessibility.post(notification: .screenChanged, argument: panel)
+    }
+
+    @objc private func handlePresentationPan(_ gesture: UIPanGestureRecognizer) {
+        guard let panel else { return }
+        let translation = max(gesture.translation(in: view).y, 0)
+        switch gesture.state {
+        case .changed:
+            panel.transform = CGAffineTransform(translationX: 0, y: translation)
+            backdrop.alpha = max(1 - translation / max(panel.bounds.height, 1), 0.2)
+        case .ended, .cancelled:
+            let velocity = gesture.velocity(in: view).y
+            let shouldDismiss = gesture.state != .cancelled && (translation > min(max(panel.bounds.height * 0.25, 96), 180) || velocity > 900)
+            if shouldDismiss {
+                dismiss(animated: true)
+            } else {
+                UIView.animate(withDuration: 0.22, delay: 0, options: [.curveEaseOut, .allowUserInteraction]) {
+                    panel.transform = .identity
+                    self.backdrop.alpha = 1
+                }
+            }
+        default:
+            break
+        }
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return true }
+        guard pan.velocity(in: view).y > abs(pan.velocity(in: view).x) else { return false }
+        var candidate = gestureRecognizer.view?.hitTest(gestureRecognizer.location(in: gestureRecognizer.view), with: nil)
+        while let view = candidate, view !== panel {
+            if let scroll = view as? UIScrollView,
+               scroll.contentOffset.y > -scroll.adjustedContentInset.top + 0.5 { return false }
+            candidate = view.superview
+        }
+        return true
     }
 
     private func perform(_ action: HTMLToIOSActionSpec?) {
@@ -8640,9 +8791,16 @@ final class HTMLToIOSGeneratedCoordinator: NSObject, UITabBarControllerDelegate 
         case "present-alert", "present-confirmation":
             guard let stateID, let presentation = catalog.presentation(stateID) else { return }
             let preferredStyle: UIAlertController.Style = spec.action == "present-confirmation" ? .actionSheet : .alert
-            let controller = UIAlertController(title: presentation.node.text, message: nil, preferredStyle: preferredStyle)
-            controller.addAction(UIAlertAction(title: "OK", style: .default))
-            if preferredStyle == .actionSheet { controller.addAction(UIAlertAction(title: "Cancel", style: .cancel)) }
+            let controller = UIAlertController(title: presentation.title, message: presentation.message.isEmpty ? nil : presentation.message, preferredStyle: preferredStyle)
+            if presentation.actions.isEmpty {
+                controller.addAction(UIAlertAction(title: "OK", style: .default))
+                if preferredStyle == .actionSheet { controller.addAction(UIAlertAction(title: "Cancel", style: .cancel)) }
+            } else {
+                for action in presentation.actions {
+                    let style: UIAlertAction.Style = action.role == "destructive" ? .destructive : (action.role == "cancel" ? .cancel : .default)
+                    controller.addAction(UIAlertAction(title: action.title, style: style))
+                }
+            }
             currentNavigationController?.present(controller, animated: true)
         case "present-sheet", "present-fullscreen", "present-full-screen", "present-popover", "present-menu", "overlay", "present-overlay", "show-dialog":
             guard let stateID, let presentation = catalog.presentation(stateID) else { return }
@@ -9806,7 +9964,11 @@ def relation_native_consumption(
         after_id = str(relation.get("afterNodeId") or "")
         container_id = str(relation.get("containerNodeId") or "")
         direct_order = direct_payload_child_ids(payload_nodes.get(container_id))
-        if before_id in detached_native_ids or after_id in detached_native_ids:
+        backdrop_merged_into_panel = str((merge_evidence.get(before_id) or {}).get("ownerNodeId") or "") == after_id
+        if backdrop_merged_into_panel:
+            consumed = after_id in represented_ids
+            strategy = "presentation-backdrop-before-panel"
+        elif before_id in detached_native_ids or after_id in detached_native_ids:
             consumed = before_id in represented_ids and after_id in represented_ids
             strategy = "native-layer-detachment"
         elif before_id in direct_order and after_id in direct_order:
@@ -9815,7 +9977,7 @@ def relation_native_consumption(
             consumed = payload_order.index(before_id) < payload_order.index(after_id)
         else:
             consumed = bool(optimized.get(before_id) or optimized.get(after_id)) and not unresolved
-        if strategy != "native-layer-detachment":
+        if strategy not in {"native-layer-detachment", "presentation-backdrop-before-panel"}:
             strategy = "ordered-native-children"
         check("rendered-child-order", consumed, {
             "containerNodeId": container_id,
@@ -10063,6 +10225,21 @@ def build_native_structure_manifest(
                 motions_by_node.setdefault(source_id, []).append(item)
         motion_node_ids = set(motions_by_node)
         merge_evidence = build_native_merge_evidence(ir_nodes, payload_nodes, motions_by_node)
+        states_by_id = {str(item.get("id") or ""): item for item in ir_payload.get("states") or []}
+        for presentation in (presentation_by_screen.get(screen_id) or {}).get("presentations") or []:
+            owner_id = str(presentation.get("targetNodeId") or "")
+            for alias_state_id in presentation.get("aliasStateIds") or []:
+                alias_state = states_by_id.get(str(alias_state_id)) or {}
+                for source_id in alias_state.get("targetNodeIds") or []:
+                    source_id = str(source_id)
+                    if source_id and source_id != owner_id and source_id in ir_nodes:
+                        merge_evidence[source_id] = {
+                            "strategy": "presentation-backdrop-merged",
+                            "ownerNodeId": owner_id,
+                            "sourceNodeIds": [source_id],
+                            "nativePrimitive": "system-presentation-backdrop",
+                            "stateAlias": str(alias_state_id),
+                        }
         detached_native_ids = {
             str((payload_screen.get(key) or {}).get("id") or "")
             for key in ("topBar", "bottomBar")
@@ -10348,6 +10525,7 @@ def build_native_structure_manifest(
             geometry = planned.get("geometry") or {}
             appearance = planned.get("appearance") or {}
             behavior = planned.get("behavior") or {}
+            presentation_merge = (merge_evidence.get(node_id) or {}).get("strategy") == "presentation-backdrop-merged"
             checks = {
                 "payloadNode": bool(generated),
                 "controlConfig": bool(config),
@@ -10364,8 +10542,8 @@ def build_native_structure_manifest(
             control_configuration_consumption.append({
                 "nodeId": node_id,
                 "semantic": planned.get("semantic"),
-                "status": "consumed" if all(checks.values()) else "not-consumed",
-                "checks": checks,
+                "status": "consumed" if presentation_merge or all(checks.values()) else "not-consumed",
+                "checks": {"presentationBackdropMerge": True} if presentation_merge else checks,
             })
         payload_presentations = {str(item.get("stateID") or ""): item for item in payload_screen.get("presentations") or []}
         presentation_consumption = []
@@ -10381,6 +10559,11 @@ def build_native_structure_manifest(
                     and bool(generated.get("backdropDismisses")) == bool((planned.get("backdrop") or {}).get("dismisses")),
                 "anchor": list(generated.get("sourceRect") or []) == list((planned.get("anchor") or {}).get("sourceRect") or []),
                 "transition": generated.get("transitionKind") == (planned.get("transition") or {}).get("kind"),
+                "aliases": list(generated.get("aliasStateIDs") or []) == list(planned.get("aliasStateIds") or []),
+                "content": generated.get("title") == (planned.get("content") or {}).get("title")
+                    and generated.get("message") == (planned.get("content") or {}).get("message")
+                    and list(generated.get("actions") or []) == list((planned.get("content") or {}).get("actions") or []),
+                "keyboard": generated.get("keyboardAvoidance") == planned.get("keyboardAvoidance"),
             }
             presentation_consumption.append({"stateId": state_id, "status": "consumed" if all(checks.values()) else "not-consumed", "checks": checks})
         scroll_region_consumption = {}

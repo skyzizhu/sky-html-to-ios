@@ -282,6 +282,8 @@ Supported presentations include sheets, half-height `UISheetPresentationControll
 
 Before code generation, `native-presentation-plan.json` resolves one owner and one native strategy for every presentation state. The shared SwiftUI/UIKit contract preserves detents, grabber visibility, corner radius, backdrop appearance and dismissal, interactive dismissal, content scrolling, keyboard avoidance, popover anchors, permitted arrow directions, and source-derived transitions. System presentation APIs remain the default; custom overlays are selected only when measured geometry or behavior cannot be represented faithfully by the system component.
 
+Backdrop and panel mutations triggered by one action are merged under a single presentation owner instead of becoming duplicate screens or modals. Alert and confirmation content is lowered into native title, message, and default/cancel/destructive actions. Editable presentation content uses focus-aware system keyboard avoidance, while custom interactive panels use downward velocity/threshold dismissal and yield to inner scrolling until the scroll view reaches its top edge.
+
 | Container | SwiftUI | UIKit |
 |---|---|---|
 | Hierarchical navigation | `NavigationStack` | `UINavigationController` |

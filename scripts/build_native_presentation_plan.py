@@ -104,6 +104,55 @@ def transition(kind: str, presentation: dict[str, Any], node: dict[str, Any]) ->
     return {"kind": motion, "durationMilliseconds": duration, "interactive": kind == "sheet", "reducedMotion": "fade"}
 
 
+def descendants(nodes: dict[str, dict[str, Any]], root_id: str) -> list[dict[str, Any]]:
+    children: dict[str, list[dict[str, Any]]] = {}
+    for node in nodes.values():
+        children.setdefault(str(node.get("parentId") or ""), []).append(node)
+    result: list[dict[str, Any]] = []
+    pending = list(children.get(root_id) or [])
+    while pending:
+        node = pending.pop(0)
+        result.append(node)
+        pending[0:0] = children.get(str(node.get("id") or ""), [])
+    return result
+
+
+def content_contract(nodes: dict[str, dict[str, Any]], target_id: str) -> dict[str, Any]:
+    subtree = [nodes[target_id], *descendants(nodes, target_id)]
+    text_nodes = [
+        node for node in subtree
+        if str((node.get("content") or {}).get("text") or "").strip()
+        and str(node.get("semanticType") or "") not in {"button", "icon-button", "menu-item"}
+    ]
+    heading = next((node for node in text_nodes if str(node.get("semanticType") or "") == "heading"), None)
+    title_node = heading or (text_nodes[0] if text_nodes else None)
+    title = str(((title_node or {}).get("content") or {}).get("text") or "").strip()
+    message = " ".join(
+        str((node.get("content") or {}).get("text") or "").strip()
+        for node in text_nodes if node is not title_node
+    ).strip()
+    actions = []
+    for node in subtree:
+        if str(node.get("semanticType") or "") not in {"button", "icon-button", "menu-item"}:
+            continue
+        label = str((node.get("content") or {}).get("text") or "").strip()
+        if not label:
+            continue
+        role = "destructive" if re.search(r"delete|remove|clear|destructive|删除|移除|清空", label, re.I) else (
+            "cancel" if re.search(r"cancel|close|dismiss|取消|关闭", label, re.I) else "default"
+        )
+        actions.append({"id": str(node.get("id") or ""), "title": label, "role": role})
+    return {"title": title, "message": message, "actions": actions}
+
+
+def mask_score(node: dict[str, Any], root_rect: dict[str, Any]) -> float:
+    source = node.get("source") or {}
+    name = " ".join(str(source.get(key) or "") for key in ("selector", "domId", "runtimeId")).lower()
+    rect = (node.get("layout") or {}).get("rect") or {}
+    area_ratio = number(rect.get("width")) * number(rect.get("height")) / max(number(root_rect.get("width")) * number(root_rect.get("height")), 1)
+    return (1 if re.search(r"mask|backdrop|scrim", name) else 0) + (0.5 if area_ratio >= 0.8 else 0)
+
+
 def build_screen(screen: dict[str, Any], ir: dict[str, Any]) -> dict[str, Any]:
     nodes = {str(item.get("id") or ""): item for item in screen.get("nodes") or []}
     root = nodes.get(str(screen.get("rootNodeId") or "")) or next(iter(nodes.values()), {})
@@ -111,6 +160,7 @@ def build_screen(screen: dict[str, Any], ir: dict[str, Any]) -> dict[str, Any]:
     states = {str(item.get("id") or ""): item for item in ir.get("states") or []}
     contracts: dict[str, dict[str, Any]] = {}
     for interaction in ir.get("interactions") or []:
+        candidates = []
         for item in (interaction.get("payload") or {}).get("transitions") or []:
             state_id = str(item.get("targetStateId") or "")
             state = states.get(state_id) or {}
@@ -123,6 +173,12 @@ def build_screen(screen: dict[str, Any], ir: dict[str, Any]) -> dict[str, Any]:
             # state merging resolves a concrete owner node.
             if not target_id or not target:
                 continue
+            candidates.append((state_id, state, target_id, target))
+        if not candidates:
+            continue
+        canonical = min(candidates, key=lambda value: mask_score(value[3], root_rect))
+        aliases = [state_id for state_id, _, _, _ in candidates if state_id != canonical[0]]
+        for state_id, state, target_id, target in [canonical]:
             source_id = str(interaction.get("sourceNodeId") or ((interaction.get("sourceNodeIds") or [""])[0]))
             source = nodes.get(source_id) or {}
             explicit = dict(interaction.get("presentation") or {})
@@ -133,11 +189,15 @@ def build_screen(screen: dict[str, Any], ir: dict[str, Any]) -> dict[str, Any]:
             source_rect = (source.get("layout") or {}).get("rect") or {}
             node_style = target.get("style") or {}
             corner_radius = number(node_style.get("borderTopLeftRadius"), number(node_style.get("borderRadius"), 16))
+            content = content_contract(nodes, target_id)
+            subtree = [target, *descendants(nodes, target_id)]
+            has_editable_content = any(bool((node.get("textBehavior") or {}).get("editable")) for node in subtree)
             contracts[state_id] = {
                 "stateId": state_id,
                 "sourceInteractionId": interaction.get("id"),
                 "sourceNodeId": source_id or None,
                 "targetNodeId": target_id,
+                "aliasStateIds": aliases,
                 "kind": kind,
                 "style": style_name,
                 "strategy": strategy(kind, style_name, target_rect, root_rect),
@@ -151,7 +211,9 @@ def build_screen(screen: dict[str, Any], ir: dict[str, Any]) -> dict[str, Any]:
                 },
                 "panel": {"cornerRadiusPt": max(corner_radius, 0), "clipsContent": True},
                 "scrollOwnership": "presentation-content" if str((target.get("layout") or {}).get("scrollAxis") or "none") != "none" else "none",
-                "keyboardAvoidance": "system",
+                "keyboardAvoidance": "system-focus-aware" if has_editable_content else "system",
+                "focusRestoration": "source-control",
+                "content": content,
                 "largestUndimmedDetent": explicit.get("largestUndimmedDetent"),
                 "anchor": {
                     "coordinateSpace": "app-root",
