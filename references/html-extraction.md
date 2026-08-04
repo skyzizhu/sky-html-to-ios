@@ -50,6 +50,7 @@ NODE_PATH="<node_modules>" "<node>" scripts/extract_render_tree.cjs \
 - `::before` 与 `::after`，并将可见伪元素转成带 owner 和估算边界的 synthetic node
 - scrollWidth、scrollHeight、clientWidth、clientHeight
 - 可见性、裁剪、position、z-index 和 transform
+- DOM source order、`::before`/`::after` phase、stacking context 创建原因、最近 context owner、paint group 与 stacking level
 - 直接文本内容，避免父节点重复吞并子节点文字
 - `src`、`currentSrc`、SVG、背景图片和字体引用
 - href、target、form action、inline onclick
@@ -106,5 +107,13 @@ NODE_PATH="<node_modules>" "<node>" scripts/extract_render_tree.cjs \
 - 页面无法离线运行：列出失败资源；用户允许后再加载远程资源。
 - 动态页面无法稳定：固定一个可复现状态，并把其他状态列为未验证。
 - WebGL/Canvas：仅能把纯装饰输出为合法资源；交互式 Canvas 不在默认范围。
+
+## 绘制与合成证据
+
+每个可视节点必须输出独立的 `paint` 记录，至少包含 source order、subtree end order、pseudo phase、是否创建 stacking context、创建原因、最近 stacking context owner、paint group 与 stacking level。`::before` 必须排在元素普通后代之前，`::after` 必须排在普通后代之后；同组同层级使用稳定 source order，不得依赖对象遍历顺序。
+
+stacking context 的判断至少覆盖根节点、带 z-index 的 positioned 节点、fixed/sticky、opacity、transform、filter/backdrop-filter、isolation、mix-blend-mode、clip/mask、contain 与 will-change。这里保存的是浏览器证据，不代表所有混合、滤镜和 mask 都能无损映射；无法原生等价实现时必须进入明确的降级或自定义绘制策略。
+
+圆角不能自动推导后代裁剪。提取器必须分别保存 border radius、overflow 轴、clip-path 与 mask；只有来源明确建立裁剪时，后续计划才允许设置 `clipsToBounds`、`.clipped()` 或 mask。
 
 默认启用 motion pass；只有诊断静态问题时才使用 `--skip-motion`。closed Shadow DOM、跨域 iframe 和运行时不可访问的绘制内容必须产生边界报告。

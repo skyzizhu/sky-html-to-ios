@@ -26,6 +26,7 @@
 - `axis`：horizontal、vertical、grid 或 overlay；
 - `layoutAlgorithm`：stack、wrapping-stack、grid 或 positioned-overlay；
 - `orderedChildNodeIds`：浏览器最终视觉顺序；
+- `paintOrderNodeIds`：浏览器 stacking contract 推导的稳定绘制顺序；
 - 独立 row/column gap、alignment、distribution、wrap、reverse 和 writing direction；
 - 每个子项的 fixed、intrinsic 或 flexible 尺寸策略；
 - measured width/height、aspect ratio、flex grow/shrink 和 compression resistance；
@@ -34,6 +35,8 @@
 SwiftUI 使用这些证据选择 Stack/Grid/Overlay、spacing、frame 和 layout priority。UIKit 使用相同证据配置 `UIStackView`、Auto Layout、Table/Collection item sizing 与 hugging/compression priority。禁止技术栈各自重排子节点。
 
 混合普通流与 positioned 子节点时，先用浏览器矩形判断实际重叠。若 positioned 子节点覆盖普通流内容且承担同一视觉层级，所有相关子节点按最终绘制顺序进入同一 Overlay/ZStack，并保留容器实测尺寸；若没有实质重叠，普通流继续参与 Stack/Grid 测量，positioned 子节点单独挂到 overlay 层。禁止把所有 absolute 节点一概移出后破坏前后层级。
+
+`orderedChildNodeIds` 与 `paintOrderNodeIds` 承担不同职责：前者用于 Stack/Grid、intrinsic size 和普通流测量，后者只决定重叠绘制的前后层级。关系图对直接子节点的真实矩形交叠生成 overlap-order 关系，并保存 paint group、stacking level 与 source order 证据；SwiftUI ZStack/overlay 和 UIKit overlay subviews 必须消费同一顺序。不得只比较 `z-index`，也不得为了层级正确而重排普通流测量顺序。
 
 复用容器另外生成 `collectionLayouts`：
 
@@ -74,6 +77,8 @@ Wrapping stack 在 SwiftUI 中使用原生 `Layout` 协议实现，在 UIKit 中
 
 原生运行时必须消费可确定的 min/max、padding、border、margin 和 compression 证据。transform 只改变视觉绘制时，不得反向污染正常流尺寸。
 
+每个节点的 `compositing` 契约保存 source order、paint group、stacking level、stacking context owner、创建原因、clip owner、clip-path、mask、blend mode 与 isolation。圆角绘制和子树裁剪必须分开消费：corner radius 可以只作用于背景/边框，只有 `clipsOwnContent` 或等价来源证据才裁剪后代。复杂 blend/filter/mask 没有原生等价实现时保留证据并显式降级，不能静默当成普通透明度。
+
 ## 定位与状态布局
 
 每个节点保存 static、relative、absolute、fixed 或 sticky 定位方案。absolute 使用最近的 positioned ancestor，fixed 使用 viewport，sticky 使用最近 scroll owner；同时保存 containing block、相对偏移、insets、z-index、transform 和 transform origin。定位节点不得默认相对屏幕居中，也不得改变普通流兄弟节点的尺寸分配。
@@ -107,6 +112,7 @@ Wrapping stack 在 SwiftUI 中使用原生 `Layout` 协议实现，在 UIKit 中
 6. Grid 具有轨道、wrapping container 使用 wrapping 算法、定位节点具有正确 containing block；
 7. 状态布局集合与 UI IR state delta 一致；
 8. 复合槽位唯一、完整并保持视觉顺序。
+9. 每个容器的 paint order 完整、唯一并满足全部 overlap-order 关系；stacking context owner 和 overflow clip owner 必须闭合。
 
 生成后，`native-structure-manifest.json` 再逐容器核对算法、axis、child order、row/column gap、wrap、alignment 和 distribution，逐集合核对 item order、尺寸模式、列数、supplementary、pinning、insets、间距和滚动隔离，逐节点核对尺寸/定位契约，逐状态核对布局操作，并逐复合控件核对 `compoundLayout` 与 `contentItems`。Manifest 还必须证明生成运行时具备并消费当前页面要求的相对约束、显式 Grid placement、集合尺寸、pinned supplementary 和状态重排能力。任一项未消费时不得接入 Xcode target。
 

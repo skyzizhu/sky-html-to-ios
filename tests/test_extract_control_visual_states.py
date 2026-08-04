@@ -23,6 +23,47 @@ NODE_MODULES = Path(
 
 @unittest.skipUnless(NODE.is_file() and NODE_MODULES.is_dir(), "bundled Node/Playwright runtime unavailable")
 class ExtractControlVisualStatesTests(unittest.TestCase):
+    def test_stacking_context_pseudo_order_and_clip_evidence_are_extracted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.html"
+            output = root / "render-tree.json"
+            source.write_text("""
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <style>
+                  html,body{margin:0}
+                  main{position:relative;width:393px;height:852px}
+                  .card{position:relative;margin:20px;width:200px;height:120px;border-radius:20px;overflow:visible}
+                  .card::before{content:"";position:absolute;inset:0;background:red;z-index:-1}
+                  .card::after{content:"";position:absolute;right:-8px;top:-8px;width:16px;height:16px;background:blue}
+                  .content{position:relative;z-index:2;opacity:.9;transform:translateZ(0)}
+                </style>
+                <main id="app"><section id="card" class="card"><span id="content" class="content">Text</span></section></main>
+            """, encoding="utf-8")
+            environment = dict(os.environ)
+            environment["NODE_PATH"] = str(NODE_MODULES)
+            result = subprocess.run([
+                str(NODE), str(SCRIPT), "--html", str(source), "--out", str(output),
+                "--selector", "#app", "--width", "393", "--height", "852",
+            ], text=True, capture_output=True, check=False, env=environment)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            card = next(item for item in payload["nodes"] if item.get("domId") == "card")
+            content = next(item for item in payload["nodes"] if item.get("domId") == "content")
+            before = next(item for item in payload["nodes"] if item.get("tag") == "::before")
+            after = next(item for item in payload["nodes"] if item.get("tag") == "::after")
+            self.assertFalse(card["paint"]["createsStackingContext"])
+            self.assertEqual(card["style"]["overflowX"], "visible")
+            self.assertEqual(card["style"]["cornerRadii"][0], "20px")
+            self.assertTrue(content["paint"]["createsStackingContext"])
+            self.assertIn("positioned-z-index", content["paint"]["stackingContextReasons"])
+            self.assertIn("opacity", content["paint"]["stackingContextReasons"])
+            self.assertIn("transform", content["paint"]["stackingContextReasons"])
+            self.assertEqual(before["paint"]["pseudoPhase"], "before")
+            self.assertEqual(after["paint"]["pseudoPhase"], "after")
+            self.assertLess(before["paint"]["sourceOrder"], content["paint"]["sourceOrder"])
+            self.assertGreater(after["paint"]["sourceOrder"], content["paint"]["sourceOrder"])
+
     def test_authored_relative_lengths_survive_computed_style_extraction(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -337,6 +337,8 @@ Default analysis widths are 320, 375, 393, and 430 points. Native validation use
 
 Handles backgrounds, gradients, corner radii, borders, shadows, opacity, transforms, clipping, padding, margins, gaps, z-order, content modes, pseudo-elements, masks, filters, blur strategies, and control states.
 
+Browser paint order is preserved as a deterministic contract: source order, pseudo-element phase, stacking-context ownership, paint group, and z-level are lowered into the same native paint rank for SwiftUI and UIKit. Corner radius remains separate from descendant clipping, so rounded containers with `overflow: visible` can still render shadows and out-of-bounds decorations.
+
 When CSS has no direct system equivalent, the preference order is:
 
 1. existing project component;

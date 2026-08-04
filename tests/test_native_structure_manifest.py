@@ -493,6 +493,57 @@ class NativeStructureManifestTests(unittest.TestCase):
                 self.assertTrue(manifest["runtimeCapabilities"]["collectionSizing"]["consumed"])
                 self.assertTrue(manifest["runtimeCapabilities"]["pinnedSupplementary"]["consumed"])
 
+    def test_stacking_paint_order_is_lowered_and_consumed_by_both_stacks(self) -> None:
+        for ui_stack in ("swiftui", "uikit"):
+            with self.subTest(ui_stack=ui_stack), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                payload = make_ir(ui_stack)
+                nodes = payload["screens"][0]["nodes"]
+                toolbar = next(item for item in nodes if item["id"] == "home.toolbar")
+                toolbar["style"].update({"display": "block", "position": "relative"})
+                ordered = [
+                    next(item for item in nodes if item["id"] == node_id)
+                    for node_id in ("home.title", "home.icon", "home.count")
+                ]
+                for item in ordered:
+                    item["layout"].update({
+                        "mode": "absolute",
+                        "position": "absolute",
+                        "rect": {"x": 24, "y": 24, "width": 120, "height": 32},
+                    })
+                    item["style"]["position"] = "absolute"
+                ordered[0]["paint"] = {"paintGroup": 2, "stackingLevel": 0, "sourceOrder": 3}
+                ordered[1]["paint"] = {"paintGroup": 6, "stackingLevel": 1, "sourceOrder": 1}
+                ordered[2]["paint"] = {"paintGroup": 6, "stackingLevel": 1, "sourceOrder": 4}
+
+                outputs = self.build_chain(root, ui_stack, payload)
+                _, report = self.validate_chain(root, *outputs)
+                self.assertEqual(report["status"], "passed")
+                layout = json.loads(outputs[2].read_text(encoding="utf-8"))["screens"][0]
+                contract = next(item for item in layout["containers"] if item["containerNodeId"] == toolbar["id"])
+                expected = ["home.title", "home.icon", "home.count"]
+                self.assertEqual(contract["paintOrderNodeIds"], expected)
+
+                generated = json.loads((outputs[4] / "Resources/Payload/HTMLToIOSGeneratedPayload.json").read_text(encoding="utf-8"))
+                indexed: dict[str, dict] = {}
+
+                def visit(value: object) -> None:
+                    if isinstance(value, dict):
+                        if isinstance(value.get("id"), str) and "semantic" in value:
+                            indexed[value["id"]] = value
+                        for child in value.values():
+                            visit(child)
+                    elif isinstance(value, list):
+                        for child in value:
+                            visit(child)
+
+                visit(generated)
+                self.assertEqual(indexed[toolbar["id"]]["paintOrderNodeIds"], expected)
+                self.assertEqual(
+                    [indexed[node_id]["style"]["nativePaintOrder"] for node_id in expected],
+                    [0, 1, 2],
+                )
+
     def test_responsive_grid_and_heterogeneous_item_sizing_execute_in_both_stacks(self) -> None:
         for ui_stack in ("swiftui", "uikit"):
             with self.subTest(ui_stack=ui_stack), tempfile.TemporaryDirectory() as temporary:

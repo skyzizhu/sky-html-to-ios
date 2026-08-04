@@ -604,8 +604,41 @@ async function main() {
         clipPath: style.clipPath,
         filter: style.filter,
         backdropFilter: style.backdropFilter || style.webkitBackdropFilter || "none",
+        isolation: style.isolation,
+        mixBlendMode: style.mixBlendMode,
+        maskImage: style.maskImage || style.webkitMaskImage || "none",
+        mask: style.mask || style.webkitMask || "none",
+        contain: style.contain,
+        willChange: style.willChange,
+        float: style.cssFloat,
         pointerEvents: style.pointerEvents,
       });
+      const stackingContextReasons = (style, isRoot = false) => {
+        const reasons = [];
+        const positioned = ["absolute", "relative", "fixed", "sticky"].includes(style.position);
+        if (isRoot) reasons.push("root");
+        if (["fixed", "sticky"].includes(style.position)) reasons.push(`position:${style.position}`);
+        if (positioned && style.zIndex !== "auto") reasons.push("positioned-z-index");
+        if (Number.parseFloat(style.opacity || "1") < 1) reasons.push("opacity");
+        if (style.transform && style.transform !== "none") reasons.push("transform");
+        if (style.filter && style.filter !== "none") reasons.push("filter");
+        if ((style.backdropFilter || style.webkitBackdropFilter) && (style.backdropFilter || style.webkitBackdropFilter) !== "none") reasons.push("backdrop-filter");
+        if (style.isolation === "isolate") reasons.push("isolation");
+        if (style.mixBlendMode && style.mixBlendMode !== "normal") reasons.push("mix-blend-mode");
+        if ((style.clipPath && style.clipPath !== "none") || (style.maskImage && style.maskImage !== "none") || (style.webkitMaskImage && style.webkitMaskImage !== "none")) reasons.push("clip-or-mask");
+        if (/(layout|paint|strict|content)/.test(style.contain || "")) reasons.push("contain");
+        if (/(transform|opacity|filter|perspective|clip-path|mask)/.test(style.willChange || "")) reasons.push("will-change");
+        return reasons;
+      };
+      const paintGroup = (style, createsStackingContext) => {
+        const numericZ = Number.parseFloat(style.zIndex);
+        if (Number.isFinite(numericZ) && numericZ < 0) return 1;
+        const positioned = ["absolute", "relative", "fixed", "sticky"].includes(style.position);
+        if (!positioned && style.cssFloat && style.cssFloat !== "none") return 3;
+        if (!positioned && String(style.display || "").startsWith("inline")) return 4;
+        if (positioned || createsStackingContext) return Number.isFinite(numericZ) && numericZ > 0 ? 6 : 5;
+        return 2;
+      };
       const pseudoObject = (element, pseudo) => {
         const style = getComputedStyle(element, pseudo);
         if (!style || style.display === "none" || style.content === "none" || style.content === "normal") return null;
@@ -815,9 +848,18 @@ async function main() {
         });
         return clone.outerHTML;
       };
+      const documentOrder = new Map(elements.map((element, index) => [element, index]));
+      const subtreeEndOrder = new Map(elements.map((element) => [
+        element,
+        Math.max(...elements
+          .filter((candidate) => element === candidate || element.contains(candidate))
+          .map((candidate) => documentOrder.get(candidate))),
+      ]));
       const elementNodes = elements.map((element) => {
         const rect = element.getBoundingClientRect();
         const style = getComputedStyle(element);
+        const contextReasons = stackingContextReasons(style, element === root);
+        const numericZ = Number.parseFloat(style.zIndex);
         const effectivelyVisible = typeof element.checkVisibility === "function"
           ? element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
           : style.display !== "none" && style.visibility !== "hidden" && Number.parseFloat(style.opacity || "1") > 0;
@@ -892,6 +934,15 @@ async function main() {
           scroll: { scrollWidth: element.scrollWidth, scrollHeight: element.scrollHeight, clientWidth: element.clientWidth, clientHeight: element.clientHeight },
           visible: effectivelyVisible && rect.width > 0 && rect.height > 0,
           style: styleObject(style, element),
+          paint: {
+            sourceOrder: documentOrder.get(element),
+            subtreeEndOrder: subtreeEndOrder.get(element),
+            pseudoPhase: "element",
+            createsStackingContext: contextReasons.length > 0,
+            stackingContextReasons: contextReasons,
+            stackingLevel: Number.isFinite(numericZ) ? numericZ : 0,
+            paintGroup: paintGroup(style, contextReasons.length > 0),
+          },
           placeholderStyle,
           pseudo: { before: pseudoObject(element, "::before"), after: pseudoObject(element, "::after") },
           asset: clean(asset),
@@ -907,6 +958,20 @@ async function main() {
           textMetrics: textMetricsObject(element, style),
         };
       });
+      const elementNodeById = new Map(elementNodes.map((node) => [node.runtimeId, node]));
+      for (const node of elementNodes) {
+        let parentId = node.parentRuntimeId;
+        while (parentId) {
+          const parentNode = elementNodeById.get(parentId);
+          if (!parentNode) break;
+          if (parentNode.paint?.createsStackingContext) {
+            node.paint.stackingContextOwnerRuntimeId = parentId;
+            break;
+          }
+          parentId = parentNode.parentRuntimeId;
+        }
+        if (!node.paint.stackingContextOwnerRuntimeId) node.paint.stackingContextOwnerRuntimeId = node.runtimeId;
+      }
       const px = (value) => {
         const numeric = Number.parseFloat(value);
         return Number.isFinite(numeric) && String(value).trim().endsWith("px") ? numeric : null;
@@ -932,6 +997,11 @@ async function main() {
           estimatedRect.right = estimatedRect.x + estimatedRect.width;
           estimatedRect.bottom = estimatedRect.y + estimatedRect.height;
           const content = String(pseudo.content || "").replace(/^['"]|['"]$/g, "");
+          const contextReasons = stackingContextReasons(style);
+          const numericZ = Number.parseFloat(style.zIndex);
+          const sourceOrder = kind === "before"
+            ? node.paint.sourceOrder + 0.1
+            : node.paint.subtreeEndOrder + 0.9;
           pseudoNodes.push({
             runtimeId: `${node.runtimeId}--${kind}`,
             parentRuntimeId: node.runtimeId,
@@ -947,6 +1017,18 @@ async function main() {
             scroll: { scrollWidth: estimatedRect.width, scrollHeight: estimatedRect.height, clientWidth: estimatedRect.width, clientHeight: estimatedRect.height },
             visible: estimatedRect.width > 0 && estimatedRect.height > 0,
             style,
+            paint: {
+              sourceOrder,
+              subtreeEndOrder: sourceOrder,
+              pseudoPhase: kind,
+              createsStackingContext: contextReasons.length > 0,
+              stackingContextReasons: contextReasons,
+              stackingContextOwnerRuntimeId: node.paint.createsStackingContext
+                ? node.runtimeId
+                : node.paint.stackingContextOwnerRuntimeId,
+              stackingLevel: Number.isFinite(numericZ) ? numericZ : 0,
+              paintGroup: paintGroup(style, contextReasons.length > 0),
+            },
             pseudo: { before: null, after: null },
             asset: style.backgroundImage && style.backgroundImage !== "none" ? style.backgroundImage : null,
             synthetic: { kind: "pseudo-element", pseudo: kind, ownerRuntimeId: node.runtimeId },

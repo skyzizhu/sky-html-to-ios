@@ -1808,6 +1808,12 @@ def build_ir(data: dict, args) -> dict:
                     )
                 },
             },
+            "paint": {
+                **(node.get("paint") or {}),
+                "stackingContextOwnerNodeId": id_map.get(
+                    (node.get("paint") or {}).get("stackingContextOwnerRuntimeId")
+                ),
+            },
             "style": style,
             "content": {
                 "text": node.get("text") or None,

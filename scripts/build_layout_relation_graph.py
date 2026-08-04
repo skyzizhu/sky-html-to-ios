@@ -52,6 +52,18 @@ def intersects(left: dict[str, float], right: dict[str, float]) -> bool:
     )
 
 
+def paint_key(node: dict[str, Any], fallback_order: int) -> tuple[float, float, float]:
+    paint = node.get("paint") or {}
+    group = number(paint.get("paintGroup"))
+    level = number(paint.get("stackingLevel"))
+    source_order = number(paint.get("sourceOrder"))
+    return (
+        group if group is not None else 2,
+        level if level is not None else 0,
+        source_order if source_order is not None else float(fallback_order),
+    )
+
+
 def append_relation(
     relations: list[dict[str, Any]],
     relation_id: str,
@@ -103,6 +115,12 @@ def build_screen_graph(screen: dict[str, Any]) -> dict[str, Any]:
     for container in container_relations:
         container_id = str(container["containerNodeId"])
         ordered = [str(item) for item in container.get("orderedChildNodeIds") or []]
+        source_ordered = [str(item) for item in container.get("sourceChildNodeIds") or ordered]
+        fallback_order = {node_id: index for index, node_id in enumerate(source_ordered)}
+        container["paintOrderNodeIds"] = sorted(
+            source_ordered,
+            key=lambda node_id: paint_key(nodes.get(node_id) or {}, fallback_order.get(node_id, 0)),
+        )
         axis = str(container.get("axis") or "vertical")
         for index, (left_id, right_id) in enumerate(zip(ordered, ordered[1:])):
             left_rect = rect(nodes[left_id]) if left_id in nodes else None
@@ -183,21 +201,25 @@ def build_screen_graph(screen: dict[str, Any]) -> dict[str, Any]:
                     tolerancePt=TOLERANCE_PT,
                 )
 
-        if axis == "overlay":
-            for index, (left_id, left_rect) in enumerate(child_rects):
-                for right_id, right_rect in child_rects[index + 1:]:
-                    if intersects(left_rect, right_rect):
-                        left_z = number((nodes[left_id].get("style") or {}).get("zIndex")) or 0
-                        right_z = number((nodes[right_id].get("style") or {}).get("zIndex")) or 0
-                        append_relation(
-                            relations,
-                            f"{screen_id}.overlap.{container_id}.{len(relations)}",
-                            "overlap-order",
-                            [left_id, right_id],
-                            containerNodeId=container_id,
-                            backNodeId=left_id if left_z <= right_z else right_id,
-                            frontNodeId=right_id if left_z <= right_z else left_id,
-                        )
+        for index, (left_id, left_rect) in enumerate(child_rects):
+            for right_id, right_rect in child_rects[index + 1:]:
+                if not intersects(left_rect, right_rect):
+                    continue
+                left_key = paint_key(nodes[left_id], fallback_order.get(left_id, 0))
+                right_key = paint_key(nodes[right_id], fallback_order.get(right_id, 0))
+                back_id, front_id = (left_id, right_id) if left_key <= right_key else (right_id, left_id)
+                append_relation(
+                    relations,
+                    f"{screen_id}.overlap.{container_id}.{len(relations)}",
+                    "overlap-order",
+                    [left_id, right_id],
+                    containerNodeId=container_id,
+                    backNodeId=back_id,
+                    frontNodeId=front_id,
+                    paintOrderSource="browser-stacking-contract",
+                    backPaintKey=list(left_key if back_id == left_id else right_key),
+                    frontPaintKey=list(right_key if front_id == right_id else left_key),
+                )
 
     return {
         "screenId": screen_id,
@@ -211,6 +233,7 @@ def build_screen_graph(screen: dict[str, Any]) -> dict[str, Any]:
                 "sourceRuntimeId": (node.get("source") or {}).get("runtimeId"),
                 "rect": rect(node),
                 "scrollAxis": str((node.get("layout") or {}).get("scrollAxis") or "none"),
+                "paint": node.get("paint") or {},
             }
             for node_id, node in nodes.items()
         ],
@@ -223,6 +246,7 @@ def build_screen_graph(screen: dict[str, Any]) -> dict[str, Any]:
             "containmentCount": sum(item["kind"] == "containment" for item in relations),
             "sequenceCount": sum(item["kind"] == "visual-sequence" for item in relations),
             "scrollOwnerCount": sum(item["kind"] == "scroll-axis-ownership" for item in relations),
+            "overlapOrderCount": sum(item["kind"] == "overlap-order" for item in relations),
         },
     }
 

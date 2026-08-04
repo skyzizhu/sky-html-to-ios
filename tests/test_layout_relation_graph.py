@@ -139,6 +139,41 @@ class LayoutRelationGraphTests(unittest.TestCase):
             self.assertEqual(first_sequence["beforeNodeId"], "home.icon")
             self.assertEqual(first_sequence["afterNodeId"], "home.title")
 
+    def test_overlap_order_uses_stacking_group_z_level_and_stable_source_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = make_ir()
+            nodes = payload["screens"][0]["nodes"]
+            overlay = node("home.overlay", "home.root", "container", 16, 160, 361, 120)
+            overlay["style"].update({"display": "block", "position": "relative"})
+            back = node("home.overlay.back", overlay["id"], "container", 16, 160, 120, 120)
+            back["style"].update({"position": "absolute", "zIndex": "auto"})
+            back["paint"] = {"paintGroup": 2, "stackingLevel": 0, "sourceOrder": 12}
+            front_early = node("home.overlay.front-early", overlay["id"], "container", 16, 160, 120, 120)
+            front_early["style"].update({"position": "absolute", "zIndex": "2"})
+            front_early["paint"] = {"paintGroup": 6, "stackingLevel": 2, "sourceOrder": 10}
+            front_late = node("home.overlay.front-late", overlay["id"], "container", 16, 160, 120, 120)
+            front_late["style"].update({"position": "absolute", "zIndex": "2"})
+            front_late["paint"] = {"paintGroup": 6, "stackingLevel": 2, "sourceOrder": 14}
+            nodes.extend([overlay, front_late, back, front_early])
+
+            _, graph_path, _ = self.build_outputs(root, payload)
+            screen = json.loads(graph_path.read_text(encoding="utf-8"))["screens"][0]
+            container = next(item for item in screen["containers"] if item["containerNodeId"] == overlay["id"])
+            self.assertEqual(
+                container["paintOrderNodeIds"],
+                [back["id"], front_early["id"], front_late["id"]],
+            )
+            overlap_relations = [
+                item for item in screen["relations"]
+                if item["kind"] == "overlap-order" and item.get("containerNodeId") == overlay["id"]
+            ]
+            self.assertEqual(len(overlap_relations), 3)
+            self.assertTrue(all(item["paintOrderSource"] == "browser-stacking-contract" for item in overlap_relations))
+            final_pair = next(item for item in overlap_relations if set(item["nodeIds"]) == {front_early["id"], front_late["id"]})
+            self.assertEqual(final_pair["backNodeId"], front_early["id"])
+            self.assertEqual(final_pair["frontNodeId"], front_late["id"])
+
     def test_structural_fidelity_passes_without_screenshots(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -31,6 +31,8 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 20. Table/Collection 必须具有可执行的 Section 与 item sizing 契约。Header/Footer 从可复用 item 中分离；只有 `position: sticky` 或等价行为证据才能生成 pinned supplementary view。内容驱动的 Table 行使用自动高度，显式固定高度才生成固定 row/item；横向 item 必须保留来源宽度、宽高比与抗压缩语义。无法映射为 Screen Region 或原生 supplementary 的 sticky 节点必须在生成前阻断。
 21. 初始隐藏或透明的节点只要拥有可执行 motion/keyframes，就必须保留并绑定动画。关键帧需保存真实 sample offset、translate、scale、rotation 与 opacity；`calc()` 中带空格的正负位移不得丢失符号。
 22. SVG 内部节点、富文本子节点、系统选择标记等被原生 owner 合并时，必须在生成后清单中记录 strategy、owner node ID、source node IDs 和 native primitive。只捕获 SVG 当前 computed state 时必须标记交互降级，不能声称原 transition/keyframes 已实现。
+23. 浏览器绘制顺序必须成为显式契约。提取阶段记录 DOM source order、`::before`/`::after` phase、stacking context owner、paint group 与 z-level；普通 Stack/Grid 继续按视觉布局顺序测量，发生重叠的 Overlay/ZStack 必须按 `paintOrderNodeIds` 绘制，SwiftUI 与 UIKit 不得各自按 DOM 或 z-index 单字段重新猜测。
+24. 圆角与后代裁剪必须分离。`border-radius` 只决定背景、边框和自身内容的形状；只有 `overflow:hidden/clip`、clip-path、mask 或等价明确证据才能裁剪子树。`overflow:visible` 的伪元素、阴影和越界装饰必须允许绘制到圆角边界之外。
 
 ## 支持范围
 
@@ -182,6 +184,7 @@ python3 "$SKILL_ROOT/scripts/inspect_ios_sdk.py" \
 - 疑似手机画板容器
 - motion pass 中的 transition、animation、keyframes 和 timing
 - `::before`/`::after` synthetic nodes 及估算边界
+- 浏览器 source order、伪元素 phase、stacking context owner、paint group、z-level 与稳定绘制顺序
 - 文字 Range 行框、行数、字体加载状态和裁剪信息
 - 内联 SVG markup、图片 URL 与 CSS background 资源详情
 

@@ -1464,6 +1464,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertEqual(generated_dot["motions"][0]["opacityValues"], [0, 1, 0])
             self.assertEqual(generated_mixed_card["style"]["fixedWidth"], 345)
             self.assertEqual(generated_mixed_card["style"]["fixedHeight"], 120)
+            self.assertFalse(generated_mixed_card["style"]["clipsOwnContent"])
+            self.assertTrue(generated_mixed_card["style"]["clipsContent"])
             self.assertEqual(generated_mixed_card["children"], [])
             self.assertEqual(
                 [item["id"] for item in generated_mixed_card["overlayChildren"]],
@@ -1477,6 +1479,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("ForEach(spec.overlayChildren)", swiftui_runtime)
             self.assertIn("private struct HTMLToIOSOverlayClipModifier: ViewModifier", swiftui_runtime)
             self.assertIn("if style.clipsContent == true", swiftui_runtime)
+            self.assertIn("if style.clipsContent == true || style.clipsOwnContent == true", swiftui_runtime)
+            self.assertNotIn("style.clipsContent == true || (style.cornerRadius ?? 0) > 0", swiftui_runtime)
             self.assertIn("private struct HTMLToIOSMarginModifier: ViewModifier", swiftui_runtime)
             self.assertIn(".modifier(HTMLToIOSMarginModifier(style: spec.style))", swiftui_runtime)
             self.assertIn("endRadius: radialEndRadius(proxy.size)", swiftui_runtime)
@@ -1494,6 +1498,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("row.distribution = .fillEqually", uikit_runtime)
             self.assertIn("private func makeOverlay(_ spec: HTMLToIOSNodeSpec) -> UIView", uikit_runtime)
             self.assertIn("private func attachOverlayChildren(_ spec: HTMLToIOSNodeSpec, to parent: UIView)", uikit_runtime)
+            self.assertIn("$0.style.nativePaintOrder ?? 0", uikit_runtime)
+            self.assertIn("spec.style.clipsContent == true || spec.style.clipsOwnContent == true", uikit_runtime)
             self.assertIn("childSpec.style.offsetX ?? 0", uikit_runtime)
             self.assertIn("let renderedView = wrapInMargins(view, spec: spec)", uikit_runtime)
             self.assertIn("private func wrapInMargins(_ view: UIView, spec: HTMLToIOSNodeSpec) -> UIView", uikit_runtime)

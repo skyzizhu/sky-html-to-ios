@@ -1240,13 +1240,20 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         flex_direction,
     )
     planned_child_order = [str(item) for item in layout_container.get("orderedChildNodeIds") or []]
+    planned_paint_order = [str(item) for item in layout_container.get("paintOrderNodeIds") or []]
     if planned_child_order:
         planned_index = {child_id: index for index, child_id in enumerate(planned_child_order)}
         child_payloads.sort(
             key=lambda child: planned_index.get(str(child.get("id") or ""), len(planned_index))
         )
+    if planned_paint_order:
+        paint_index = {child_id: index for index, child_id in enumerate(planned_paint_order)}
+        if axis == "overlay":
+            child_payloads.sort(
+                key=lambda child: paint_index.get(str(child.get("id") or ""), len(paint_index))
+            )
         overlay_child_payloads.sort(
-            key=lambda child: planned_index.get(str(child.get("id") or ""), len(planned_index))
+            key=lambda child: paint_index.get(str(child.get("id") or ""), len(paint_index))
         )
     inline_runs = rich_text_runs(context, node, allow_block_children=True)
     inline_text_container = bool(
@@ -1284,6 +1291,16 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     layout_node = context.layout_nodes.get(node_id) or {}
     box_model = layout_node.get("boxModel") or {}
     positioning = layout_node.get("positioning") or {}
+    compositing = layout_node.get("compositing") or {}
+    parent_paint_order = [
+        str(item)
+        for item in (context.layout_containers.get(parent_id) or {}).get("paintOrderNodeIds") or []
+    ]
+    native_paint_order = (
+        parent_paint_order.index(node_id)
+        if node_id in parent_paint_order
+        else int(number(compositing.get("sourceOrder")))
+    )
     grid_plan = layout_container.get("grid") or {}
     grid_column_widths = []
     for track in grid_plan.get("columnTracks") or []:
@@ -1686,6 +1703,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         "axis": axis,
         "children": child_payloads,
         "overlayChildren": overlay_child_payloads,
+        "paintOrderNodeIds": [str(item) for item in layout_container.get("paintOrderNodeIds") or []],
         "contentItems": content_items,
         "compoundLayout": (
             {
@@ -1731,6 +1749,13 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "offsetX": offset_x,
             "offsetY": offset_y,
             "zIndex": number(style.get("zIndex"), 0),
+            "nativePaintOrder": native_paint_order,
+            "paintGroup": int(number(compositing.get("paintGroup"), 2)),
+            "createsStackingContext": bool(compositing.get("createsStackingContext")),
+            "stackingContextOwnerNodeID": compositing.get("stackingContextOwnerNodeId"),
+            "clipPath": str(compositing.get("clipPath") or "none"),
+            "maskImage": str(compositing.get("maskImage") or "none"),
+            "clipsOwnContent": bool(is_foreground_asset and corner_radius > 0),
             "clipsContent": str(style.get("overflowX") or "visible") in {"hidden", "clip"}
                 or str(style.get("overflowY") or "visible") in {"hidden", "clip"},
             "padding": padding,
@@ -2780,6 +2805,7 @@ struct HTMLToIOSNodeSpec: Codable, Identifiable {{
     let axis: String
     let children: [HTMLToIOSNodeSpec]
     let overlayChildren: [HTMLToIOSNodeSpec]
+    let paintOrderNodeIds: [String]
     let contentItems: [HTMLToIOSContentItemSpec]
     let compoundLayout: HTMLToIOSCompoundLayoutSpec?
     let action: HTMLToIOSActionSpec?
@@ -2963,6 +2989,13 @@ struct HTMLToIOSStyleSpec: Codable {{
     let offsetX: Double?
     let offsetY: Double?
     let zIndex: Double?
+    let nativePaintOrder: Int?
+    let paintGroup: Int?
+    let createsStackingContext: Bool?
+    let stackingContextOwnerNodeID: String?
+    let clipPath: String?
+    let maskImage: String?
+    let clipsOwnContent: Bool?
     let clipsContent: Bool?
     let padding: [Double]?
     let margin: [Double]?
@@ -3505,7 +3538,7 @@ private struct HTMLToIOSClipModifier: ViewModifier {
     let style: HTMLToIOSStyleSpec
 
     @ViewBuilder func body(content: Content) -> some View {
-        if style.clipsContent == true || (style.cornerRadius ?? 0) > 0 {
+        if style.clipsContent == true || style.clipsOwnContent == true {
             content.clipShape(RoundedRectangle(cornerRadius: style.cornerRadius ?? 0, style: .continuous))
         } else {
             content
@@ -3772,7 +3805,7 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
             )
             .opacity(style.opacity ?? 1)
             .offset(x: style.offsetX ?? 0, y: style.offsetY ?? 0)
-            .zIndex(style.zIndex ?? 0)
+            .zIndex(Double(style.nativePaintOrder ?? 0))
     }
 
 }
@@ -6825,7 +6858,10 @@ final class HTMLToIOSNodeRenderer {
 
     private func attachOverlayChildren(_ spec: HTMLToIOSNodeSpec, to parent: UIView) {
         for childSpec in spec.overlayChildren.sorted(by: {
-            ($0.style.zIndex ?? 0) < ($1.style.zIndex ?? 0)
+            if ($0.style.nativePaintOrder ?? 0) != ($1.style.nativePaintOrder ?? 0) {
+                return ($0.style.nativePaintOrder ?? 0) < ($1.style.nativePaintOrder ?? 0)
+            }
+            return ($0.style.zIndex ?? 0) < ($1.style.zIndex ?? 0)
         }) {
             let child = makeView(childSpec)
             parent.addSubview(child)
@@ -7369,7 +7405,7 @@ final class HTMLToIOSNodeRenderer {
             view.layer.shadowRadius = spec.style.shadowRadius ?? 0
             view.layer.shadowOffset = CGSize(width: spec.style.shadowOffsetX ?? 0, height: spec.style.shadowOffsetY ?? 0)
         }
-        let needsClipping = spec.style.clipsContent == true || (spec.style.cornerRadius ?? 0) > 0
+        let needsClipping = spec.style.clipsContent == true || spec.style.clipsOwnContent == true
         view.clipsToBounds = needsClipping && spec.style.shadowColor == nil
         let sizeOverride = state.sizeOverrides[spec.id]
         if let width = sizeOverride?.width ?? spec.style.fixedWidth, width > 0 {
@@ -9044,17 +9080,17 @@ def relation_native_consumption(
     elif kind == "overlap-order":
         container_id = str(relation.get("containerNodeId") or "")
         container = payload_nodes.get(container_id) or {}
-        overlay_order = [str(item.get("id")) for item in container.get("overlayChildren") or [] if item.get("id")]
+        paint_order = [str(item) for item in container.get("paintOrderNodeIds") or []]
         back_id = str(relation.get("backNodeId") or "")
         front_id = str(relation.get("frontNodeId") or "")
-        if back_id in overlay_order and front_id in overlay_order:
-            consumed = overlay_order.index(back_id) < overlay_order.index(front_id)
+        if back_id in paint_order and front_id in paint_order:
+            consumed = paint_order.index(back_id) < paint_order.index(front_id)
         else:
-            back_z = number(((payload_nodes.get(back_id) or {}).get("style") or {}).get("zIndex"), 0)
-            front_z = number(((payload_nodes.get(front_id) or {}).get("style") or {}).get("zIndex"), 0)
-            consumed = back_id in represented_ids and front_id in represented_ids and back_z <= front_z
+            back_paint = number(((payload_nodes.get(back_id) or {}).get("style") or {}).get("nativePaintOrder"), -1)
+            front_paint = number(((payload_nodes.get(front_id) or {}).get("style") or {}).get("nativePaintOrder"), -1)
+            consumed = back_id in represented_ids and front_id in represented_ids and back_paint >= 0 and back_paint < front_paint
         strategy = "native-overlay-z-order"
-        check("overlap-order-contract", consumed, {"overlayOrder": overlay_order, "backNodeId": back_id, "frontNodeId": front_id})
+        check("overlap-order-contract", consumed, {"paintOrder": paint_order, "backNodeId": back_id, "frontNodeId": front_id})
 
     passed = all(item["passed"] for item in checks)
     return {
@@ -9249,6 +9285,8 @@ def build_native_structure_manifest(
             checks = {
                 "axis": str(payload_container.get("axis") or "") == str(container_plan.get("axis") or ""),
                 "visualOrder": actual_expected_order == expected_children,
+                "paintOrder": [str(item) for item in payload_container.get("paintOrderNodeIds") or []]
+                    == [str(item) for item in container_plan.get("paintOrderNodeIds") or []],
                 "gap": abs(number(style.get("spacing")) - number(container_plan.get("gapPt")) * design_scale) <= 0.01,
                 "rowGap": abs(number(style.get("rowSpacing")) - number(container_plan.get("rowGapPt")) * design_scale) <= 0.01,
                 "columnGap": abs(number(style.get("columnSpacing")) - number(container_plan.get("columnGapPt")) * design_scale) <= 0.01,

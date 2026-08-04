@@ -91,10 +91,25 @@ def main() -> int:
             str(item.get("containerNodeId") or "")
             for item in (graph_screens.get(screen_id) or {}).get("containers") or []
         }
+        overlap_relations_by_container: dict[str, list[dict[str, Any]]] = {}
+        for relation in (graph_screens.get(screen_id) or {}).get("relations") or []:
+            if relation.get("kind") == "overlap-order":
+                overlap_relations_by_container.setdefault(
+                    str(relation.get("containerNodeId") or ""), []
+                ).append(relation)
         for container_id, container in plan_containers.items():
             expected_order = [str(item) for item in (architecture_relations.get(container_id) or {}).get("orderedChildNodeIds") or []]
             if container.get("orderedChildNodeIds") != expected_order:
                 add("LAYOUT_VISUAL_ORDER_MISMATCH", screen_id, "Container visual order changed during lowering.", container_id)
+            paint_order = [str(item) for item in container.get("paintOrderNodeIds") or []]
+            if len(paint_order) != len(set(paint_order)) or set(paint_order) != set(expected_order):
+                add("LAYOUT_PAINT_ORDER_SET_MISMATCH", screen_id, "Container paint order must contain every visual child exactly once.", container_id)
+            paint_index = {node_id: index for index, node_id in enumerate(paint_order)}
+            for relation in overlap_relations_by_container.get(container_id) or []:
+                back_id = str(relation.get("backNodeId") or "")
+                front_id = str(relation.get("frontNodeId") or "")
+                if back_id not in paint_index or front_id not in paint_index or paint_index[back_id] >= paint_index[front_id]:
+                    add("LAYOUT_PAINT_ORDER_MISMATCH", screen_id, "Overlapping children do not preserve the browser stacking order.", str(relation.get("id") or container_id))
             if container_id in graph_container_ids and not container.get("relationIds"):
                 add("LAYOUT_RELATION_EVIDENCE_MISSING", screen_id, "Container has no relation-graph evidence.", container_id)
             if container.get("layoutAlgorithm") not in {"stack", "wrapping-stack", "grid", "positioned-overlay"}:
@@ -124,6 +139,7 @@ def main() -> int:
                 if contract.get("kind") == "calculation" and not contract.get("terms"):
                     add("UNRESOLVED_CALC_CONTRACT", screen_id, f"{key} calc() expression has no executable terms.", node_id)
             positioning = node_plan.get("positioning") or {}
+            compositing = node_plan.get("compositing") or {}
             grid_item = node_plan.get("gridItem") or {}
             for key in ("columnSpan", "rowSpan"):
                 if grid_item.get(key) is not None and int(grid_item[key]) < 1:
@@ -137,6 +153,11 @@ def main() -> int:
                 add("FIXED_COORDINATE_SPACE_INVALID", screen_id, "Fixed nodes must use the viewport coordinate space.", node_id)
             if scheme in {"absolute", "fixed"} and not positioning.get("nativeOwnerNodeId"):
                 add("NATIVE_POSITIONING_OWNER_MISSING", screen_id, "Positioned node has no executable native owner.", node_id)
+            stacking_owner = compositing.get("stackingContextOwnerNodeId")
+            if compositing.get("createsStackingContext") is True and stacking_owner not in {None, node_id} and stacking_owner not in ir_nodes:
+                add("STACKING_CONTEXT_OWNER_MISSING", screen_id, "Stacking context owner is absent from the screen node set.", node_id)
+            if compositing.get("clipOwnerNodeId") not in {None, node_id}:
+                add("CLIP_OWNER_MISMATCH", screen_id, "Overflow clipping must be owned by the source border box.", node_id)
         architecture_layers = (architecture_screens.get(screen_id) or {}).get("layers") or {}
         architecture_sections = {
             str(item.get("sourceNodeId") or ""): item

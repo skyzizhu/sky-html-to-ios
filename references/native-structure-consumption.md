@@ -13,6 +13,7 @@
 
 - 每个关系图节点是 `represented`、`optimized-equivalent` 还是 `missing`；
 - containment、视觉顺序、等宽/等高、正方形比例、对齐、重叠层级与滚动轴的消费策略和证据；
+- 容器 `paintOrderNodeIds`、节点 native paint rank、stacking context 与裁剪所有权的消费证据；
 - Content Container 及 top/bottom Screen Region 的实际所有权；
 - 每个容器对 axis、visual order、gap、alignment、distribution 的实际消费，以及复合控件槽位顺序；
 - 承载该 screen 的 Swift、Runtime 与 Payload 文件路径和内容哈希；
@@ -43,6 +44,8 @@ HTML 节点不一定仍作为页面 Content 子树中的普通节点存在。以
 5. 结构消费文件缺失，或文件哈希与生成清单不一致。
 6. 增量生成保护了用户改动，导致本轮结构消费者没有实际更新。
 7. 生成清单仍包含未解决冲突。
+8. overlap-order 与容器 paint order 冲突，或生成运行时未消费 native paint rank。
+9. 仅因存在 corner radius 就裁剪后代，或来源 overflow clip 未进入 SwiftUI/UIKit 裁剪策略。
 
 门禁失败必须回到 UI IR、架构计划或生成器修复。禁止通过删除关系、伪造 manifest、放宽哈希检查或直接修改用户工程中的 Swift 绕过。
 

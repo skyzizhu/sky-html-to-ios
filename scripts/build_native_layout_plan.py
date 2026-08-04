@@ -444,6 +444,7 @@ def build_screen(
     for container_id, relation in architecture_relations.items():
         graph_container = graph_containers.get(container_id) or {}
         ordered = [str(item) for item in relation.get("orderedChildNodeIds") or []]
+        paint_ordered = [str(item) for item in graph_container.get("paintOrderNodeIds") or ordered]
         container_style = (nodes.get(container_id) or {}).get("style") or {}
         axis = str(relation.get("axis") or graph_container.get("axis") or "vertical")
         flex_direction = str(container_style.get("flexDirection") or "column")
@@ -459,6 +460,7 @@ def build_screen(
             "layoutAlgorithm": layout_algorithm,
             "axis": axis,
             "orderedChildNodeIds": ordered,
+            "paintOrderNodeIds": paint_ordered,
             "sourceChildNodeIds": [str(item) for item in relation.get("sourceChildNodeIds") or []],
             "gapPt": measured_gap,
             "rowGapPt": row_gap if row_gap is not None else measured_gap,
@@ -558,6 +560,24 @@ def build_screen(
                 "zIndex": number(style.get("zIndex")),
                 "transform": str(style.get("transform") or "none"),
                 "transformOrigin": str(style.get("transformOrigin") or "50% 50%"),
+            },
+            "compositing": {
+                "sourceOrder": number((node.get("paint") or {}).get("sourceOrder")),
+                "paintGroup": int(number((node.get("paint") or {}).get("paintGroup"), 2)),
+                "stackingLevel": number((node.get("paint") or {}).get("stackingLevel")),
+                "createsStackingContext": bool((node.get("paint") or {}).get("createsStackingContext")),
+                "stackingContextReasons": (node.get("paint") or {}).get("stackingContextReasons") or [],
+                "stackingContextOwnerNodeId": (node.get("paint") or {}).get("stackingContextOwnerNodeId"),
+                "clipOwnerNodeId": (
+                    node_id
+                    if str(style.get("overflowX") or "visible") in {"hidden", "clip"}
+                    or str(style.get("overflowY") or "visible") in {"hidden", "clip"}
+                    else None
+                ),
+                "clipPath": str(style.get("clipPath") or "none"),
+                "maskImage": str(style.get("maskImage") or "none"),
+                "mixBlendMode": str(style.get("mixBlendMode") or "normal"),
+                "isolation": str(style.get("isolation") or "auto"),
             },
         })
 

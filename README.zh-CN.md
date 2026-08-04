@@ -440,10 +440,13 @@ designScale = targetWidthPt / sourceAppRootWidthCssPx
 - margin；
 - gap；
 - z-index；
+- 浏览器 source order、伪元素顺序、stacking context、paint group 与稳定原生绘制层级；
 - object-fit/content mode；
 - pseudo element；
 - mask、filter、blur 的原生或降级策略；
 - pressed/focused/disabled/selected 状态样式。
+
+圆角和后代裁剪独立处理：`border-radius` 不会自动触发子树裁剪，只有 `overflow:hidden/clip`、clip-path、mask 或等价证据才会映射为 SwiftUI/UIKit 的裁剪行为。因此带圆角但允许越界绘制的阴影、伪元素和装饰不会被错误截断。
 
 复杂 CSS 没有直接系统对应时，按顺序选择：
 
