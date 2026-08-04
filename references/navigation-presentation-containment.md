@@ -6,6 +6,8 @@
 
 1. 读取项目现有 Router、Coordinator、NavigationStack/path 和容器结构。
 2. 使用 HTML 的显式标注：`data-ios-action`、`data-ios-target`、`data-ios-presentation-style`、`data-ios-detents`。
+3. 总控生成并校验 `native-presentation-plan.json`。它统一记录原生策略、detent、圆角、遮罩、外部点击关闭、交互式关闭、滚动归属、键盘规避、popover 锚点和过渡；SwiftUI 与 UIKit 必须消费同一份契约。
+4. 截图与多模态对比只负责验收兜底，不参与上述策略成立与否的判断。
 3. 读取原型可观察行为：URL/历史变化、遮罩、覆盖范围、返回方式、交互手势。
 4. 根据页面关系推断并写入 confidence；低置信度保持 `unknown`。
 

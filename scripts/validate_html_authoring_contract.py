@@ -31,7 +31,10 @@ TARGET_ACTIONS = {
     "add-child", "present-fullscreen", "present-popover", "present-sheet", "push",
     "replace-root", "select-tab", "show-alert", "toggle-state", "update-state",
 }
-PRESENTATIONS = {"automatic", "form-sheet", "full-screen", "page-sheet", "popover"}
+PRESENTATIONS = {
+    "automatic", "form-sheet", "full-screen", "page-sheet", "popover",
+    "alert", "action-sheet", "menu", "custom-overlay", "in-place-overlay",
+}
 CONTAINERS = {"child-controller", "navigation", "page", "split", "tab"}
 OWNERS = {"child-controller", "navigation", "overlay", "screen", "sheet"}
 ANIMATIONS = {"custom", "fade", "matched", "none", "progress", "scale", "slide-leading", "slide-trailing", "slide-up", "spring"}

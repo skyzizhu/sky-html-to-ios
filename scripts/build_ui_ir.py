@@ -1798,6 +1798,12 @@ def build_ir(data: dict, args) -> dict:
                 "runtimeId": runtime_id,
                 "synthetic": node.get("synthetic"),
                 "encapsulation": node.get("encapsulation"),
+                "ios": {
+                    "presentationStyle": (node.get("attributes") or {}).get("data-ios-presentation-style"),
+                    "detents": (node.get("attributes") or {}).get("data-ios-detents"),
+                    "backdropDismiss": (node.get("attributes") or {}).get("data-ios-backdrop-dismiss"),
+                    "interactiveDismiss": (node.get("attributes") or {}).get("data-ios-interactive-dismiss"),
+                },
             },
             "semanticType": mapping["semanticType"],
             "layout": {

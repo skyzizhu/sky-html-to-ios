@@ -280,6 +280,8 @@ Supported actions include push, pop, pop-to-root, back, flow replacement, extern
 
 Supported presentations include sheets, half-height `UISheetPresentationController`, full-screen covers, modals, popovers, overlays, alerts, confirmation/action sheets, and dismiss.
 
+Before code generation, `native-presentation-plan.json` resolves one owner and one native strategy for every presentation state. The shared SwiftUI/UIKit contract preserves detents, grabber visibility, corner radius, backdrop appearance and dismissal, interactive dismissal, content scrolling, keyboard avoidance, popover anchors, permitted arrow directions, and source-derived transitions. System presentation APIs remain the default; custom overlays are selected only when measured geometry or behavior cannot be represented faithfully by the system component.
+
 | Container | SwiftUI | UIKit |
 |---|---|---|
 | Hierarchical navigation | `NavigationStack` | `UINavigationController` |
@@ -568,6 +570,8 @@ Reports are written under `<workspace>/.html-to-ios/`.
 | `native-layout-plan-validation.json` | Pre-generation layout lowering gate |
 | `native-control-configuration-plan.json` | Shared internal geometry, appearance, style, and state contract for system controls |
 | `native-control-configuration-validation.json` | Screenshot-free native control configuration gate |
+| `native-presentation-plan.json` | Shared sheet, cover, popover, alert, menu, backdrop, anchor, dismissal, and transition contract |
+| `native-presentation-validation.json` | Screenshot-free presentation ownership and geometry gate |
 | `native-structure-manifest.json` | Actual Swift/Payload node and relation consumption evidence |
 | `native-structure-validation.json` | Post-generation structural gate run before target integration |
 | `screens/<id>/render-tree.json` | Browser render tree |

@@ -43,6 +43,7 @@ def main() -> int:
     parser.add_argument("--native-layout-plan", required=True, type=Path)
     parser.add_argument("--scroll-attachment-plan", type=Path)
     parser.add_argument("--control-configuration-plan", type=Path)
+    parser.add_argument("--presentation-plan", type=Path)
     parser.add_argument("--generated-dir", required=True, type=Path)
     parser.add_argument("--generation-manifest", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
@@ -54,6 +55,7 @@ def main() -> int:
     native_layout = load_json(args.native_layout_plan)
     scroll_attachment = load_json(args.scroll_attachment_plan) if args.scroll_attachment_plan else {}
     control_configuration = load_json(args.control_configuration_plan) if args.control_configuration_plan else {}
+    presentation_plan = load_json(args.presentation_plan) if args.presentation_plan else {}
     generation = load_json(args.generation_manifest)
     if manifest.get("schemaVersion") != "native-structure-manifest-1.0":
         raise ValueError("--manifest must use native-structure-manifest-1.0")
@@ -67,6 +69,8 @@ def main() -> int:
         raise ValueError("--scroll-attachment-plan must use scroll-and-attachment-plan-1.0")
     if args.control_configuration_plan and control_configuration.get("schemaVersion") != "native-control-configuration-plan-1.0":
         raise ValueError("--control-configuration-plan must use native-control-configuration-plan-1.0")
+    if args.presentation_plan and presentation_plan.get("schemaVersion") != "native-presentation-plan-1.0":
+        raise ValueError("--presentation-plan must use native-presentation-plan-1.0")
     if generation.get("schemaVersion") != "html-to-ios-generation-1.0":
         raise ValueError("--generation-manifest must use html-to-ios-generation-1.0")
 
@@ -103,6 +107,8 @@ def main() -> int:
             "STALE_CONTROL_CONFIGURATION_PLAN_PROVENANCE", None,
             "Native structure manifest was not generated from the current control configuration plan.",
         ))
+    if args.presentation_plan and manifest.get("presentationPlanSha256") != sha256_file(args.presentation_plan):
+        issues.append(issue("STALE_PRESENTATION_PLAN_PROVENANCE", None, "Native structure manifest was not generated from the current presentation plan."))
     if manifest.get("generationManifestSha256") != sha256_file(args.generation_manifest):
         issues.append(issue(
             "STALE_GENERATION_MANIFEST_PROVENANCE", None,
@@ -114,6 +120,7 @@ def main() -> int:
     architecture_screens = {str(item.get("screenId") or ""): item for item in architecture.get("screens") or []}
     scroll_screens = {str(item.get("screenId") or ""): item for item in scroll_attachment.get("screens") or []}
     control_screens = {str(item.get("screenId") or ""): item for item in control_configuration.get("screens") or []}
+    presentation_screens = {str(item.get("screenId") or ""): item for item in presentation_plan.get("screens") or []}
     if set(graph_screens) != set(manifest_screens):
         issues.append(issue(
             "NATIVE_SCREEN_SET_MISMATCH", None,
@@ -129,6 +136,8 @@ def main() -> int:
             "CONTROL_CONFIGURATION_SCREEN_SET_MISMATCH", None,
             f"Control-plan screens {sorted(control_screens)} do not match native manifest screens {sorted(manifest_screens)}.",
         ))
+    if args.presentation_plan and set(presentation_screens) != set(manifest_screens):
+        issues.append(issue("PRESENTATION_SCREEN_SET_MISMATCH", None, "Presentation-plan screens do not match native manifest screens."))
 
     generation_files = generation.get("files") or {}
     if generation.get("conflicts"):
@@ -317,6 +326,26 @@ def main() -> int:
                     issues.append(issue(
                         "CONTROL_CONFIGURATION_NOT_CONSUMED", screen_id,
                         "Generated payload does not consume the planned internal control configuration.", node_id,
+                    ))
+        if args.presentation_plan:
+            planned_ids = {
+                str(item.get("stateId") or "")
+                for item in (presentation_screens.get(screen_id) or {}).get("presentations") or []
+            }
+            records = {
+                str(item.get("stateId") or ""): item
+                for item in native_screen.get("presentationConsumption") or []
+            }
+            if planned_ids != set(records):
+                issues.append(issue(
+                    "PRESENTATION_CONSUMPTION_SET_MISMATCH", screen_id,
+                    "Generated native structure does not report every planned presentation state.",
+                ))
+            for state_id, record in records.items():
+                if record.get("status") != "consumed":
+                    issues.append(issue(
+                        "PRESENTATION_PLAN_NOT_CONSUMED", screen_id,
+                        "Generated payload does not consume the planned presentation contract.", state_id,
                     ))
 
         for consumer in native_screen.get("consumerFiles") or []:

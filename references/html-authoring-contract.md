@@ -91,7 +91,7 @@
 
 - `data-ios-action`：`push`、`present-sheet`、`present-fullscreen`、`present-popover`、`show-alert`、`pop`、`pop-to-root`、`dismiss`、`replace-root`、`select-tab`、`open-url`、`toggle-state`、`update-state`、`add-child`、`remove-child`。
 - `data-ios-target`：目标 screen、状态、节点 ID 或 URL。需要目标的 action 不得省略。
-- `data-ios-presentation-style="automatic|page-sheet|form-sheet|full-screen|popover"`。
+- `data-ios-presentation-style="automatic|page-sheet|form-sheet|full-screen|popover|alert|action-sheet|menu|custom-overlay|in-place-overlay"`。
 - `data-ios-detents="medium,large"`：sheet detents。
 - `data-ios-backdrop-dismiss="true|false"` 与 `data-ios-interactive-dismiss="true|false"`。
 - `data-ios-container="navigation|tab|split|page|child-controller"`。

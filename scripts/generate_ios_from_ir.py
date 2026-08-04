@@ -36,6 +36,9 @@ PRESENTATION_KINDS = {
     "popover-overlay",
     "overlay",
     "dialog",
+    "alert",
+    "confirmation",
+    "menu",
 }
 SYMBOL_SYSTEM_IMAGES = {
     "→": "arrow.right", "←": "arrow.left", "↑": "arrow.up", "↓": "arrow.down",
@@ -56,6 +59,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--native-layout-plan", type=Path)
     parser.add_argument("--scroll-attachment-plan", type=Path)
     parser.add_argument("--control-configuration-plan", type=Path)
+    parser.add_argument("--presentation-plan", type=Path)
     parser.add_argument("--native-structure-manifest", type=Path)
     parser.add_argument("--naming-plan", type=Path)
     parser.add_argument("--conflict-dir", type=Path)
@@ -191,6 +195,22 @@ def load_control_configuration_plan(path: Path | None) -> tuple[dict[str, Any], 
     }
     if not screens or "" in screens:
         raise ValueError(f"{path}: every control configuration screen needs a screenId")
+    return data, screens
+
+
+def load_presentation_plan(path: Path | None) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    if path is None:
+        return {}, {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("schemaVersion") != "native-presentation-plan-1.0":
+        raise ValueError(f"{path}: expected native-presentation-plan-1.0")
+    screens = {
+        str(screen.get("screenId") or ""): screen
+        for screen in data.get("screens") or []
+        if isinstance(screen, dict)
+    }
+    if not screens or "" in screens:
+        raise ValueError(f"{path}: every presentation plan screen needs a screenId")
     return data, screens
 
 
@@ -1953,6 +1973,7 @@ def build_screen(
     native_layout: dict[str, Any] | None = None,
     scroll_attachment: dict[str, Any] | None = None,
     control_configuration: dict[str, Any] | None = None,
+    presentation_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     screen = ir["screens"][0]
     screen_id = str(screen.get("id") or "screen")
@@ -1968,6 +1989,12 @@ def build_screen(
     native_layout = native_layout or {}
     scroll_attachment = scroll_attachment or {}
     control_configuration = control_configuration or {}
+    presentation_plan = presentation_plan or {}
+    planned_presentations = {
+        str(item.get("stateId") or ""): item
+        for item in presentation_plan.get("presentations") or []
+        if isinstance(item, dict) and item.get("stateId")
+    }
     control_configurations = {
         str(item.get("nodeId") or ""): item
         for item in control_configuration.get("controls") or []
@@ -2541,10 +2568,14 @@ def build_screen(
                     number(presentation_source_rect.get("height")),
                 ]
                 presentation_contract = presentation_by_state.get(str(state.get("id"))) or {}
-                presentation_style = str(presentation_contract.get("style") or "page-sheet")
-                uses_custom_overlay = (
-                    str(state.get("kind") or "") in {"overlay", "popover-overlay"}
-                    or presentation_style in {"in-place-overlay", "menu"}
+                planned = planned_presentations.get(str(state.get("id"))) or {}
+                presentation_style = str(planned.get("style") or presentation_contract.get("style") or "page-sheet")
+                strategy = str(planned.get("strategy") or "")
+                uses_custom_overlay = strategy == "custom-overlay" or (
+                    not strategy and (
+                        str(state.get("kind") or "") in {"overlay", "popover-overlay"}
+                        or presentation_style in {"in-place-overlay", "menu"}
+                    )
                 )
                 if uses_custom_overlay:
                     presentation_node["style"]["fixedWidth"] = source_rect[2]
@@ -2554,12 +2585,24 @@ def build_screen(
                     "kind": str(state.get("kind") or "sheet"),
                     "node": presentation_node,
                     "style": presentation_style,
-                    "detents": presentation_contract.get("detents") or [],
-                    "grabberVisible": presentation_contract.get("grabberVisible"),
-                    "interactiveDismissDisabled": bool(presentation_contract.get("interactiveDismissDisabled", False)),
+                    "strategy": strategy or ("custom-overlay" if uses_custom_overlay else "system-sheet"),
+                    "detents": planned.get("detents") or presentation_contract.get("detents") or [],
+                    "grabberVisible": planned.get("grabberVisible", presentation_contract.get("grabberVisible")),
+                    "interactiveDismissDisabled": bool(planned.get("interactiveDismissDisabled", presentation_contract.get("interactiveDismissDisabled", False))),
                     "usesCustomOverlay": uses_custom_overlay,
-                    "coordinateSpace": "app-root",
-                    "sourceRect": source_rect,
+                    "coordinateSpace": str((planned.get("anchor") or {}).get("coordinateSpace") or "app-root"),
+                    "sourceRect": (planned.get("anchor") or {}).get("sourceRect") or source_rect,
+                    "permittedArrowDirections": (planned.get("anchor") or {}).get("permittedArrowDirections") or ["up", "down"],
+                    "backdropColor": (planned.get("backdrop") or {}).get("color") or "#000000",
+                    "backdropOpacity": number((planned.get("backdrop") or {}).get("opacity"), 0.32),
+                    "backdropDismisses": bool((planned.get("backdrop") or {}).get("dismisses", True)),
+                    "cornerRadius": number((planned.get("panel") or {}).get("cornerRadiusPt"), 16),
+                    "scrollOwnership": str(planned.get("scrollOwnership") or "none"),
+                    "keyboardAvoidance": str(planned.get("keyboardAvoidance") or "system"),
+                    "largestUndimmedDetent": planned.get("largestUndimmedDetent"),
+                    "transitionKind": str((planned.get("transition") or {}).get("kind") or "fade"),
+                    "transitionDurationMilliseconds": int(number((planned.get("transition") or {}).get("durationMilliseconds"), 280)),
+                    "transitionInteractive": bool((planned.get("transition") or {}).get("interactive", False)),
                 })
                 break
 
@@ -2749,12 +2792,24 @@ struct HTMLToIOSPresentationSpec: Codable, Identifiable {{
     let kind: String
     let node: HTMLToIOSNodeSpec
     let style: String
+    let strategy: String
     let detents: [String]
     let grabberVisible: Bool?
     let interactiveDismissDisabled: Bool
     let usesCustomOverlay: Bool
     let coordinateSpace: String
     let sourceRect: [Double]
+    let permittedArrowDirections: [String]
+    let backdropColor: String
+    let backdropOpacity: Double
+    let backdropDismisses: Bool
+    let cornerRadius: Double
+    let scrollOwnership: String
+    let keyboardAvoidance: String
+    let largestUndimmedDetent: String?
+    let transitionKind: String
+    let transitionDurationMilliseconds: Int
+    let transitionInteractive: Bool
 }}
 
 struct HTMLToIOSActionSpec: Codable {{
@@ -3455,6 +3510,8 @@ final class HTMLToIOSGeneratedStore: ObservableObject {
     @Published var fullScreen: PresentedState?
     @Published var popover: PresentedState?
     @Published var overlay: PresentedState?
+    @Published var alert: PresentedState?
+    @Published var confirmation: PresentedState?
     private var tabIDByTargetScreen: [String: String] = [:]
     private var tabBarVisibilityMode = "automatic"
 
@@ -3588,10 +3645,16 @@ final class HTMLToIOSGeneratedStore: ObservableObject {
             if let stateID { fullScreen = PresentedState(id: stateID) }
         case "present-popover":
             if let stateID { popover = PresentedState(id: stateID) }
+        case "present-alert":
+            if let stateID { alert = PresentedState(id: stateID) }
+        case "present-confirmation":
+            if let stateID { confirmation = PresentedState(id: stateID) }
+        case "present-menu":
+            if let stateID { popover = PresentedState(id: stateID) }
         case "overlay", "present-overlay", "show-dialog":
             if let stateID { overlay = PresentedState(id: stateID) }
         case "dismiss", "dismiss-sheet", "dismiss-fullscreen", "dismiss-popover", "dismiss-overlay":
-            sheet = nil; fullScreen = nil; popover = nil; overlay = nil
+            sheet = nil; fullScreen = nil; popover = nil; overlay = nil; alert = nil; confirmation = nil
         case "toggle-state", "toggle-selection", "toggle-expanded":
             if let stateID {
                 if spec.stateKind == "selection", let nodeID = spec.targetNodeID ?? spec.sourceNodeID {
@@ -5577,6 +5640,31 @@ struct HTMLToIOSGeneratedRootView: View {
         }
         .overlay(alignment: .topLeading) { customPopoverOverlay }
         .overlay { if let state = store.overlay { presentationView(state.id) } }
+        .alert(alertTitle, isPresented: alertIsPresented) {
+            Button("OK") { store.alert = nil }
+        }
+        .confirmationDialog(confirmationTitle, isPresented: confirmationIsPresented, titleVisibility: .visible) {
+            Button("OK") { store.confirmation = nil }
+            Button("Cancel", role: .cancel) { store.confirmation = nil }
+        }
+    }
+
+    private var alertTitle: String {
+        guard let state = store.alert, let presentation = catalog.presentation(state.id) else { return "" }
+        return presentation.node.text
+    }
+
+    private var confirmationTitle: String {
+        guard let state = store.confirmation, let presentation = catalog.presentation(state.id) else { return "" }
+        return presentation.node.text
+    }
+
+    private var alertIsPresented: Binding<Bool> {
+        Binding(get: { store.alert != nil }, set: { if !$0 { store.alert = nil } })
+    }
+
+    private var confirmationIsPresented: Binding<Bool> {
+        Binding(get: { store.confirmation != nil }, set: { if !$0 { store.confirmation = nil } })
     }
 
     private var systemPopoverIsPresented: Binding<Bool> {
@@ -5646,7 +5734,13 @@ struct HTMLToIOSGeneratedRootView: View {
 
     @ViewBuilder private func presentationView(_ stateID: String) -> some View {
         if let presentation = catalog.presentation(stateID) {
-            ScrollView { HTMLToIOSNativeNodeView(store: store, spec: presentation.node) }
+            Group {
+                if presentation.scrollOwnership == "presentation-content" {
+                    ScrollView { HTMLToIOSNativeNodeView(store: store, spec: presentation.node) }
+                } else {
+                    HTMLToIOSNativeNodeView(store: store, spec: presentation.node)
+                }
+            }
                 .presentationDetents(presentationDetents(presentation.detents))
                 .presentationDragIndicator(presentation.grabberVisible == false ? .hidden : .visible)
                 .interactiveDismissDisabled(presentation.interactiveDismissDisabled)
@@ -5670,16 +5764,18 @@ struct HTMLToIOSGeneratedRootView: View {
                 let centerX = min(max(localX + width / 2, width / 2), proxy.size.width - width / 2)
                 let centerY = min(max(localY + height / 2, height / 2), proxy.size.height - height / 2)
                 ZStack(alignment: .topLeading) {
-                    Color.clear
+                    presentationColor(presentation.backdropColor)
+                        .opacity(presentation.backdropOpacity)
                         .contentShape(Rectangle())
-                        .onTapGesture { store.popover = nil }
+                        .onTapGesture { if presentation.backdropDismisses { store.popover = nil } }
                     HTMLToIOSNativeNodeView(store: store, spec: presentation.node)
                         .frame(width: width, height: height, alignment: .topLeading)
                         .position(x: centerX, y: centerY)
                 }
             }
             .ignoresSafeArea()
-            .transition(.opacity)
+            .transition(presentationTransition(presentation.transitionKind))
+            .animation(.easeInOut(duration: Double(presentation.transitionDurationMilliseconds) / 1000), value: store.popover?.id)
             .zIndex(1000)
         }
     }
@@ -5698,6 +5794,18 @@ struct HTMLToIOSGeneratedRootView: View {
             return nil
         }
         return Set(mapped.isEmpty ? [.large] : mapped)
+    }
+
+    private func presentationTransition(_ kind: String) -> AnyTransition {
+        if kind == "slide-up" { return .move(edge: .bottom).combined(with: .opacity) }
+        if kind == "scale-fade" { return .scale(scale: 0.96).combined(with: .opacity) }
+        return .opacity
+    }
+
+    private func presentationColor(_ value: String) -> Color {
+        let hex = value.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        guard hex.count == 6, let number = UInt64(hex, radix: 16) else { return .black }
+        return Color(red: Double((number >> 16) & 255) / 255, green: Double((number >> 8) & 255) / 255, blue: Double(number & 255) / 255)
     }
 }
 '''
@@ -8367,8 +8475,10 @@ final class HTMLToIOSGeneratedCustomOverlayController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = .clear
         backdrop.translatesAutoresizingMaskIntoConstraints = false
-        backdrop.backgroundColor = .clear
-        backdrop.addAction(UIAction { [weak self] _ in self?.dismiss(animated: true) }, for: .touchUpInside)
+        backdrop.backgroundColor = presentationColor(presentation.backdropColor).withAlphaComponent(CGFloat(presentation.backdropOpacity))
+        if presentation.backdropDismisses {
+            backdrop.addAction(UIAction { [weak self] _ in self?.dismiss(animated: true) }, for: .touchUpInside)
+        }
         view.addSubview(backdrop)
         NSLayoutConstraint.activate([
             backdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -8385,6 +8495,8 @@ final class HTMLToIOSGeneratedCustomOverlayController: UIViewController {
             self?.perform(action)
         })
         let panel = renderer.makeView(presentation.node)
+        panel.layer.cornerRadius = CGFloat(presentation.cornerRadius)
+        panel.clipsToBounds = true
         self.panel = panel
         panel.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(panel)
@@ -8407,7 +8519,7 @@ final class HTMLToIOSGeneratedCustomOverlayController: UIViewController {
         ])
         if animated {
             panel.alpha = 0
-            UIView.animate(withDuration: 0.2) { panel.alpha = 1; self.view.layoutIfNeeded() }
+            UIView.animate(withDuration: Double(presentation.transitionDurationMilliseconds) / 1000) { panel.alpha = 1; self.view.layoutIfNeeded() }
         }
     }
 
@@ -8419,6 +8531,12 @@ final class HTMLToIOSGeneratedCustomOverlayController: UIViewController {
         } else {
             actionHandler(action)
         }
+    }
+
+    private func presentationColor(_ value: String) -> UIColor {
+        let hex = value.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        guard hex.count == 6, let number = UInt64(hex, radix: 16) else { return .black }
+        return UIColor(red: CGFloat((number >> 16) & 255) / 255, green: CGFloat((number >> 8) & 255) / 255, blue: CGFloat(number & 255) / 255, alpha: 1)
     }
 }
 
@@ -8519,7 +8637,14 @@ final class HTMLToIOSGeneratedCoordinator: NSObject, UITabBarControllerDelegate 
             }
         case "dismiss", "dismiss-sheet", "dismiss-fullscreen", "dismiss-popover", "dismiss-overlay":
             currentNavigationController?.presentedViewController?.dismiss(animated: true)
-        case "present-sheet", "present-fullscreen", "present-full-screen", "present-popover", "overlay", "present-overlay", "show-dialog":
+        case "present-alert", "present-confirmation":
+            guard let stateID, let presentation = catalog.presentation(stateID) else { return }
+            let preferredStyle: UIAlertController.Style = spec.action == "present-confirmation" ? .actionSheet : .alert
+            let controller = UIAlertController(title: presentation.node.text, message: nil, preferredStyle: preferredStyle)
+            controller.addAction(UIAlertAction(title: "OK", style: .default))
+            if preferredStyle == .actionSheet { controller.addAction(UIAlertAction(title: "Cancel", style: .cancel)) }
+            currentNavigationController?.present(controller, animated: true)
+        case "present-sheet", "present-fullscreen", "present-full-screen", "present-popover", "present-menu", "overlay", "present-overlay", "show-dialog":
             guard let stateID, let presentation = catalog.presentation(stateID) else { return }
             if presentation.usesCustomOverlay {
                 let controller = HTMLToIOSGeneratedCustomOverlayController(
@@ -8554,16 +8679,46 @@ final class HTMLToIOSGeneratedCoordinator: NSObject, UITabBarControllerDelegate 
                 actionHandler: { [weak self] action in self?.perform(action) }
             )
             if spec.action.contains("fullscreen") { controller.modalPresentationStyle = .fullScreen }
-            else if spec.action.contains("popover") { controller.modalPresentationStyle = .popover }
+            else if spec.action.contains("popover") || spec.action == "present-menu" {
+                controller.modalPresentationStyle = .popover
+                if let popover = controller.popoverPresentationController {
+                    popover.sourceView = currentNavigationController?.view
+                    let rect = presentation.sourceRect
+                    popover.sourceRect = CGRect(
+                        x: CGFloat(rect.indices.contains(0) ? rect[0] : 0),
+                        y: CGFloat(rect.indices.contains(1) ? rect[1] : 0),
+                        width: CGFloat(rect.indices.contains(2) ? rect[2] : 1),
+                        height: CGFloat(rect.indices.contains(3) ? rect[3] : 1)
+                    )
+                    var directions: UIPopoverArrowDirection = []
+                    if presentation.permittedArrowDirections.contains("up") { directions.insert(.up) }
+                    if presentation.permittedArrowDirections.contains("down") { directions.insert(.down) }
+                    if presentation.permittedArrowDirections.contains("left") { directions.insert(.left) }
+                    if presentation.permittedArrowDirections.contains("right") { directions.insert(.right) }
+                    popover.permittedArrowDirections = directions.isEmpty ? .any : directions
+                }
+            }
             else {
                 controller.modalPresentationStyle = .pageSheet
                 if let sheet = controller.sheetPresentationController {
-                    let values = Set(presentation.detents.map { $0.lowercased() })
-                    var detents: [UISheetPresentationController.Detent] = []
-                    if values.contains("medium") { detents.append(.medium()) }
-                    if values.contains("large") || detents.isEmpty { detents.append(.large()) }
+                    var detents: [UISheetPresentationController.Detent] = presentation.detents.compactMap { raw in
+                        let value = raw.lowercased()
+                        if value == "medium" { return .medium() }
+                        if value == "large" { return .large() }
+                        if value.hasPrefix("height:"), let height = Double(value.dropFirst("height:".count)) {
+                            return .custom(identifier: .init(rawValue: value)) { _ in max(CGFloat(height), 44) }
+                        }
+                        if value.hasPrefix("fraction:"), let fraction = Double(value.dropFirst("fraction:".count)) {
+                            return .custom(identifier: .init(rawValue: value)) { context in context.maximumDetentValue * CGFloat(min(max(fraction, 0.1), 1)) }
+                        }
+                        return nil
+                    }
+                    if detents.isEmpty { detents = [.large()] }
                     sheet.detents = detents
                     sheet.prefersGrabberVisible = presentation.grabberVisible ?? true
+                    sheet.preferredCornerRadius = CGFloat(presentation.cornerRadius)
+                    if presentation.largestUndimmedDetent == "medium" { sheet.largestUndimmedDetentIdentifier = .medium }
+                    if presentation.largestUndimmedDetent == "large" { sheet.largestUndimmedDetentIdentifier = .large }
                 }
                 controller.isModalInPresentation = presentation.interactiveDismissDisabled
             }
@@ -9796,6 +9951,8 @@ def build_native_structure_manifest(
     scroll_attachment_by_screen: dict[str, dict[str, Any]],
     control_configuration_plan: dict[str, Any],
     control_configuration_by_screen: dict[str, dict[str, Any]],
+    presentation_plan: dict[str, Any],
+    presentation_by_screen: dict[str, dict[str, Any]],
     screen_source_files: dict[str, list[str]],
     generation_manifest: dict[str, Any],
     out_dir: Path,
@@ -9804,6 +9961,7 @@ def build_native_structure_manifest(
     native_layout_path: Path | None,
     scroll_attachment_path: Path | None,
     control_configuration_path: Path | None,
+    presentation_path: Path | None,
     ui_stack: str,
 ) -> dict[str, Any]:
     runtime_path = out_dir / "Core/Runtime/HTMLToIOSGeneratedRuntime.swift"
@@ -10209,6 +10367,22 @@ def build_native_structure_manifest(
                 "status": "consumed" if all(checks.values()) else "not-consumed",
                 "checks": checks,
             })
+        payload_presentations = {str(item.get("stateID") or ""): item for item in payload_screen.get("presentations") or []}
+        presentation_consumption = []
+        for planned in (presentation_by_screen.get(screen_id) or {}).get("presentations") or []:
+            state_id = str(planned.get("stateId") or "")
+            generated = payload_presentations.get(state_id) or {}
+            checks = {
+                "payloadPresentation": bool(generated),
+                "strategy": generated.get("strategy") == planned.get("strategy"),
+                "detents": list(generated.get("detents") or []) == list(planned.get("detents") or []),
+                "backdrop": generated.get("backdropColor") == (planned.get("backdrop") or {}).get("color")
+                    and number(generated.get("backdropOpacity")) == number((planned.get("backdrop") or {}).get("opacity"))
+                    and bool(generated.get("backdropDismisses")) == bool((planned.get("backdrop") or {}).get("dismisses")),
+                "anchor": list(generated.get("sourceRect") or []) == list((planned.get("anchor") or {}).get("sourceRect") or []),
+                "transition": generated.get("transitionKind") == (planned.get("transition") or {}).get("kind"),
+            }
+            presentation_consumption.append({"stateId": state_id, "status": "consumed" if all(checks.values()) else "not-consumed", "checks": checks})
         scroll_region_consumption = {}
         for edge, payload_key, placement_key, behavior_key in (
             ("top", "topBar", "topBarPlacement", "topBarBehavior"),
@@ -10282,6 +10456,7 @@ def build_native_structure_manifest(
                 "regions": scroll_region_consumption,
             },
             "controlConfigurationConsumption": control_configuration_consumption,
+            "presentationConsumption": presentation_consumption,
             "regions": {
                 "top": {
                     "sourceNodeId": (regions.get("topBar") or {}).get("nodeId"),
@@ -10317,6 +10492,9 @@ def build_native_structure_manifest(
         "controlConfigurationPlan": str(control_configuration_path.resolve()) if control_configuration_path else None,
         "controlConfigurationPlanSha256": sha256_file(control_configuration_path) if control_configuration_path else None,
         "controlConfigurationPlanSchemaVersion": control_configuration_plan.get("schemaVersion") if control_configuration_plan else None,
+        "presentationPlan": str(presentation_path.resolve()) if presentation_path else None,
+        "presentationPlanSha256": sha256_file(presentation_path) if presentation_path else None,
+        "presentationPlanSchemaVersion": presentation_plan.get("schemaVersion") if presentation_plan else None,
         "runtimeCapabilities": runtime_capabilities,
         "generationManifest": str((out_dir / MANIFEST_NAME).resolve()),
         "generationManifestSha256": sha256_file(out_dir / MANIFEST_NAME),
@@ -10356,6 +10534,7 @@ def main() -> int:
     native_layout_plan, native_layout_by_screen = load_native_layout_plan(args.native_layout_plan)
     scroll_attachment_plan, scroll_attachment_by_screen = load_scroll_attachment_plan(args.scroll_attachment_plan)
     control_configuration_plan, control_configuration_by_screen = load_control_configuration_plan(args.control_configuration_plan)
+    presentation_plan, presentation_by_screen = load_presentation_plan(args.presentation_plan)
     if args.native_structure_manifest and not args.layout_relation_graph:
         raise ValueError("--native-structure-manifest requires --layout-relation-graph")
     name_prefix, naming_source, existing_type_names = load_naming_prefix(args.naming_plan)
@@ -10379,6 +10558,10 @@ def main() -> int:
         missing = sorted(set(ir_screen_ids) - set(control_configuration_by_screen))
         extra = sorted(set(control_configuration_by_screen) - set(ir_screen_ids))
         raise ValueError(f"control configuration plan screen mismatch; missing={missing}, extra={extra}")
+    if presentation_by_screen and set(presentation_by_screen) != set(ir_screen_ids):
+        missing = sorted(set(ir_screen_ids) - set(presentation_by_screen))
+        extra = sorted(set(presentation_by_screen) - set(ir_screen_ids))
+        raise ValueError(f"presentation plan screen mismatch; missing={missing}, extra={extra}")
     screens = [
         build_screen(
             ir,
@@ -10386,6 +10569,7 @@ def main() -> int:
             native_layout_by_screen.get(screen_id),
             scroll_attachment_by_screen.get(screen_id),
             control_configuration_by_screen.get(screen_id),
+            presentation_by_screen.get(screen_id),
         )
         for ir, screen_id in zip(irs, ir_screen_ids)
     ]
@@ -10486,6 +10670,8 @@ def main() -> int:
         "scrollAttachmentPlanSha256": sha256_file(args.scroll_attachment_plan) if args.scroll_attachment_plan else None,
         "controlConfigurationPlan": str(args.control_configuration_plan.resolve()) if args.control_configuration_plan else None,
         "controlConfigurationPlanSha256": sha256_file(args.control_configuration_plan) if args.control_configuration_plan else None,
+        "presentationPlan": str(args.presentation_plan.resolve()) if args.presentation_plan else None,
+        "presentationPlanSha256": sha256_file(args.presentation_plan) if args.presentation_plan else None,
         "namingPlan": str(args.naming_plan.resolve()) if args.naming_plan else None,
         "namePrefix": name_prefix,
         "namingSource": naming_source,
@@ -10506,6 +10692,8 @@ def main() -> int:
             scroll_attachment_by_screen,
             control_configuration_plan,
             control_configuration_by_screen,
+            presentation_plan,
+            presentation_by_screen,
             screen_source_files,
             manifest,
             args.out_dir,
@@ -10514,6 +10702,7 @@ def main() -> int:
             args.native_layout_plan,
             args.scroll_attachment_plan,
             args.control_configuration_plan,
+            args.presentation_plan,
             ui_stack,
         )
         native_structure_path.parent.mkdir(parents=True, exist_ok=True)

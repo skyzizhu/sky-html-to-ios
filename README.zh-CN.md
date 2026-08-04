@@ -346,6 +346,8 @@ UI IR 保存：
 - confirmation/action sheet；
 - dismiss。
 
+代码生成前，总控会产出 `native-presentation-plan.json`，为每个 presentation 状态确定唯一归属和原生策略。SwiftUI 与 UIKit 共用该契约，并保留 detent、grabber、圆角、遮罩颜色与透明度、点击遮罩关闭、交互式关闭、内容滚动归属、键盘规避、popover 锚点与箭头方向，以及来源驱动的转场。默认优先苹果系统 presentation API；只有实测几何或行为无法由系统控件准确表达时，才降级为自定义 overlay。
+
 ### 页面容器
 
 | 场景 | SwiftUI | UIKit |
@@ -821,6 +823,8 @@ Skill 可以处理普通 HTML，但结构和语义越清楚，自动还原越稳
 | `native-layout-plan-validation.json` | 代码生成前的布局降级门禁 |
 | `native-control-configuration-plan.json` | SwiftUI/UIKit 共用的系统控件内部几何、外观、style 与状态契约 |
 | `native-control-configuration-validation.json` | 不依赖截图的原生控件配置门禁 |
+| `native-presentation-plan.json` | SwiftUI/UIKit 共用的 sheet、cover、popover、alert、menu、遮罩、锚点、关闭与转场契约 |
+| `native-presentation-validation.json` | 不依赖截图的 presentation 归属与几何门禁 |
 | `native-structure-manifest.json` | 实际 Swift/Payload 对节点和关系的消费证据 |
 | `native-structure-validation.json` | Xcode target 接入前执行的生成后结构门禁 |
 | `screens/<id>/render-tree.json` | 浏览器渲染树 |
