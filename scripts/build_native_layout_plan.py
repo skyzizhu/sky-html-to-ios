@@ -210,6 +210,28 @@ def rect(node: dict[str, Any]) -> dict[str, float]:
     return {key: number(raw.get(key)) for key in ("x", "y", "width", "height")}
 
 
+def median(values: list[float]) -> float | None:
+    ordered = sorted(value for value in values if value > 0)
+    if not ordered:
+        return None
+    middle = len(ordered) // 2
+    return ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def nearly_uniform(values: list[float], tolerance: float = 1.5) -> bool:
+    measured = [value for value in values if value > 0]
+    return bool(measured) and max(measured) - min(measured) <= tolerance
+
+
+def inferred_column_count(item_nodes: list[dict[str, Any]], tolerance: float = 2.0) -> int:
+    columns: list[float] = []
+    for node in sorted(item_nodes, key=lambda item: (rect(item)["x"], rect(item)["y"])):
+        x = rect(node)["x"]
+        if not any(abs(x - existing) <= tolerance for existing in columns):
+            columns.append(x)
+    return max(len(columns), 1)
+
+
 def classify_slot(node: dict[str, Any], container_text: bool) -> str:
     semantic = str(node.get("semanticType") or "")
     source = node.get("source") or {}
@@ -496,6 +518,99 @@ def build_screen(
         })
 
     node_plan_by_id = {item["nodeId"]: item for item in node_plans}
+    reusable = layers.get("reusableContent") or {}
+    strategies = {
+        str(item.get("nodeId") or ""): str(item.get("kind") or "")
+        for item in content.get("nodeStrategies") or []
+        if isinstance(item, dict)
+    }
+    collection_layouts = []
+    for section in reusable.get("sections") or []:
+        if not isinstance(section, dict):
+            continue
+        source_id = str(section.get("sourceNodeId") or "")
+        strategy = strategies.get(source_id, "")
+        if strategy not in {"table-view", "collection-view", "compositional-collection"}:
+            continue
+        source = nodes.get(source_id) or {}
+        source_style = source.get("style") or {}
+        item_ids = [str(item) for item in section.get("itemNodeIds") or [] if str(item) in nodes]
+        item_nodes = [nodes[item] for item in item_ids]
+        widths = [rect(item)["width"] for item in item_nodes]
+        heights = [rect(item)["height"] for item in item_nodes]
+        width_value = median(widths)
+        height_value = median(heights)
+        ratios = [width / height for width, height in zip(widths, heights) if width > 0 and height > 0]
+        ratio_value = median(ratios)
+        section_kind = str(section.get("kind") or "list")
+        horizontal = str(section.get("scrollAxis") or "vertical") == "horizontal"
+        container_plan = container_by_id.get(source_id) or {}
+        grid_tracks_plan = (container_plan.get("grid") or {}).get("columnTracks") or []
+        column_count = (
+            1 if section_kind == "list" or horizontal
+            else len(grid_tracks_plan) or inferred_column_count(item_nodes)
+        )
+        explicit_heights = [
+            str((((item.get("style") or {}).get("authoredLayout") or {}).get("height") or {}).get("value") or "")
+            for item in item_nodes
+        ]
+        fixed_height = bool(
+            height_value is not None
+            and nearly_uniform(heights)
+            and explicit_heights
+            and all(re.fullmatch(r"(?:\d+(?:\.\d+)?|\.\d+)px", value.strip().lower()) for value in explicit_heights)
+        )
+        fixed_horizontal_width = bool(
+            horizontal
+            and width_value is not None
+            and nearly_uniform(widths)
+            and all(
+                str((item.get("style") or {}).get("flexShrink") or "1") == "0"
+                or str((item.get("style") or {}).get("whiteSpace") or "") == "nowrap"
+                or bool(((item.get("style") or {}).get("authoredLayout") or {}).get("width"))
+                or bool(((item.get("style") or {}).get("authoredLayout") or {}).get("flexBasis"))
+                for item in item_nodes
+            )
+        )
+        consistent_ratio = bool(ratio_value and ratios and max(ratios) - min(ratios) <= 0.03)
+        header_id = str(section.get("headerNodeId") or "") or None
+        footer_id = str(section.get("footerNodeId") or "") or None
+        collection_layouts.append({
+            "sectionId": str(section.get("id") or f"{screen_id}.section.{len(collection_layouts)}"),
+            "containerNodeId": source_id,
+            "nativeContainerKind": strategy,
+            "layoutEngine": (
+                "table" if strategy == "table-view"
+                else "compositional" if content.get("kind") == "compositional-collection"
+                else "flow"
+            ),
+            "scrollAxis": "horizontal" if horizontal else "vertical",
+            "itemNodeIds": item_ids,
+            "headerNodeId": header_id,
+            "footerNodeId": footer_id,
+            "pinsHeader": section.get("headerBehavior") == "pinned",
+            "pinsFooter": section.get("footerBehavior") == "pinned",
+            "headerHeightPt": rect(nodes.get(header_id) or {})["height"] if header_id else None,
+            "footerHeightPt": rect(nodes.get(footer_id) or {})["height"] if footer_id else None,
+            "columnCount": max(column_count, 1),
+            "contentInsetsPt": edges(source_style.get("padding")),
+            "lineSpacingPt": max(number(container_plan.get("rowGapPt")), 0),
+            "interItemSpacingPt": max(number(container_plan.get("columnGapPt")), 0),
+            "mainAxisSpacingPt": max(number(container_plan.get("columnGapPt" if horizontal else "rowGapPt")), 0),
+            "crossAxisSpacingPt": max(number(container_plan.get("rowGapPt" if horizontal else "columnGapPt")), 0),
+            "itemSizing": {
+                "widthMode": "full-width" if strategy == "table-view" else "fixed" if fixed_horizontal_width else "fractional",
+                "widthPt": width_value if fixed_horizontal_width else None,
+                "widthFraction": None if strategy == "table-view" or fixed_horizontal_width else 1 / max(column_count, 1),
+                "heightMode": "fixed" if fixed_height else "aspect-ratio" if section_kind == "grid" and consistent_ratio else "estimated",
+                "heightPt": height_value if fixed_height else None,
+                "estimatedHeightPt": height_value or 72,
+                "aspectRatio": ratio_value if section_kind == "grid" and consistent_ratio and not fixed_height else None,
+                "preservesIntrinsicWidth": horizontal,
+            },
+            "directionalLockEnabled": True,
+            "allowsSameAxisNestedScroll": False,
+        })
     state_layouts = []
     for state in states:
         delta = state.get("stateDelta") or {}
@@ -547,11 +662,13 @@ def build_screen(
         },
         "containers": containers,
         "nodes": node_plans,
+        "collectionLayouts": collection_layouts,
         "compoundControls": compounds,
         "stateLayouts": state_layouts,
         "summary": {
             "containerCount": len(containers),
             "nodeCount": len(node_plans),
+            "collectionLayoutCount": len(collection_layouts),
             "compoundControlCount": len(compounds),
             "stateLayoutCount": len(state_layouts),
             "runtimeLengthContractCount": sum(

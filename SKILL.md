@@ -28,6 +28,7 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 17. 六层架构到 Swift 之间必须只有一份可执行布局契约。总控生成并校验 `native-layout-plan.json`，SwiftUI 与 UIKit 必须共同消费其中的容器顺序、尺寸策略、盒模型和复合控件槽位，不得各自重新猜测。
 18. 布局契约必须区分 stack、wrapping stack、grid 与 positioned overlay，并保存 Grid 轨道、独立 row/column gap、Flex reverse/wrap、定位 containing block 和状态布局增量。百分比、`calc()`、viewport/font 相对单位必须保持可解析表达式；不得截取其中一个数字冒充固定尺寸。
 19. 内容容器遵循最小充分原则：少量固定内容使用 Stack/Grid，长单列同构内容使用 Table/Lazy 容器，多列、横向、数据表或异构 Section 使用 Collection/组合布局。集合容器只有与页面主轴一致且在直接内容层中占主导时才能替换根 Scroll；嵌套横向 Collection 只拥有横轴，禁止夺走页面纵轴或产生同轴双重滚动。
+20. Table/Collection 必须具有可执行的 Section 与 item sizing 契约。Header/Footer 从可复用 item 中分离；只有 `position: sticky` 或等价行为证据才能生成 pinned supplementary view。内容驱动的 Table 行使用自动高度，显式固定高度才生成固定 row/item；横向 item 必须保留来源宽度、宽高比与抗压缩语义。无法映射为 Screen Region 或原生 supplementary 的 sticky 节点必须在生成前阻断。
 
 ## 支持范围
 
@@ -323,6 +324,8 @@ python3 "$SKILL_ROOT/scripts/generate_ios_from_ir.py" \
 - 浏览器测得的 `preferredWidth` 不能无条件套到每层 SwiftUI 容器。结构容器由父级 Stack、Grid 和可用宽度分配；叶子节点保留理想宽度，Button、输入和选择类原生控件在来源明确时保留最小宽度，避免文字内在尺寸把等宽操作栏压缩。
 - 每个 scroll node 必须具有单独的轴向契约。页面根纵向滚动容器只拥有 vertical；嵌套横向列表只拥有 horizontal。不得因为某个子节点暂时越界就把根页面升级为双轴滚动，也不得用一个双轴 ScrollView 包住整页兜底。
 - 横向重复条目的来源 rect、`flex-basis`、`min-width`、`flex-shrink` 和 gap 是 item sizing 证据。来源未换行且实测为一行时，原生条目必须保持 intrinsic/fixed width 与单行语义，禁止由父容器平均拉伸后导致文字换行。
+- Table/Collection 的 `collectionLayouts` 必须保存 layout engine、Section 顺序、item IDs、header/footer、pinning、column count、content insets、主/交叉轴间距、width/height mode、估算高度与宽高比。SwiftUI 和 UIKit 必须消费同一契约，禁止统一依赖 `automaticSize`。
+- Compositional 根必须覆盖全部直接流式 Section。普通标题、工具栏或静态块作为单 item Section 保留，结构化 list/grid/carousel 再使用自己的复用与尺寸契约；不得因只收集列表和网格而丢失普通内容。
 - 紧凑图标、状态槽、缩略图和其视觉容器应保留来源宽高比；接近方形且尺寸稳定的容器生成等宽高或 aspect-ratio 约束。禁止只固定一边后被 HStack/UIStackView 拉成长方形。
 - `overflow:hidden/clip` 只表示裁剪；只有计算样式允许滚动且 scroll/client 度量或行为 probe 证明轴向成立时才生成滚动容器。
 - SwiftUI 尺寸 Modifier 只有存在有效参数时才能生成；禁止批量输出全为 `nil` 的 `.frame(...)`，也禁止在父子结构容器上叠加相互反馈的有限 `maxWidth`。

@@ -393,6 +393,52 @@ class NativeStructureManifestTests(unittest.TestCase):
                 self.assertTrue(manifest["runtimeCapabilities"]["gridPlacement"]["consumed"])
                 self.assertTrue(manifest["runtimeCapabilities"]["stateReflow"]["consumed"])
 
+    def test_collection_sizing_and_sticky_supplementary_execute_in_both_stacks(self) -> None:
+        for ui_stack in ("swiftui", "uikit"):
+            with self.subTest(ui_stack=ui_stack), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                payload = make_ir(ui_stack)
+                nodes = payload["screens"][0]["nodes"]
+                header = node("home.filters.header", "home.filters", "header", 16, 90, 72, 36)
+                header["style"].update({"position": "sticky", "top": "0px"})
+                header["layout"]["position"] = "sticky"
+                nodes.append(header)
+                outputs = self.build_chain(root, ui_stack, payload)
+                _, report = self.validate_chain(root, *outputs)
+                self.assertEqual(report["status"], "passed")
+                layout = json.loads(outputs[2].read_text(encoding="utf-8"))["screens"][0]
+                contract = next(item for item in layout["collectionLayouts"] if item["containerNodeId"] == "home.filters")
+                self.assertEqual(contract["nativeContainerKind"], "collection-view")
+                self.assertEqual(contract["scrollAxis"], "horizontal")
+                self.assertEqual(contract["headerNodeId"], header["id"])
+                self.assertTrue(contract["pinsHeader"])
+                self.assertNotIn(header["id"], contract["itemNodeIds"])
+                self.assertEqual(contract["itemSizing"]["widthMode"], "fixed")
+                self.assertFalse(contract["allowsSameAxisNestedScroll"])
+
+                generated = json.loads((outputs[4] / "Resources/Payload/HTMLToIOSGeneratedPayload.json").read_text(encoding="utf-8"))
+                indexed: dict[str, dict] = {}
+
+                def visit(value: object) -> None:
+                    if isinstance(value, dict):
+                        if isinstance(value.get("id"), str) and "semantic" in value:
+                            indexed[value["id"]] = value
+                        for child in value.values():
+                            visit(child)
+                    elif isinstance(value, list):
+                        for child in value:
+                            visit(child)
+
+                visit(generated)
+                generated_contract = indexed["home.filters"]["collectionLayout"]
+                self.assertTrue(generated_contract["pinsHeader"])
+                self.assertEqual(generated_contract["itemSizing"]["widthMode"], "fixed")
+                manifest = json.loads(outputs[3].read_text(encoding="utf-8"))
+                consumption = manifest["screens"][0]["layoutPlanConsumption"]["collections"][0]
+                self.assertEqual(consumption["status"], "consumed")
+                self.assertTrue(manifest["runtimeCapabilities"]["collectionSizing"]["consumed"])
+                self.assertTrue(manifest["runtimeCapabilities"]["pinnedSupplementary"]["consumed"])
+
 
 if __name__ == "__main__":
     unittest.main()

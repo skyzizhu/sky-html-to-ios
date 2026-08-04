@@ -442,31 +442,69 @@ def content_container_plan(
         confidence = 0.94
         reasons = ["Measured vertical overflow requires a scroll container."]
 
-    sections: list[dict[str, Any]] = []
-    section_sources = structured_collections if kind == "compositional-collection" else [nodes.get(selected_node_id) or nodes.get(root_id) or {}]
-    for index, source in enumerate(section_sources):
+    def build_section(source: dict[str, Any], index: int, uses_reuse: bool) -> dict[str, Any]:
         source_id = str(source.get("id") or root_id)
         source_semantic = str(source.get("semanticType") or "container")
+        renders_source_as_item = source_semantic not in CONTENT_SEMANTICS
+        all_child_ids = list(children.get(source_id) or [])
+        header_id = next((
+            item for item in all_child_ids
+            if str((nodes.get(item) or {}).get("semanticType") or "") in {"header", "table-header"}
+        ), None)
+        footer_id = next((
+            item for item in all_child_ids
+            if str((nodes.get(item) or {}).get("semanticType") or "") in {"footer", "table-footer"}
+        ), None)
+        item_ids = [source_id] if renders_source_as_item else [
+            item for item in all_child_ids if item not in {header_id, footer_id}
+        ]
         groups = repeated_groups(source_id, nodes, children)
-        item_ids = list(children.get(source_id) or [])
         template_id = groups[0]["templateNodeId"] if groups else (item_ids[0] if item_ids else None)
         section_kind = (
             "horizontal-carousel" if source_semantic == "carousel" or scroll_axis(source) == "horizontal"
             else "grid" if source_semantic in {"grid", "collection", "data-table"}
             else "list"
         )
-        sections.append({
+        header = nodes.get(str(header_id or "")) or {}
+        footer = nodes.get(str(footer_id or "")) or {}
+        header_position = str((header.get("style") or {}).get("position") or (header.get("layout") or {}).get("position") or "static")
+        footer_position = str((footer.get("style") or {}).get("position") or (footer.get("layout") or {}).get("position") or "static")
+        return {
             "id": f"{screen.get('id')}.section.{index}",
             "sourceNodeId": source_id,
             "kind": section_kind,
             "scrollAxis": "horizontal" if section_kind == "horizontal-carousel" else "vertical",
+            "allChildNodeIds": all_child_ids,
             "itemNodeIds": item_ids,
             "itemCount": len(item_ids),
             "itemTemplateNodeId": template_id,
-            "usesReuse": kind in {"table-view", "collection-view", "compositional-collection"},
-            "headerNodeId": next((item for item in item_ids if nodes[item].get("semanticType") in {"header", "table-header"}), None),
-            "footerNodeId": next((item for item in item_ids if nodes[item].get("semanticType") == "footer"), None),
-        })
+            "usesReuse": uses_reuse,
+            "headerNodeId": header_id,
+            "footerNodeId": footer_id,
+            "headerBehavior": "pinned" if header_position == "sticky" else "flow" if header_id else "none",
+            "footerBehavior": "pinned" if footer_position == "sticky" else "flow" if footer_id else "none",
+            "requiresSupplementaryViews": bool(header_id or footer_id),
+            "rendersSourceAsItem": renders_source_as_item,
+        }
+
+    sections: list[dict[str, Any]] = []
+    section_sources = (
+        [
+            nodes[item] for item in children.get(root_id) or []
+            if item in nodes
+            and str(((nodes[item].get("style") or {}).get("position") or "static")) not in {"absolute", "fixed"}
+        ]
+        if kind == "compositional-collection"
+        else [nodes.get(selected_node_id) or nodes.get(root_id) or {}]
+    )
+    if not section_sources:
+        section_sources = structured_collections
+    for index, source in enumerate(section_sources):
+        sections.append(build_section(
+            source,
+            index,
+            kind in {"table-view", "collection-view", "compositional-collection"},
+        ))
 
     node_strategies = []
     for node in content_nodes:
@@ -523,26 +561,7 @@ def content_container_plan(
         source_id = str(strategy.get("nodeId") or "")
         if not strategy.get("usesReuse") or not source_id or source_id in existing_section_node_ids:
             continue
-        source = nodes.get(source_id) or {}
-        item_ids = list(children.get(source_id) or [])
-        source_semantic = str(source.get("semanticType") or "collection")
-        section_kind = (
-            "horizontal-carousel" if source_semantic == "carousel" or scroll_axis(source) == "horizontal"
-            else "grid" if source_semantic in {"grid", "collection", "data-table"}
-            else "list"
-        )
-        sections.append({
-            "id": f"{screen.get('id')}.section.{len(sections)}",
-            "sourceNodeId": source_id,
-            "kind": section_kind,
-            "scrollAxis": "horizontal" if section_kind == "horizontal-carousel" else "vertical",
-            "itemNodeIds": item_ids,
-            "itemCount": len(item_ids),
-            "itemTemplateNodeId": item_ids[0] if item_ids else None,
-            "usesReuse": True,
-            "headerNodeId": next((item for item in item_ids if nodes[item].get("semanticType") in {"header", "table-header"}), None),
-            "footerNodeId": next((item for item in item_ids if nodes[item].get("semanticType") == "footer"), None),
-        })
+        sections.append(build_section(nodes.get(source_id) or {}, len(sections), True))
         existing_section_node_ids.add(source_id)
 
     selected_node = nodes.get(selected_node_id) or {}

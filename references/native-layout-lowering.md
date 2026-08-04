@@ -33,6 +33,19 @@
 
 SwiftUI 使用这些证据选择 Stack/Grid/Overlay、spacing、frame 和 layout priority。UIKit 使用相同证据配置 `UIStackView`、Auto Layout、Table/Collection item sizing 与 hugging/compression priority。禁止技术栈各自重排子节点。
 
+复用容器另外生成 `collectionLayouts`：
+
+- `layoutEngine`：table、flow 或 compositional；
+- `itemNodeIds`：排除 supplementary 后的视觉 item 顺序；
+- `headerNodeId`/`footerNodeId` 与独立 pinning；
+- `columnCount`、content insets、main/cross-axis spacing；
+- `widthMode`：full-width、fixed、fractional 或 estimated；
+- `heightMode`：fixed、estimated 或 aspect-ratio；
+- measured estimate、width fraction、fixed dimensions 与 aspect ratio；
+- directional lock 和禁止同轴嵌套滚动。
+
+单列 Table 默认 full-width，只有来源 authored height 明确固定且所有行测量一致时才固定 row height，否则使用自适应行高和浏览器测量值作为 estimate。横向 Collection 在 `flex-shrink:0`、nowrap、固定 width/flex-basis 等证据成立且实测一致时保留 fixed width；纵向 Grid 按轨道或实测列位置推断 fractional width，稳定比例 item 使用 aspect-ratio。
+
 Wrapping stack 在 SwiftUI 中使用原生 `Layout` 协议实现，在 UIKit 中使用独立 wrapping `UIView`；不得用横向滚动或缩小文字代替换行。Grid 必须保存 column/row tracks、auto flow、auto tracks，以及每个 item 的 start/end/span。固定轨道映射为固定原生尺寸，其他轨道保留 flexible/intrinsic 语义。显式 Grid placement 必须由 SwiftUI `Layout` 或 UIKit 原生布局容器执行，不能只记录 span 后仍按普通顺序平均分列。
 
 ## CSS 盒模型
@@ -86,7 +99,7 @@ Wrapping stack 在 SwiftUI 中使用原生 `Layout` 协议实现，在 UIKit 中
 7. 状态布局集合与 UI IR state delta 一致；
 8. 复合槽位唯一、完整并保持视觉顺序。
 
-生成后，`native-structure-manifest.json` 再逐容器核对算法、axis、child order、row/column gap、wrap、alignment 和 distribution，逐节点核对尺寸/定位契约，逐状态核对布局操作，并逐复合控件核对 `compoundLayout` 与 `contentItems`。Manifest 还必须证明生成运行时具备并消费当前页面要求的相对约束、显式 Grid placement 和状态重排能力。任一项未消费时不得接入 Xcode target。
+生成后，`native-structure-manifest.json` 再逐容器核对算法、axis、child order、row/column gap、wrap、alignment 和 distribution，逐集合核对 item order、尺寸模式、列数、supplementary、pinning、insets、间距和滚动隔离，逐节点核对尺寸/定位契约，逐状态核对布局操作，并逐复合控件核对 `compoundLayout` 与 `contentItems`。Manifest 还必须证明生成运行时具备并消费当前页面要求的相对约束、显式 Grid placement、集合尺寸、pinned supplementary 和状态重排能力。任一项未消费时不得接入 Xcode target。
 
 ## 单阶段调试
 

@@ -152,6 +152,13 @@ def main() -> int:
                     "Generated native container did not consume its executable layout plan.",
                     str(record.get("containerNodeId") or "") or None,
                 ))
+        for record in layout_consumption.get("collections") or []:
+            if record.get("status") != "consumed":
+                issues.append(issue(
+                    "NATIVE_COLLECTION_LAYOUT_NOT_CONSUMED", screen_id,
+                    "Generated native collection did not consume item sizing, supplementary, or scroll-isolation contracts.",
+                    str(record.get("containerNodeId") or "") or None,
+                ))
         for record in layout_consumption.get("compoundControls") or []:
             if record.get("status") != "consumed":
                 issues.append(issue(

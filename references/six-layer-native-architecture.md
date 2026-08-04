@@ -74,9 +74,16 @@ Table/Collection 计划必须保存：
 - item template；
 - item 数量；
 - 滚动轴；
+- item width/height mode、估算尺寸、宽高比与列数；
+- content insets、主轴/交叉轴间距和方向锁定；
+- header/footer 是否来自 sticky 行为证据以及是否使用 pinned supplementary；
 - Cell 类型；
 - 是否使用复用；
 - 未来可接入项目 diffable data source 或现有数据源的边界。
+
+Header/Footer 不属于可复用业务 item，必须从 `itemNodeIds` 中分离。普通 header/footer 保持流式 Section 内容；只有来源 `position: sticky` 或行为 probe 的等价证据才能 pin。无法落到 Screen Region、Table/Collection supplementary 或项目现有 sticky 容器的节点必须阻断生成，不能用全局绝对坐标模拟。
+
+Compositional 根的 Section 集合来自根下全部直接流式内容，而不只是 list/grid/carousel。普通标题、工具栏、摘要块作为单 item Section；结构化集合继续使用自己的 item template。这样既保留异构页面顺序，也不把全部页面内容塞进一种 Cell 模板。
 
 当前 HTML 可见内容是视觉 fixture，不据此生成网络接口、分页器或业务 ViewModel。Cell 内仍保留 source node ID 以供几何和截图追踪。
 

@@ -105,6 +105,44 @@ class BuildNativeArchitecturePlanTests(unittest.TestCase):
             self.assertEqual(carousel["kind"], "collection-view")
             self.assertTrue(carousel["ownsScrollAxis"])
 
+    def test_sticky_collection_header_is_separate_from_reusable_items(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = make_ir("catalog")
+            screen = payload["screens"][0]
+            root_id = screen["rootNodeId"]
+            collection_id = "catalog.rail"
+            header_id = "catalog.rail.header"
+            screen["nodes"].extend([
+                {
+                    "id": collection_id, "parentId": root_id, "semanticType": "carousel",
+                    "layout": {"scrollAxis": "horizontal"},
+                },
+                {
+                    "id": header_id, "parentId": collection_id, "semanticType": "header",
+                    "style": {"position": "sticky"}, "layout": {"position": "sticky"},
+                },
+            ])
+            for index in range(4):
+                screen["nodes"].append({
+                    "id": f"{collection_id}.item.{index}", "parentId": collection_id,
+                    "semanticType": "container",
+                })
+            ir_path = root / "ui-ir.json"
+            output = root / "plan.json"
+            ir_path.write_text(json.dumps(payload), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), "--ir", str(ir_path), "--out", str(output), "--ui-stack", "uikit",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            sections = json.loads(output.read_text(encoding="utf-8"))["screens"][0]["layers"]["reusableContent"]["sections"]
+            section = next(item for item in sections if item["sourceNodeId"] == collection_id)
+            self.assertEqual(section["headerNodeId"], header_id)
+            self.assertEqual(section["headerBehavior"], "pinned")
+            self.assertNotIn(header_id, section["itemNodeIds"])
+            self.assertEqual(section["itemCount"], 4)
+            self.assertTrue(section["requiresSupplementaryViews"])
+
     def test_multiple_top_level_collections_use_compositional_root(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -113,6 +151,10 @@ class BuildNativeArchitecturePlanTests(unittest.TestCase):
             root_id = screen["rootNodeId"]
             screen["nodes"][0]["semanticType"] = "container"
             screen["nodes"][0]["layout"] = {"scrollAxis": "none"}
+            screen["nodes"].append({
+                "id": "dashboard.heading", "parentId": root_id,
+                "semanticType": "heading", "content": {"text": "Dashboard"},
+            })
             for section_index in range(2):
                 section_id = f"dashboard.section.{section_index}"
                 screen["nodes"].append({
@@ -136,6 +178,10 @@ class BuildNativeArchitecturePlanTests(unittest.TestCase):
             self.assertEqual(content["kind"], "compositional-collection")
             root_strategy = next(item for item in content["nodeStrategies"] if item["nodeId"] == root_id)
             self.assertEqual(root_strategy["kind"], "compositional-collection")
+            sections = json.loads(output.read_text(encoding="utf-8"))["screens"][0]["layers"]["reusableContent"]["sections"]
+            heading = next(item for item in sections if item["sourceNodeId"] == "dashboard.heading")
+            self.assertTrue(heading["rendersSourceAsItem"])
+            self.assertEqual(heading["itemNodeIds"], ["dashboard.heading"])
 
     def test_six_layers_classify_reusable_content_and_leaf_components(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

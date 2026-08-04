@@ -132,6 +132,71 @@ def main() -> int:
                 add("FIXED_COORDINATE_SPACE_INVALID", screen_id, "Fixed nodes must use the viewport coordinate space.", node_id)
             if scheme in {"absolute", "fixed"} and not positioning.get("nativeOwnerNodeId"):
                 add("NATIVE_POSITIONING_OWNER_MISSING", screen_id, "Positioned node has no executable native owner.", node_id)
+        architecture_layers = (architecture_screens.get(screen_id) or {}).get("layers") or {}
+        architecture_sections = {
+            str(item.get("sourceNodeId") or ""): item
+            for item in ((architecture_layers.get("reusableContent") or {}).get("sections") or [])
+            if isinstance(item, dict) and item.get("sourceNodeId")
+        }
+        strategies = {
+            str(item.get("nodeId") or ""): str(item.get("kind") or "")
+            for item in ((architecture_layers.get("contentContainer") or {}).get("nodeStrategies") or [])
+            if isinstance(item, dict)
+        }
+        expected_collection_ids = {
+            node_id for node_id, strategy in strategies.items()
+            if strategy in {"table-view", "collection-view", "compositional-collection"}
+            and node_id in architecture_sections
+        }
+        collection_layouts = {
+            str(item.get("containerNodeId") or ""): item
+            for item in screen_plan.get("collectionLayouts") or []
+            if isinstance(item, dict)
+        }
+        if set(collection_layouts) != expected_collection_ids:
+            add("COLLECTION_LAYOUT_SET_MISMATCH", screen_id, "Reusable native containers must have exactly one collection layout contract.")
+        for container_id, collection in collection_layouts.items():
+            section = architecture_sections.get(container_id) or {}
+            if collection.get("nativeContainerKind") != strategies.get(container_id):
+                add("COLLECTION_KIND_MISMATCH", screen_id, "Collection layout kind differs from architecture selection.", container_id)
+            if [str(item) for item in collection.get("itemNodeIds") or []] != [str(item) for item in section.get("itemNodeIds") or []]:
+                add("COLLECTION_ITEM_ORDER_MISMATCH", screen_id, "Collection item order differs from reusable section order.", container_id)
+            if collection.get("scrollAxis") not in {"horizontal", "vertical"}:
+                add("INVALID_COLLECTION_AXIS", screen_id, "Native collection must own exactly one scroll axis.", container_id)
+            if collection.get("allowsSameAxisNestedScroll") is not False:
+                add("SAME_AXIS_SCROLL_NOT_REJECTED", screen_id, "Native collection must reject same-axis nested scrolling.", container_id)
+            sizing = collection.get("itemSizing") or {}
+            if sizing.get("widthMode") not in {"full-width", "fixed", "fractional", "estimated"}:
+                add("INVALID_COLLECTION_WIDTH_MODE", screen_id, "Collection item width mode is not executable.", container_id)
+            if sizing.get("heightMode") not in {"fixed", "estimated", "aspect-ratio"}:
+                add("INVALID_COLLECTION_HEIGHT_MODE", screen_id, "Collection item height mode is not executable.", container_id)
+            header_id = str(collection.get("headerNodeId") or "")
+            if collection.get("pinsHeader") is True:
+                header_plan = plan_nodes.get(header_id) or {}
+                if not header_id or (header_plan.get("positioning") or {}).get("scheme") != "sticky":
+                    add("PINNED_HEADER_NOT_STICKY", screen_id, "Pinned collection headers require sticky source evidence.", container_id)
+        pinned_node_ids = {
+            str(collection.get("headerNodeId") or "")
+            for collection in collection_layouts.values()
+            if collection.get("pinsHeader") is True
+        } | {
+            str(collection.get("footerNodeId") or "")
+            for collection in collection_layouts.values()
+            if collection.get("pinsFooter") is True
+        }
+        region_node_ids = {
+            str((region or {}).get("nodeId") or "")
+            for region in (architecture_layers.get("screenRegions") or {}).values()
+            if isinstance(region, dict)
+        }
+        for node_id, node_plan in plan_nodes.items():
+            if (node_plan.get("positioning") or {}).get("scheme") != "sticky":
+                continue
+            if node_id not in pinned_node_ids and node_id not in region_node_ids:
+                add(
+                    "UNRESOLVED_STICKY_MAPPING", screen_id,
+                    "Sticky nodes must map to a native screen region or pinned collection supplementary view.", node_id,
+                )
         for compound in screen_plan.get("compoundControls") or []:
             slot_ids = [str(item) for item in compound.get("orderedSlotIds") or []]
             slots = [str(item.get("slotId") or "") for item in compound.get("orderedSlots") or []]

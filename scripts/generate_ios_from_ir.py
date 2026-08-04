@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.40.0"
+GENERATOR_VERSION = "1.41.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -580,9 +580,11 @@ class ScreenBuildContext:
     detached_root_ids: set[str]
     bottom_bar_placement: str
     native_container_kinds: dict[str, str]
+    compositional_section_ids: dict[str, list[str]]
     layout_containers: dict[str, dict[str, Any]]
     layout_nodes: dict[str, dict[str, Any]]
     layout_sizing: dict[str, dict[str, Any]]
+    collection_layouts: dict[str, dict[str, Any]]
     compound_controls: dict[str, dict[str, Any]]
     positioned_children_by_owner: dict[str, list[str]]
 
@@ -1533,6 +1535,41 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         "id": node_id,
         "semantic": semantic,
         "nativeContainerKind": context.native_container_kinds.get(node_id),
+        "compositionalSectionNodeIds": context.compositional_section_ids.get(node_id),
+        "collectionLayout": (
+            {
+                **context.collection_layouts[node_id],
+                "contentInsetsPt": [
+                    number(value) * context.design_scale
+                    for value in context.collection_layouts[node_id].get("contentInsetsPt") or [0, 0, 0, 0]
+                ],
+                "lineSpacingPt": number(context.collection_layouts[node_id].get("lineSpacingPt")) * context.design_scale,
+                "interItemSpacingPt": number(context.collection_layouts[node_id].get("interItemSpacingPt")) * context.design_scale,
+                "mainAxisSpacingPt": number(context.collection_layouts[node_id].get("mainAxisSpacingPt")) * context.design_scale,
+                "crossAxisSpacingPt": number(context.collection_layouts[node_id].get("crossAxisSpacingPt")) * context.design_scale,
+                "headerHeightPt": (
+                    number(context.collection_layouts[node_id].get("headerHeightPt")) * context.design_scale
+                    if context.collection_layouts[node_id].get("headerHeightPt") is not None else None
+                ),
+                "footerHeightPt": (
+                    number(context.collection_layouts[node_id].get("footerHeightPt")) * context.design_scale
+                    if context.collection_layouts[node_id].get("footerHeightPt") is not None else None
+                ),
+                "itemSizing": {
+                    **(context.collection_layouts[node_id].get("itemSizing") or {}),
+                    "widthPt": (
+                        number((context.collection_layouts[node_id].get("itemSizing") or {}).get("widthPt")) * context.design_scale
+                        if (context.collection_layouts[node_id].get("itemSizing") or {}).get("widthPt") is not None else None
+                    ),
+                    "heightPt": (
+                        number((context.collection_layouts[node_id].get("itemSizing") or {}).get("heightPt")) * context.design_scale
+                        if (context.collection_layouts[node_id].get("itemSizing") or {}).get("heightPt") is not None else None
+                    ),
+                    "estimatedHeightPt": number((context.collection_layouts[node_id].get("itemSizing") or {}).get("estimatedHeightPt"), 72) * context.design_scale,
+                },
+            }
+            if node_id in context.collection_layouts else None
+        ),
         "text": text,
         "placeholder": placeholder,
         "textBehavior": text_behavior,
@@ -1751,6 +1788,19 @@ def build_screen(
         for item in native_layout.get("compoundControls") or []
         if isinstance(item, dict) and item.get("nodeId")
     }
+    collection_layouts = {
+        str(item.get("containerNodeId") or ""): item
+        for item in native_layout.get("collectionLayouts") or []
+        if isinstance(item, dict) and item.get("containerNodeId")
+    }
+    reusable_sections = ((layers.get("reusableContent") or {}).get("sections") or [])
+    compositional_section_ids = {
+        str(content_container.get("nodeId") or ""): [
+            str(item.get("sourceNodeId") or "")
+            for item in reusable_sections
+            if isinstance(item, dict) and item.get("sourceNodeId")
+        ]
+    } if content_container.get("kind") == "compositional-collection" else {}
     nodes_list = screen.get("nodes") or []
     nodes = {str(node["id"]): node for node in nodes_list}
     children: dict[str | None, list[str]] = {}
@@ -2197,9 +2247,11 @@ def build_screen(
         detached_root_ids=detached_root_ids,
         bottom_bar_placement=bottom_bar_placement,
         native_container_kinds=native_container_kinds,
+        compositional_section_ids=compositional_section_ids,
         layout_containers=layout_containers,
         layout_nodes=layout_nodes,
         layout_sizing=layout_sizing,
+        collection_layouts=collection_layouts,
         compound_controls=compound_controls,
         positioned_children_by_owner=positioned_children_by_owner,
     )
@@ -2554,10 +2606,47 @@ struct HTMLToIOSNodeLayoutContractSpec: Codable {{
     let gridRowSpan: Int?
 }}
 
+struct HTMLToIOSCollectionItemSizingSpec: Codable {{
+    let widthMode: String
+    let widthPt: Double?
+    let widthFraction: Double?
+    let heightMode: String
+    let heightPt: Double?
+    let estimatedHeightPt: Double
+    let aspectRatio: Double?
+    let preservesIntrinsicWidth: Bool
+}}
+
+struct HTMLToIOSCollectionLayoutSpec: Codable {{
+    let sectionId: String
+    let containerNodeId: String
+    let nativeContainerKind: String
+    let layoutEngine: String
+    let scrollAxis: String
+    let itemNodeIds: [String]
+    let headerNodeId: String?
+    let footerNodeId: String?
+    let pinsHeader: Bool
+    let pinsFooter: Bool
+    let headerHeightPt: Double?
+    let footerHeightPt: Double?
+    let columnCount: Int
+    let contentInsetsPt: [Double]
+    let lineSpacingPt: Double
+    let interItemSpacingPt: Double
+    let mainAxisSpacingPt: Double
+    let crossAxisSpacingPt: Double
+    let itemSizing: HTMLToIOSCollectionItemSizingSpec
+    let directionalLockEnabled: Bool
+    let allowsSameAxisNestedScroll: Bool
+}}
+
 struct HTMLToIOSNodeSpec: Codable, Identifiable {{
     let id: String
     let semantic: String
     let nativeContainerKind: String?
+    let compositionalSectionNodeIds: [String]?
+    let collectionLayout: HTMLToIOSCollectionLayoutSpec?
     let text: String
     let placeholder: String
     let textBehavior: HTMLToIOSTextBehaviorSpec?
@@ -3881,6 +3970,29 @@ private struct HTMLToIOSGridPlacementLayout: Layout {
     }
 }
 
+private struct HTMLToIOSCollectionItemModifier: ViewModifier {
+    let sizing: HTMLToIOSCollectionItemSizingSpec?
+
+    func body(content: Content) -> some View {
+        let isFullWidth = sizing?.widthMode == "full-width"
+        let fixedWidth = sizing?.widthMode == "fixed" ? sizing?.widthPt.map { CGFloat($0) } : nil
+        let fixedHeight = sizing?.heightMode == "fixed" ? sizing?.heightPt.map { CGFloat($0) } : nil
+        let aspectRatio = sizing?.heightMode == "aspect-ratio" ? sizing?.aspectRatio.map { CGFloat($0) } : nil
+        let preservesWidth = sizing?.preservesIntrinsicWidth == true && sizing?.widthMode != "fractional"
+        return content
+            .frame(
+                minWidth: isFullWidth ? CGFloat.zero : nil,
+                maxWidth: isFullWidth ? CGFloat.infinity : nil,
+                minHeight: fixedHeight,
+                maxHeight: fixedHeight,
+                alignment: .topLeading
+            )
+            .frame(width: fixedWidth)
+            .aspectRatio(aspectRatio, contentMode: .fit)
+            .fixedSize(horizontal: preservesWidth, vertical: false)
+    }
+}
+
 struct HTMLToIOSNativeNodeView: View {
     @ObservedObject var store: HTMLToIOSGeneratedStore
     let spec: HTMLToIOSNodeSpec
@@ -4390,23 +4502,43 @@ struct HTMLToIOSNativeNodeView: View {
     @ViewBuilder private var childContent: some View {
         if spec.nativeContainerKind == "compositional-collection" {
             LazyVStack(alignment: horizontalAlignment, spacing: contentSpacing) {
-                dynamicOrDistributedContent
+                ForEach(nativeCompositionalSections) { section in
+                    HTMLToIOSNativeNodeView(
+                        store: store,
+                        spec: section,
+                        textOverrides: textOverrides,
+                        typedRegistry: typedRegistry,
+                        bypassTypedNodeID: bypassTypedNodeID
+                    )
+                }
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
         } else if spec.nativeContainerKind == "table-view" {
-            LazyVStack(alignment: horizontalAlignment, spacing: contentSpacing) {
-                dynamicOrDistributedContent
+            LazyVStack(
+                alignment: horizontalAlignment,
+                spacing: spec.collectionLayout?.mainAxisSpacingPt ?? contentSpacing,
+                pinnedViews: pinnedSectionViews
+            ) {
+                nativeCollectionSection
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
         } else if spec.nativeContainerKind == "collection-view", effectiveScrollAxis == "horizontal" {
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(alignment: verticalAlignment, spacing: contentSpacing) {
-                    dynamicOrOrderedContent
+                LazyHStack(
+                    alignment: verticalAlignment,
+                    spacing: spec.collectionLayout?.mainAxisSpacingPt ?? contentSpacing,
+                    pinnedViews: pinnedSectionViews
+                ) {
+                    nativeCollectionSection
                 }
             }
         } else if spec.nativeContainerKind == "collection-view" {
-            LazyVGrid(columns: gridColumns, spacing: spec.style.rowSpacing ?? spec.style.spacing ?? 0) {
-                dynamicOrOrderedContent
+            LazyVGrid(
+                columns: collectionGridColumns,
+                spacing: spec.collectionLayout?.mainAxisSpacingPt ?? spec.style.rowSpacing ?? spec.style.spacing ?? 0,
+                pinnedViews: pinnedSectionViews
+            ) {
+                nativeCollectionSection
             }
         } else if spec.style.layoutAlgorithm == "wrapping-stack" {
             HTMLToIOSWrappingLayout(
@@ -4456,6 +4588,82 @@ struct HTMLToIOSNativeNodeView: View {
         } else {
             VStack(alignment: horizontalAlignment, spacing: contentSpacing) { dynamicOrDistributedContent }
                 .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: verticalFrameAlignment)
+        }
+    }
+
+    private var pinnedSectionViews: PinnedScrollableViews {
+        var result: PinnedScrollableViews = []
+        if spec.collectionLayout?.pinsHeader == true { result.insert(.sectionHeaders) }
+        if spec.collectionLayout?.pinsFooter == true { result.insert(.sectionFooters) }
+        return result
+    }
+
+    private var nativeCollectionItems: [HTMLToIOSNodeSpec] {
+        guard let contract = spec.collectionLayout else { return spec.children }
+        let indexed = Dictionary(uniqueKeysWithValues: spec.children.map { ($0.id, $0) })
+        return contract.itemNodeIds.compactMap { indexed[$0] }
+    }
+
+    private var nativeCompositionalSections: [HTMLToIOSNodeSpec] {
+        guard let nodeIDs = spec.compositionalSectionNodeIds else { return spec.children }
+        let indexed = Dictionary(uniqueKeysWithValues: spec.children.map { ($0.id, $0) })
+        return nodeIDs.compactMap { indexed[$0] }
+    }
+
+    private var nativeCollectionHeader: HTMLToIOSNodeSpec? {
+        guard let nodeID = spec.collectionLayout?.headerNodeId else { return nil }
+        return spec.children.first { $0.id == nodeID }
+    }
+
+    private var nativeCollectionFooter: HTMLToIOSNodeSpec? {
+        guard let nodeID = spec.collectionLayout?.footerNodeId else { return nil }
+        return spec.children.first { $0.id == nodeID }
+    }
+
+    private var collectionGridColumns: [GridItem] {
+        let count = max(spec.collectionLayout?.columnCount ?? spec.style.gridColumnCount ?? 1, 1)
+        let spacing = spec.collectionLayout?.crossAxisSpacingPt ?? spec.style.columnSpacing ?? spec.style.spacing ?? 0
+        let sizing = spec.collectionLayout?.itemSizing
+        return (0..<count).map { _ in
+            if sizing?.widthMode == "fixed", let width = sizing?.widthPt {
+                return GridItem(.fixed(width), spacing: spacing)
+            }
+            return GridItem(.flexible(minimum: 0), spacing: spacing)
+        }
+    }
+
+    @ViewBuilder private var nativeCollectionSection: some View {
+        Section {
+            ForEach(nativeCollectionItems) { child in
+                HTMLToIOSNativeNodeView(
+                    store: store,
+                    spec: child,
+                    textOverrides: textOverrides,
+                    typedRegistry: typedRegistry,
+                    bypassTypedNodeID: bypassTypedNodeID
+                )
+                .modifier(HTMLToIOSCollectionItemModifier(sizing: spec.collectionLayout?.itemSizing))
+            }
+        } header: {
+            if let header = nativeCollectionHeader {
+                HTMLToIOSNativeNodeView(
+                    store: store,
+                    spec: header,
+                    textOverrides: textOverrides,
+                    typedRegistry: typedRegistry,
+                    bypassTypedNodeID: bypassTypedNodeID
+                )
+            }
+        } footer: {
+            if let footer = nativeCollectionFooter {
+                HTMLToIOSNativeNodeView(
+                    store: store,
+                    spec: footer,
+                    textOverrides: textOverrides,
+                    typedRegistry: typedRegistry,
+                    bypassTypedNodeID: bypassTypedNodeID
+                )
+            }
         }
     }
 
@@ -5337,7 +5545,7 @@ final class HTMLToIOSStatefulControl: UIControl {
 class HTMLToIOSGeneratedTableCell: UITableViewCell {
     static let reuseIdentifier = "HTMLToIOSGeneratedTableCell"
 
-    func install(_ generatedView: UIView) {
+    func install(_ generatedView: UIView, bottomSpacing: CGFloat = 0) {
         contentView.subviews.forEach { $0.removeFromSuperview() }
         generatedView.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(generatedView)
@@ -5345,29 +5553,50 @@ class HTMLToIOSGeneratedTableCell: UITableViewCell {
             generatedView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             generatedView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             generatedView.topAnchor.constraint(equalTo: contentView.topAnchor),
-            generatedView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            generatedView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -bottomSpacing),
         ])
     }
 }
 
-private final class HTMLToIOSGeneratedTableView: UITableView, UITableViewDataSource {
+private final class HTMLToIOSGeneratedTableView: UITableView, UITableViewDataSource, UITableViewDelegate {
     private let itemSpecs: [HTMLToIOSNodeSpec]
+    private let headerSpec: HTMLToIOSNodeSpec?
+    private let footerSpec: HTMLToIOSNodeSpec?
+    private let contract: HTMLToIOSCollectionLayoutSpec?
     private let render: (HTMLToIOSNodeSpec) -> UIView
     private let cellType: (HTMLToIOSNodeSpec) -> HTMLToIOSGeneratedTableCell.Type
 
     init(
-        itemSpecs: [HTMLToIOSNodeSpec],
+        spec: HTMLToIOSNodeSpec,
         render: @escaping (HTMLToIOSNodeSpec) -> UIView,
         cellType: @escaping (HTMLToIOSNodeSpec) -> HTMLToIOSGeneratedTableCell.Type
     ) {
-        self.itemSpecs = itemSpecs
+        let indexed = Dictionary(uniqueKeysWithValues: spec.children.map { ($0.id, $0) })
+        self.contract = spec.collectionLayout
+        self.itemSpecs = spec.collectionLayout?.itemNodeIds.compactMap { indexed[$0] } ?? spec.children
+        self.headerSpec = spec.collectionLayout?.headerNodeId.flatMap { indexed[$0] }
+        self.footerSpec = spec.collectionLayout?.footerNodeId.flatMap { indexed[$0] }
         self.render = render
         self.cellType = cellType
-        super.init(frame: .zero, style: .plain)
+        super.init(frame: .zero, style: spec.collectionLayout?.pinsHeader == true ? .plain : .grouped)
         dataSource = self
+        delegate = self
         separatorStyle = .none
-        rowHeight = UITableView.automaticDimension
-        estimatedRowHeight = 72
+        if spec.collectionLayout?.itemSizing.heightMode == "fixed",
+           let height = spec.collectionLayout?.itemSizing.heightPt {
+            rowHeight = height + (spec.collectionLayout?.mainAxisSpacingPt ?? 0)
+        } else {
+            rowHeight = UITableView.automaticDimension
+        }
+        estimatedRowHeight = (spec.collectionLayout?.itemSizing.estimatedHeightPt ?? 72)
+            + (spec.collectionLayout?.mainAxisSpacingPt ?? 0)
+        sectionHeaderTopPadding = 0
+        isDirectionalLockEnabled = spec.collectionLayout?.directionalLockEnabled ?? true
+        alwaysBounceHorizontal = false
+        showsHorizontalScrollIndicator = false
+        if let insets = spec.collectionLayout?.contentInsetsPt, insets.count == 4 {
+            contentInset = UIEdgeInsets(top: insets[0], left: insets[3], bottom: insets[2], right: insets[1])
+        }
         backgroundColor = .clear
         for spec in itemSpecs {
             let type = cellType(spec)
@@ -5384,8 +5613,30 @@ private final class HTMLToIOSGeneratedTableView: UITableView, UITableViewDataSou
             as! HTMLToIOSGeneratedTableCell
         cell.selectionStyle = .none
         cell.backgroundColor = .clear
-        cell.install(render(itemSpecs[indexPath.row]))
+        cell.install(render(itemSpecs[indexPath.row]), bottomSpacing: contract?.mainAxisSpacingPt ?? 0)
         return cell
+    }
+
+    func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
+        headerSpec.map(render)
+    }
+
+    func tableView(_ tableView: UITableView, heightForHeaderInSection section: Int) -> CGFloat {
+        guard headerSpec != nil else { return .leastNormalMagnitude }
+        return contract?.headerHeightPt.map { CGFloat($0) } ?? UITableView.automaticDimension
+    }
+
+    func tableView(_ tableView: UITableView, estimatedHeightForHeaderInSection section: Int) -> CGFloat {
+        contract?.headerHeightPt.map { CGFloat($0) } ?? 44
+    }
+
+    func tableView(_ tableView: UITableView, viewForFooterInSection section: Int) -> UIView? {
+        footerSpec.map(render)
+    }
+
+    func tableView(_ tableView: UITableView, heightForFooterInSection section: Int) -> CGFloat {
+        guard footerSpec != nil else { return .leastNormalMagnitude }
+        return contract?.footerHeightPt.map { CGFloat($0) } ?? UITableView.automaticDimension
     }
 }
 
@@ -5405,8 +5656,27 @@ class HTMLToIOSGeneratedCollectionCell: UICollectionViewCell {
     }
 }
 
-private final class HTMLToIOSGeneratedCollectionView: UICollectionView, UICollectionViewDataSource {
+private final class HTMLToIOSGeneratedSupplementaryView: UICollectionReusableView {
+    static let reuseIdentifier = "HTMLToIOSGeneratedSupplementaryView"
+
+    func install(_ generatedView: UIView) {
+        subviews.forEach { $0.removeFromSuperview() }
+        generatedView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(generatedView)
+        NSLayoutConstraint.activate([
+            generatedView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            generatedView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            generatedView.topAnchor.constraint(equalTo: topAnchor),
+            generatedView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+}
+
+private final class HTMLToIOSGeneratedCollectionView: UICollectionView, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
     private let itemSpecs: [HTMLToIOSNodeSpec]
+    private let headerSpec: HTMLToIOSNodeSpec?
+    private let footerSpec: HTMLToIOSNodeSpec?
+    private let contract: HTMLToIOSCollectionLayoutSpec?
     private let render: (HTMLToIOSNodeSpec) -> UIView
     private let cellType: (HTMLToIOSNodeSpec) -> HTMLToIOSGeneratedCollectionCell.Type
 
@@ -5415,23 +5685,44 @@ private final class HTMLToIOSGeneratedCollectionView: UICollectionView, UICollec
         render: @escaping (HTMLToIOSNodeSpec) -> UIView,
         cellType: @escaping (HTMLToIOSNodeSpec) -> HTMLToIOSGeneratedCollectionCell.Type
     ) {
-        self.itemSpecs = spec.children
+        let indexed = Dictionary(uniqueKeysWithValues: spec.children.map { ($0.id, $0) })
+        self.contract = spec.collectionLayout
+        self.itemSpecs = spec.collectionLayout?.itemNodeIds.compactMap { indexed[$0] } ?? spec.children
+        self.headerSpec = spec.collectionLayout?.headerNodeId.flatMap { indexed[$0] }
+        self.footerSpec = spec.collectionLayout?.footerNodeId.flatMap { indexed[$0] }
         self.render = render
         self.cellType = cellType
         let layout = UICollectionViewFlowLayout()
-        layout.scrollDirection = (spec.style.scrollAxis == "horizontal" || spec.semantic == "carousel") ? .horizontal : .vertical
-        layout.minimumLineSpacing = spec.style.spacing ?? 0
-        layout.minimumInteritemSpacing = spec.style.spacing ?? 0
-        layout.estimatedItemSize = UICollectionViewFlowLayout.automaticSize
+        layout.scrollDirection = (spec.collectionLayout?.scrollAxis == "horizontal" || spec.style.scrollAxis == "horizontal" || spec.semantic == "carousel") ? .horizontal : .vertical
+        layout.minimumLineSpacing = spec.collectionLayout?.mainAxisSpacingPt ?? spec.style.spacing ?? 0
+        layout.minimumInteritemSpacing = spec.collectionLayout?.crossAxisSpacingPt ?? spec.style.spacing ?? 0
+        layout.estimatedItemSize = spec.collectionLayout?.itemSizing.heightMode == "estimated"
+            ? UICollectionViewFlowLayout.automaticSize : .zero
+        layout.sectionHeadersPinToVisibleBounds = spec.collectionLayout?.pinsHeader ?? false
+        layout.sectionFootersPinToVisibleBounds = spec.collectionLayout?.pinsFooter ?? false
         super.init(frame: .zero, collectionViewLayout: layout)
         dataSource = self
+        delegate = self
         backgroundColor = .clear
+        isDirectionalLockEnabled = spec.collectionLayout?.directionalLockEnabled ?? true
+        alwaysBounceHorizontal = layout.scrollDirection == .horizontal
+        alwaysBounceVertical = layout.scrollDirection == .vertical
         showsHorizontalScrollIndicator = layout.scrollDirection == .horizontal
         showsVerticalScrollIndicator = layout.scrollDirection == .vertical
         for item in itemSpecs {
             let type = cellType(item)
             register(type, forCellWithReuseIdentifier: String(reflecting: type))
         }
+        register(
+            HTMLToIOSGeneratedSupplementaryView.self,
+            forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader,
+            withReuseIdentifier: HTMLToIOSGeneratedSupplementaryView.reuseIdentifier
+        )
+        register(
+            HTMLToIOSGeneratedSupplementaryView.self,
+            forSupplementaryViewOfKind: UICollectionView.elementKindSectionFooter,
+            withReuseIdentifier: HTMLToIOSGeneratedSupplementaryView.reuseIdentifier
+        )
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
@@ -5446,6 +5737,79 @@ private final class HTMLToIOSGeneratedCollectionView: UICollectionView, UICollec
         cell.install(render(itemSpecs[indexPath.item]))
         return cell
     }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        viewForSupplementaryElementOfKind kind: String,
+        at indexPath: IndexPath
+    ) -> UICollectionReusableView {
+        let view = collectionView.dequeueReusableSupplementaryView(
+            ofKind: kind,
+            withReuseIdentifier: HTMLToIOSGeneratedSupplementaryView.reuseIdentifier,
+            for: indexPath
+        ) as! HTMLToIOSGeneratedSupplementaryView
+        let supplementary = kind == UICollectionView.elementKindSectionHeader ? headerSpec : footerSpec
+        if let supplementary { view.install(render(supplementary)) }
+        return view
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        layout collectionViewLayout: UICollectionViewLayout,
+        sizeForItemAt indexPath: IndexPath
+    ) -> CGSize {
+        guard let sizing = contract?.itemSizing else {
+            return CGSize(width: max(bounds.width, 44), height: 72)
+        }
+        let insets = contract?.contentInsetsPt ?? [0, 0, 0, 0]
+        let horizontalInsets = CGFloat((insets.indices.contains(1) ? insets[1] : 0) + (insets.indices.contains(3) ? insets[3] : 0))
+        let columns = max(contract?.columnCount ?? 1, 1)
+        let availableWidth = max(bounds.width - horizontalInsets - CGFloat(columns - 1) * CGFloat(contract?.crossAxisSpacingPt ?? 0), 0)
+        let width: CGFloat
+        if sizing.widthMode == "fixed", let value = sizing.widthPt {
+            width = value
+        } else if contract?.scrollAxis == "horizontal" {
+            width = max(sizing.widthPt ?? itemSpecs[indexPath.item].style.preferredWidth ?? 160, 44)
+        } else {
+            width = availableWidth / CGFloat(columns)
+        }
+        let height: CGFloat
+        if sizing.heightMode == "fixed", let value = sizing.heightPt {
+            height = value
+        } else if sizing.heightMode == "aspect-ratio", let ratio = sizing.aspectRatio, ratio > 0 {
+            height = width / ratio
+        } else {
+            height = max(sizing.estimatedHeightPt, 1)
+        }
+        return CGSize(width: width, height: height)
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        layout collectionViewLayout: UICollectionViewLayout,
+        insetForSectionAt section: Int
+    ) -> UIEdgeInsets {
+        guard let values = contract?.contentInsetsPt, values.count == 4 else { return .zero }
+        return UIEdgeInsets(top: values[0], left: values[3], bottom: values[2], right: values[1])
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        layout collectionViewLayout: UICollectionViewLayout,
+        referenceSizeForHeaderInSection section: Int
+    ) -> CGSize {
+        guard headerSpec != nil else { return .zero }
+        return CGSize(width: max(bounds.width, 1), height: contract?.headerHeightPt ?? 44)
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        layout collectionViewLayout: UICollectionViewLayout,
+        referenceSizeForFooterInSection section: Int
+    ) -> CGSize {
+        guard footerSpec != nil else { return .zero }
+        return CGSize(width: max(bounds.width, 1), height: contract?.footerHeightPt ?? 44)
+    }
 }
 
 private final class HTMLToIOSGeneratedCompositionalCollectionView: UICollectionView, UICollectionViewDataSource {
@@ -5458,46 +5822,108 @@ private final class HTMLToIOSGeneratedCompositionalCollectionView: UICollectionV
         render: @escaping (HTMLToIOSNodeSpec) -> UIView,
         cellType: @escaping (HTMLToIOSNodeSpec) -> HTMLToIOSGeneratedCollectionCell.Type
     ) {
-        self.sectionSpecs = spec.children
+        let sectionIndex = Dictionary(uniqueKeysWithValues: spec.children.map { ($0.id, $0) })
+        let resolvedSections = spec.compositionalSectionNodeIds?.compactMap { sectionIndex[$0] } ?? spec.children
+        self.sectionSpecs = resolvedSections
         self.render = render
         self.cellType = cellType
-        let sections = spec.children
+        let sections = resolvedSections
+        func resolvedItems(_ section: HTMLToIOSNodeSpec) -> [HTMLToIOSNodeSpec] {
+            guard let contract = section.collectionLayout else { return [section] }
+            let indexed = Dictionary(uniqueKeysWithValues: section.children.map { ($0.id, $0) })
+            return contract.itemNodeIds.compactMap { indexed[$0] }
+        }
         let layout = UICollectionViewCompositionalLayout { sectionIndex, _ in
             guard sections.indices.contains(sectionIndex) else { return nil }
             let sectionSpec = sections[sectionIndex]
-            let horizontal = sectionSpec.semantic == "carousel" || sectionSpec.style.scrollAxis == "horizontal"
-            let columns = horizontal ? 1 : max(sectionSpec.style.gridColumnCount ?? 1, 1)
-            let estimatedWidth = CGFloat(max(sectionSpec.style.preferredWidth ?? 160, 44))
-            let estimatedHeight = CGFloat(max(sectionSpec.style.preferredHeight ?? 72, 44))
-            let spacing = CGFloat(sectionSpec.style.spacing ?? 0)
-            let itemWidth: NSCollectionLayoutDimension = horizontal
-                ? .estimated(estimatedWidth)
-                : .fractionalWidth(1.0 / CGFloat(columns))
+            let contract = sectionSpec.collectionLayout
+            let sizing = contract?.itemSizing
+            let horizontal = contract?.scrollAxis == "horizontal" || sectionSpec.semantic == "carousel" || sectionSpec.style.scrollAxis == "horizontal"
+            let columns = horizontal ? 1 : max(contract?.columnCount ?? sectionSpec.style.gridColumnCount ?? 1, 1)
+            let estimatedWidth = CGFloat(max(sizing?.widthPt ?? sectionSpec.style.preferredWidth ?? 160, 44))
+            let estimatedHeight = CGFloat(max(sizing?.estimatedHeightPt ?? sectionSpec.style.preferredHeight ?? 72, 1))
+            let mainSpacing = CGFloat(contract?.mainAxisSpacingPt ?? sectionSpec.style.spacing ?? 0)
+            let crossSpacing = CGFloat(contract?.crossAxisSpacingPt ?? sectionSpec.style.spacing ?? 0)
+            let itemWidth: NSCollectionLayoutDimension = sizing?.widthMode == "fixed"
+                ? .absolute(estimatedWidth)
+                : horizontal ? .estimated(estimatedWidth) : .fractionalWidth(1.0 / CGFloat(columns))
+            let itemHeight: NSCollectionLayoutDimension
+            if sizing?.heightMode == "fixed", let height = sizing?.heightPt {
+                itemHeight = .absolute(height)
+            } else if sizing?.heightMode == "aspect-ratio", let ratio = sizing?.aspectRatio, ratio > 0 {
+                itemHeight = .fractionalWidth(1.0 / (CGFloat(columns) * CGFloat(ratio)))
+            } else {
+                itemHeight = .estimated(estimatedHeight)
+            }
             let itemSize = NSCollectionLayoutSize(
                 widthDimension: itemWidth,
-                heightDimension: .estimated(estimatedHeight)
+                heightDimension: itemHeight
             )
             let item = NSCollectionLayoutItem(layoutSize: itemSize)
             let groupSize = NSCollectionLayoutSize(
                 widthDimension: horizontal ? .estimated(estimatedWidth) : .fractionalWidth(1),
-                heightDimension: .estimated(estimatedHeight)
+                heightDimension: itemHeight
             )
-            let group = NSCollectionLayoutGroup.horizontal(layoutSize: groupSize, subitems: [item])
-            group.interItemSpacing = .fixed(spacing)
+            let group = horizontal
+                ? NSCollectionLayoutGroup.horizontal(layoutSize: groupSize, subitems: [item])
+                : NSCollectionLayoutGroup.horizontal(layoutSize: groupSize, subitems: Array(repeating: item, count: columns))
+            group.interItemSpacing = .fixed(crossSpacing)
             let section = NSCollectionLayoutSection(group: group)
-            section.interGroupSpacing = spacing
+            section.interGroupSpacing = mainSpacing
+            if let values = contract?.contentInsetsPt, values.count == 4 {
+                section.contentInsets = NSDirectionalEdgeInsets(
+                    top: values[0], leading: values[3], bottom: values[2], trailing: values[1]
+                )
+            }
             if horizontal { section.orthogonalScrollingBehavior = .continuous }
+            var boundaries: [NSCollectionLayoutBoundarySupplementaryItem] = []
+            if contract?.headerNodeId != nil {
+                let header = NSCollectionLayoutBoundarySupplementaryItem(
+                    layoutSize: NSCollectionLayoutSize(
+                        widthDimension: .fractionalWidth(1),
+                        heightDimension: .estimated(contract?.headerHeightPt ?? 44)
+                    ),
+                    elementKind: UICollectionView.elementKindSectionHeader,
+                    alignment: .top
+                )
+                header.pinToVisibleBounds = contract?.pinsHeader ?? false
+                boundaries.append(header)
+            }
+            if contract?.footerNodeId != nil {
+                let footer = NSCollectionLayoutBoundarySupplementaryItem(
+                    layoutSize: NSCollectionLayoutSize(
+                        widthDimension: .fractionalWidth(1),
+                        heightDimension: .estimated(contract?.footerHeightPt ?? 44)
+                    ),
+                    elementKind: UICollectionView.elementKindSectionFooter,
+                    alignment: .bottom
+                )
+                footer.pinToVisibleBounds = contract?.pinsFooter ?? false
+                boundaries.append(footer)
+            }
+            section.boundarySupplementaryItems = boundaries
             return section
         }
         super.init(frame: .zero, collectionViewLayout: layout)
         dataSource = self
         backgroundColor = .clear
+        isDirectionalLockEnabled = true
         for section in sectionSpecs {
-            for item in section.children.isEmpty ? [section] : section.children {
+            for item in resolvedItems(section) {
                 let type = cellType(item)
                 register(type, forCellWithReuseIdentifier: String(reflecting: type))
             }
         }
+        register(
+            HTMLToIOSGeneratedSupplementaryView.self,
+            forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader,
+            withReuseIdentifier: HTMLToIOSGeneratedSupplementaryView.reuseIdentifier
+        )
+        register(
+            HTMLToIOSGeneratedSupplementaryView.self,
+            forSupplementaryViewOfKind: UICollectionView.elementKindSectionFooter,
+            withReuseIdentifier: HTMLToIOSGeneratedSupplementaryView.reuseIdentifier
+        )
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
@@ -5505,12 +5931,13 @@ private final class HTMLToIOSGeneratedCompositionalCollectionView: UICollectionV
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
         guard sectionSpecs.indices.contains(section) else { return 0 }
-        return max(sectionSpecs[section].children.count, 1)
+        return itemSpecs(for: sectionSpecs[section]).count
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         let section = sectionSpecs[indexPath.section]
-        let item = section.children.indices.contains(indexPath.item) ? section.children[indexPath.item] : section
+        let items = itemSpecs(for: section)
+        let item = items[indexPath.item]
         let type = cellType(item)
         let cell = collectionView.dequeueReusableCell(
             withReuseIdentifier: String(reflecting: type),
@@ -5518,6 +5945,31 @@ private final class HTMLToIOSGeneratedCompositionalCollectionView: UICollectionV
         ) as! HTMLToIOSGeneratedCollectionCell
         cell.install(render(item))
         return cell
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        viewForSupplementaryElementOfKind kind: String,
+        at indexPath: IndexPath
+    ) -> UICollectionReusableView {
+        let view = collectionView.dequeueReusableSupplementaryView(
+            ofKind: kind,
+            withReuseIdentifier: HTMLToIOSGeneratedSupplementaryView.reuseIdentifier,
+            for: indexPath
+        ) as! HTMLToIOSGeneratedSupplementaryView
+        let section = sectionSpecs[indexPath.section]
+        let nodeID = kind == UICollectionView.elementKindSectionHeader
+            ? section.collectionLayout?.headerNodeId : section.collectionLayout?.footerNodeId
+        if let nodeID, let node = section.children.first(where: { $0.id == nodeID }) {
+            view.install(render(node))
+        }
+        return view
+    }
+
+    private func itemSpecs(for section: HTMLToIOSNodeSpec) -> [HTMLToIOSNodeSpec] {
+        guard let contract = section.collectionLayout else { return [section] }
+        let indexed = Dictionary(uniqueKeysWithValues: section.children.map { ($0.id, $0) })
+        return contract.itemNodeIds.compactMap { indexed[$0] }
     }
 }
 
@@ -5563,7 +6015,7 @@ final class HTMLToIOSNodeRenderer {
             )
         } else if spec.nativeContainerKind == "table-view" {
             view = HTMLToIOSGeneratedTableView(
-                itemSpecs: spec.children,
+                spec: spec,
                 render: { [weak self] item in self?.makeView(item) ?? UIView() },
                 cellType: { [weak self] item in self?.typedTableCellTypes[item.id] ?? HTMLToIOSGeneratedTableCell.self }
             )
@@ -8233,6 +8685,12 @@ def build_native_structure_manifest(
         for key in ("columnStart", "rowStart")
     )
     requires_state_reflow = any(screen.get("stateLayouts") for screen in all_layout_screens)
+    requires_collection_sizing = any(screen.get("collectionLayouts") for screen in all_layout_screens)
+    requires_pinned_supplementary = any(
+        item.get("pinsHeader") is True or item.get("pinsFooter") is True
+        for screen in all_layout_screens
+        for item in screen.get("collectionLayouts") or []
+    )
     runtime_capabilities = {
         "relativeConstraints": {
             "required": requires_relative_constraints,
@@ -8253,6 +8711,20 @@ def build_native_structure_manifest(
             "consumed": not requires_state_reflow or (
                 "store.flags.contains(spec.visibleWhenStateID!)" in runtime_text
                 if ui_stack == "swiftui" else "self.renderScreen()" in runtime_text
+            ),
+        },
+        "collectionSizing": {
+            "required": requires_collection_sizing,
+            "consumed": not requires_collection_sizing or (
+                "HTMLToIOSCollectionItemModifier" in runtime_text
+                if ui_stack == "swiftui" else "sizeForItemAt indexPath" in runtime_text
+            ),
+        },
+        "pinnedSupplementary": {
+            "required": requires_pinned_supplementary,
+            "consumed": not requires_pinned_supplementary or (
+                "pinnedSectionViews" in runtime_text
+                if ui_stack == "swiftui" else "sectionHeadersPinToVisibleBounds" in runtime_text
             ),
         },
     }
@@ -8365,6 +8837,49 @@ def build_native_structure_manifest(
                 "expectedSlotIds": expected_slots,
                 "actualSlotIds": content_slots,
             })
+        collection_consumption = []
+        for collection_plan in native_layout.get("collectionLayouts") or []:
+            container_id = str(collection_plan.get("containerNodeId") or "")
+            payload_node = payload_nodes.get(container_id) or {}
+            generated = payload_node.get("collectionLayout") or {}
+            planned_sizing = collection_plan.get("itemSizing") or {}
+            generated_sizing = generated.get("itemSizing") or {}
+            expected_insets = [number(value) * design_scale for value in collection_plan.get("contentInsetsPt") or []]
+            checks = {
+                "containerKind": generated.get("nativeContainerKind") == collection_plan.get("nativeContainerKind"),
+                "layoutEngine": generated.get("layoutEngine") == collection_plan.get("layoutEngine"),
+                "axis": generated.get("scrollAxis") == collection_plan.get("scrollAxis"),
+                "itemOrder": generated.get("itemNodeIds") == collection_plan.get("itemNodeIds"),
+                "supplementary": (
+                    generated.get("headerNodeId") == collection_plan.get("headerNodeId")
+                    and generated.get("footerNodeId") == collection_plan.get("footerNodeId")
+                    and generated.get("pinsHeader") == collection_plan.get("pinsHeader")
+                    and generated.get("pinsFooter") == collection_plan.get("pinsFooter")
+                ),
+                "columns": generated.get("columnCount") == collection_plan.get("columnCount"),
+                "insets": all(
+                    abs(number(actual) - expected) <= 0.01
+                    for actual, expected in zip(generated.get("contentInsetsPt") or [], expected_insets)
+                ) and len(generated.get("contentInsetsPt") or []) == len(expected_insets),
+                "spacing": (
+                    abs(number(generated.get("mainAxisSpacingPt")) - number(collection_plan.get("mainAxisSpacingPt")) * design_scale) <= 0.01
+                    and abs(number(generated.get("crossAxisSpacingPt")) - number(collection_plan.get("crossAxisSpacingPt")) * design_scale) <= 0.01
+                ),
+                "itemSizing": (
+                    generated_sizing.get("widthMode") == planned_sizing.get("widthMode")
+                    and generated_sizing.get("heightMode") == planned_sizing.get("heightMode")
+                    and generated_sizing.get("preservesIntrinsicWidth") == planned_sizing.get("preservesIntrinsicWidth")
+                ),
+                "scrollIsolation": (
+                    generated.get("directionalLockEnabled") is True
+                    and generated.get("allowsSameAxisNestedScroll") is False
+                ),
+            }
+            collection_consumption.append({
+                "containerNodeId": container_id,
+                "status": "consumed" if payload_node and all(checks.values()) else "not-consumed",
+                "checks": checks,
+            })
         node_layout_consumption = []
         for node_plan in native_layout.get("nodes") or []:
             node_id = str(node_plan.get("nodeId") or "")
@@ -8448,12 +8963,15 @@ def build_native_structure_manifest(
             "relations": relation_records,
             "layoutPlanConsumption": {
                 "containers": container_consumption,
+                "collections": collection_consumption,
                 "compoundControls": compound_consumption,
                 "nodes": node_layout_consumption,
                 "stateLayouts": state_layout_consumption,
                 "summary": {
                     "containerCount": len(container_consumption),
                     "unconsumedContainerCount": sum(item["status"] == "not-consumed" for item in container_consumption),
+                    "collectionCount": len(collection_consumption),
+                    "unconsumedCollectionCount": sum(item["status"] == "not-consumed" for item in collection_consumption),
                     "compoundControlCount": len(compound_consumption),
                     "unconsumedCompoundControlCount": sum(item["status"] == "not-consumed" for item in compound_consumption),
                     "nodeLayoutCount": len(node_layout_consumption),
