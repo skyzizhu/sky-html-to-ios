@@ -234,6 +234,49 @@ class NativeStructureManifestTests(unittest.TestCase):
                 {item["code"] for item in report["issues"]},
             )
 
+    def test_validator_requires_auditable_evidence_for_optimized_native_merges(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            outputs = self.build_chain(root, "swiftui")
+            manifest = json.loads(outputs[3].read_text(encoding="utf-8"))
+            record = manifest["screens"][0]["layoutPlanConsumption"]["containers"][0]
+            record.update({
+                "status": "optimized-equivalent",
+                "strategy": "svg-resource-merged",
+                "mergeEvidence": {
+                    "ownerNodeId": "home.root",
+                    "sourceNodeIds": [record["containerNodeId"]],
+                    "nativePrimitive": "generated-vector-asset",
+                },
+            })
+            outputs[3].write_text(json.dumps(manifest), encoding="utf-8")
+            _, report = self.validate_chain(root, *outputs)
+            self.assertEqual(report["status"], "passed")
+
+            record["mergeEvidence"].pop("nativePrimitive")
+            outputs[3].write_text(json.dumps(manifest), encoding="utf-8")
+            result, report = self.validate_chain(root, *outputs, expect_success=False)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn(
+                "NATIVE_LAYOUT_CONTAINER_NOT_CONSUMED",
+                {item["code"] for item in report["issues"]},
+            )
+
+            record.update({"status": "consumed", "strategy": "native-container-layout-contract"})
+            node_record = manifest["screens"][0]["nodes"][0]
+            node_record.update({
+                "status": "optimized-equivalent",
+                "strategy": "svg-resource-merged",
+                "mergeEvidence": None,
+            })
+            outputs[3].write_text(json.dumps(manifest), encoding="utf-8")
+            result, report = self.validate_chain(root, *outputs, expect_success=False)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn(
+                "NATIVE_NODE_OPTIMIZATION_EVIDENCE_INVALID",
+                {item["code"] for item in report["issues"]},
+            )
+
     def test_compound_slot_order_and_box_model_drive_both_native_stacks(self) -> None:
         for ui_stack in ("swiftui", "uikit"):
             with self.subTest(ui_stack=ui_stack), tempfile.TemporaryDirectory() as temporary:

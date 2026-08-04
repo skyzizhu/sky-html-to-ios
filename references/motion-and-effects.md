@@ -11,7 +11,9 @@
 
 Motion pass 记录 source selector、属性、duration、delay、timing function、iteration、direction、fill mode 和关键帧。Static pass 是布局基准，两者通过 selector/runtime node ID 合并到 UI IR。
 
-- 生成阶段必须把可支持的 transform/opacity keyframes 绑定到来源节点，至少保留 duration、delay、iteration、direction、rotation、scale 和 opacity 采样；不能只在 IR 中记录后丢弃。
+- 生成阶段必须把可支持的 transform/opacity keyframes 绑定到来源节点，至少保留 duration、delay、iteration、direction、每个关键帧的 sample offset、translate、rotation、scale 和 opacity；不能只在 IR 中记录后丢弃。
+- `initiallyVisible=false` 或初始 opacity 为 0 不是删除依据。节点拥有可执行 motion 时必须进入原生树，由动画决定其可见过程。
+- translate 中的百分比负责节点自身锚点，已包含在浏览器测得位置时不得重复叠加；`px` 与 `calc()` 中的绝对位移按有符号值转换，空格不得改变正负方向。
 - 正常 App 运行时使用 SwiftUI Timeline/Animation 或 Core Animation 执行动画；视觉验收时通过 `-HTMLToIOSMotionProgress 0...1` 固定采样进度，保证 HTML 与 iOS 对比的是同一关键帧。
 
 ## 动效分类
@@ -47,6 +49,8 @@ hover 在 iPhone 上没有直接等价。仅装饰 hover 可以忽略；承载�
 使用 KeyframeAnimator、phase animator、visual effect 等新 API 前执行 SDK availability 检查。最低版本不足时使用 Core Animation、UIViewPropertyAnimator 或较简单但语义一致的状态动画。
 
 不因原型包含 Lottie、GSAP 或其他 Web 动画库就自动向 iOS 工程增加同名依赖。优先从最终 motion 数据重建；只有项目已有依赖或用户明确同意时才复用动画资源。
+
+SVG 被导出为单一矢量资源时，内部静态节点可由该资源合并消费。若内部节点只有空闲 transition 且没有可执行关键帧，允许捕获当前 computed state，但清单必须标记 `svg-computed-state-merged` 与交互降级；运行中或带关键帧的 SVG 动画不得被静态资源静默吞掉。
 
 ## 验证
 

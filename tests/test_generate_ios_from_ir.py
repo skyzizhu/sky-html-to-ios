@@ -1106,13 +1106,14 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             generated_ring = next(child for child in generated_root["children"] if child["id"] == ring["id"])
             generated_stats = next(child for child in generated_root["children"] if child["id"] == stats["id"])
             self.assertEqual(generated_ring["axis"], "horizontal")
-            self.assertEqual(generated_ring["children"][0]["assetName"], "html_page3_ring")
+            self.assertEqual(generated_ring["children"], [])
             self.assertEqual(generated_ring["style"]["fixedWidth"], 88)
             self.assertEqual(generated_ring["style"]["fixedHeight"], 88)
             self.assertEqual(
                 [item["id"] for item in generated_ring["overlayChildren"]],
-                [value["id"]],
+                [svg["id"], value["id"]],
             )
+            self.assertEqual(generated_ring["overlayChildren"][0]["assetName"], "html_page3_ring")
             self.assertEqual(generated_stats["style"]["gridColumnCount"], 3)
             self.assertTrue((out_dir / ASSET_CATALOG / "html_page3_ring.imageset" / "html_page3_ring.svg").is_file())
 
@@ -1332,8 +1333,10 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "position": "absolute",
                 "backgroundColor": "rgb(255, 255, 255)",
                 "cornerRadii": ["50%"] * 4,
+                "opacity": "0",
             })
             artwork_dot["content"]["isDecorative"] = True
+            artwork_dot["state"] = {"initiallyVisible": False}
 
             mixed_card = node("home.mixed-card", root_node["id"], "container")
             mixed_card["layout"].update({
@@ -1355,7 +1358,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             mixed_glow["layout"].update({
                 "mode": "absolute",
                 "position": "absolute",
-                "rect": {"x": 260, "y": 280, "width": 140, "height": 140},
+                "rect": {"x": 34, "y": 320, "width": 160, "height": 80},
             })
             mixed_glow["style"].update({
                 "position": "absolute",
@@ -1393,19 +1396,39 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 mixed_glow,
                 grid_action,
             ])
-            payload["motions"] = [{
-                "id": "motion-artwork",
-                "sourceNodeId": artwork["id"],
-                "durationMs": 8000,
-                "delayMs": 0,
-                "iterationCount": "Infinity",
-                "direction": "reverse",
-                "properties": ["transform"],
-                "keyframes": [
-                    {"computedOffset": 0, "transform": "none"},
-                    {"computedOffset": 1, "transform": "rotate(360deg)"},
-                ],
-            }]
+            payload["motions"] = [
+                {
+                    "id": "motion-artwork",
+                    "sourceNodeId": artwork["id"],
+                    "durationMs": 8000,
+                    "delayMs": 0,
+                    "iterationCount": "Infinity",
+                    "direction": "reverse",
+                    "properties": ["transform"],
+                    "keyframes": [
+                        {"computedOffset": 0, "transform": "none"},
+                        {"computedOffset": 1, "transform": "rotate(360deg)"},
+                    ],
+                },
+                {
+                    "id": "motion-artwork-dot",
+                    "sourceNodeId": artwork_dot["id"],
+                    "durationMs": 1200,
+                    "delayMs": 100,
+                    "iterationCount": "1",
+                    "direction": "normal",
+                    "properties": ["transform", "opacity"],
+                    "keyframes": [
+                        {"computedOffset": 0, "transform": "translate(-50%, -50%) scale(0)", "opacity": 0},
+                        {"computedOffset": 0.15, "transform": "translate(-50%, -50%) scale(1.4)", "opacity": 1},
+                        {
+                            "computedOffset": 1,
+                            "transform": "translate(calc(-50% - 70px), calc(-50% - 80px)) scale(0)",
+                            "opacity": 0,
+                        },
+                    ],
+                },
+            ]
             payload["interactions"] = [{
                 "id": "interaction-grid",
                 "sourceNodeId": grid_action["id"],
@@ -1434,13 +1457,17 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertEqual(generated_dot["style"]["fixedHeight"], 10)
             self.assertEqual(generated_dot["style"]["offsetX"], 0)
             self.assertEqual(generated_dot["style"]["offsetY"], -107)
-            self.assertEqual(generated_mixed_card["axis"], "vertical")
-            self.assertIsNone(generated_mixed_card["style"]["fixedWidth"])
-            self.assertIsNone(generated_mixed_card["style"]["fixedHeight"])
-            self.assertEqual([item["id"] for item in generated_mixed_card["children"]], [mixed_label["id"]])
+            self.assertEqual(generated_dot["motions"][0]["sampleOffsets"], [0, 0.15, 1])
+            self.assertEqual(generated_dot["motions"][0]["translationXValues"], [0, 0, -70])
+            self.assertEqual(generated_dot["motions"][0]["translationYValues"], [0, 0, -80])
+            self.assertEqual(generated_dot["motions"][0]["scaleValues"], [0, 1.4, 0])
+            self.assertEqual(generated_dot["motions"][0]["opacityValues"], [0, 1, 0])
+            self.assertEqual(generated_mixed_card["style"]["fixedWidth"], 345)
+            self.assertEqual(generated_mixed_card["style"]["fixedHeight"], 120)
+            self.assertEqual(generated_mixed_card["children"], [])
             self.assertEqual(
                 [item["id"] for item in generated_mixed_card["overlayChildren"]],
-                [mixed_glow["id"]],
+                [mixed_label["id"], mixed_glow["id"]],
             )
             self.assertEqual(generated_grid["axis"], "grid")
             self.assertEqual(generated_grid["style"]["gridColumnCount"], 4)
@@ -1855,6 +1882,10 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertEqual(generated_score["axis"], "horizontal")
             self.assertIsNone(generated_score["style"]["textMeasureWidth"])
             self.assertEqual([run["text"] for run in generated_score["richTextRuns"]], ["82", "分"])
+            self.assertEqual(
+                [run["sourceNodeID"] for run in generated_score["richTextRuns"]],
+                [score["id"], unit["id"]],
+            )
             self.assertNotIn("\n", "".join(run["text"] for run in generated_score["richTextRuns"]))
             self.assertTrue(generated_score["style"]["baselineAligned"])
             self.assertEqual(generated_score["style"]["firstBaselineOffset"], 24)

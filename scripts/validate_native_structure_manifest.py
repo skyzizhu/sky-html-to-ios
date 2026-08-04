@@ -108,6 +108,36 @@ def main() -> int:
         ))
 
     screen_summaries = []
+    merge_strategies = {
+        "svg-resource-merged",
+        "svg-computed-state-merged",
+        "attributed-text-merged",
+        "selection-indicator-merged",
+        "native-decoration-merged",
+        "native-animation-merged",
+        "compound-control-merged",
+    }
+
+    def valid_optimized_record(record: dict[str, Any]) -> bool:
+        if record.get("status") != "optimized-equivalent":
+            return False
+        strategy = str(record.get("strategy") or "")
+        if strategy == "empty-structural-wrapper-elided":
+            return True
+        if strategy == "detached-native-owner":
+            checks = record.get("checks") or {}
+            return all(
+                checks.get(key) is True
+                for key in ("node", "widthKind", "heightKind", "positioning", "owner", "nativeOwner")
+            ) and checks.get("positionedUnderOwner") is False
+        evidence = record.get("mergeEvidence") or {}
+        return bool(
+            strategy in merge_strategies
+            and evidence.get("ownerNodeId")
+            and evidence.get("sourceNodeIds")
+            and evidence.get("nativePrimitive")
+        )
+
     for screen_id, graph_screen in graph_screens.items():
         native_screen = manifest_screens.get(screen_id) or {}
         graph_node_ids = {str(item.get("nodeId") or "") for item in graph_screen.get("nodes") or []}
@@ -122,6 +152,11 @@ def main() -> int:
                 issues.append(issue(
                     "NATIVE_NODE_NOT_CONSUMED", screen_id,
                     "Layout graph node is absent from generated native output.", node_id,
+                ))
+            elif record.get("status") == "optimized-equivalent" and not valid_optimized_record(record):
+                issues.append(issue(
+                    "NATIVE_NODE_OPTIMIZATION_EVIDENCE_INVALID", screen_id,
+                    "Optimized native node is missing supported, auditable merge evidence.", node_id,
                 ))
 
         graph_relation_ids = {str(item.get("id") or "") for item in graph_screen.get("relations") or []}
@@ -146,7 +181,7 @@ def main() -> int:
 
         layout_consumption = native_screen.get("layoutPlanConsumption") or {}
         for record in layout_consumption.get("containers") or []:
-            if record.get("status") != "consumed":
+            if record.get("status") != "consumed" and not valid_optimized_record(record):
                 issues.append(issue(
                     "NATIVE_LAYOUT_CONTAINER_NOT_CONSUMED", screen_id,
                     "Generated native container did not consume its executable layout plan.",
@@ -160,14 +195,14 @@ def main() -> int:
                     str(record.get("containerNodeId") or "") or None,
                 ))
         for record in layout_consumption.get("compoundControls") or []:
-            if record.get("status") != "consumed":
+            if record.get("status") != "consumed" and not valid_optimized_record(record):
                 issues.append(issue(
                     "NATIVE_COMPOUND_LAYOUT_NOT_CONSUMED", screen_id,
                     "Generated compound control did not preserve planned slot order.",
                     str(record.get("nodeId") or "") or None,
                 ))
         for record in layout_consumption.get("nodes") or []:
-            if record.get("status") not in {"consumed", "optimized-equivalent"}:
+            if record.get("status") != "consumed" and not valid_optimized_record(record):
                 issues.append(issue(
                     "NATIVE_NODE_LAYOUT_NOT_CONSUMED", screen_id,
                     "Generated native node did not consume its sizing or positioning contract.",

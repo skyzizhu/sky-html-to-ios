@@ -371,6 +371,8 @@ Interaction discovery covers click/tap, change/input, submit, expand/collapse, s
 
 Animation mapping covers CSS transitions, opacity, transforms, colors, borders, scale, rotation, translation, keyframes, springs, loading loops, navigation transitions, presentations, and gesture-driven fallback planning.
 
+Keyframe lowering preserves sample offsets and signed translation, scale, rotation, and opacity values. Initially transparent animated nodes remain in the native hierarchy. When SVG internals or rich-text descendants are merged into one native owner, the post-generation manifest records auditable source-to-owner evidence; a captured idle SVG state is reported as a visual-only degradation rather than a completed interaction.
+
 Validation may sample keyframes. A frame becomes a required gate only when deterministic native sampling is available. Web animation dependencies are not added automatically.
 
 ## Project Integration

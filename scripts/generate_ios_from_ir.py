@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.42.0"
+GENERATOR_VERSION = "1.43.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -500,6 +500,31 @@ def transform_component(value: Any, name: str, default: float) -> float:
     return float(match.group(1)) if match else default
 
 
+def translate_components(value: Any) -> tuple[float, float]:
+    text = str(value or "").strip().lower()
+    match = re.search(r"translate(?:3d)?\((.+?)\)(?:\s|$)", text)
+    if match:
+        arguments = re.split(r",\s*(?![^()]*\))", match.group(1))
+        if len(arguments) == 1:
+            arguments = re.split(r"\s+(?![^()]*\))", arguments[0].strip(), maxsplit=1)
+        values = arguments[:2] + ["0"] * max(2 - len(arguments), 0)
+    else:
+        x_match = re.search(r"translatex\((.+?)\)", text)
+        y_match = re.search(r"translatey\((.+?)\)", text)
+        values = [x_match.group(1) if x_match else "0", y_match.group(1) if y_match else "0"]
+
+    def absolute_points(component: str) -> float:
+        # Percentage terms are relative to the animated node itself. The node's
+        # measured source position already contains that common anchor, so native
+        # motion only needs the absolute displacement terms.
+        return sum(
+            (-1 if sign == "-" else 1) * float(value)
+            for sign, value in re.findall(r"([+-]?)\s*(\d+(?:\.\d+)?)px", component)
+        )
+
+    return absolute_points(values[0]), absolute_points(values[1])
+
+
 def motion_payload(raw: dict[str, Any]) -> dict[str, Any] | None:
     keyframes = raw.get("keyframes") or []
     properties = set(raw.get("properties") or [])
@@ -507,16 +532,11 @@ def motion_payload(raw: dict[str, Any]) -> dict[str, Any] | None:
         return None
     ordered = sorted(keyframes, key=lambda item: number(item.get("computedOffset"), number(item.get("offset"))))
     start = ordered[0]
-    middle = min(ordered, key=lambda item: abs(number(item.get("computedOffset"), number(item.get("offset"))) - 0.5))
     end = ordered[-1]
     rotation_start = transform_component(start.get("transform"), "rotation", 0)
     rotation_end = transform_component(end.get("transform"), "rotation", rotation_start)
-    scale_start = transform_component(start.get("transform"), "scale", 1)
-    scale_middle = transform_component(middle.get("transform"), "scale", scale_start)
-    scale_end = transform_component(end.get("transform"), "scale", scale_start)
-    opacity_start = number(start.get("opacity"), 1)
-    opacity_middle = number(middle.get("opacity"), opacity_start)
-    opacity_end = number(end.get("opacity"), opacity_start)
+    translations = [translate_components(item.get("transform")) for item in ordered]
+    translation_origin = translations[0]
     return {
         "id": str(raw.get("id") or "motion"),
         "durationMilliseconds": max(int(number(raw.get("durationMs"), 0)), 1),
@@ -525,8 +545,11 @@ def motion_payload(raw: dict[str, Any]) -> dict[str, Any] | None:
         "reverses": str(raw.get("direction") or "normal").lower() in {"reverse", "alternate-reverse"},
         "autoreverses": str(raw.get("direction") or "normal").lower() in {"alternate", "alternate-reverse"},
         "rotationDegrees": rotation_end - rotation_start,
-        "scaleValues": [scale_start, scale_middle, scale_end],
-        "opacityValues": [opacity_start, opacity_middle, opacity_end],
+        "sampleOffsets": [min(max(number(item.get("computedOffset"), number(item.get("offset"))), 0), 1) for item in ordered],
+        "translationXValues": [value[0] - translation_origin[0] for value in translations],
+        "translationYValues": [value[1] - translation_origin[1] for value in translations],
+        "scaleValues": [transform_component(item.get("transform"), "scale", 1) for item in ordered],
+        "opacityValues": [number(item.get("opacity"), 1) for item in ordered],
     }
 
 
@@ -594,7 +617,13 @@ def rich_text_runs(
     node: dict[str, Any],
     *,
     allow_block_children: bool = False,
+    _visited: set[str] | None = None,
 ) -> list[dict[str, Any]]:
+    visited = set(_visited or set())
+    node_id = str(node.get("id") or "")
+    if node_id in visited:
+        return []
+    visited.add(node_id)
     content_runs = (node.get("content") or {}).get("runs") or []
     if any(str(item.get("nodeId") or "") in context.selection_count_bindings for item in content_runs):
         return []
@@ -610,7 +639,19 @@ def rich_text_runs(
         text = re.sub(r"\s+", " ", str(item.get("text") or ""))
         if not text.strip():
             continue
-        run_node = context.nodes.get(str(item.get("nodeId") or "")) or node
+        run_node_id = str(item.get("nodeId") or "")
+        run_node = context.nodes.get(run_node_id) or node
+        nested_runs = (run_node.get("content") or {}).get("runs") or []
+        if run_node is not node and nested_runs:
+            flattened = rich_text_runs(
+                context,
+                run_node,
+                allow_block_children=True,
+                _visited=visited,
+            )
+            if flattened:
+                result.extend(flattened)
+                continue
         style = run_node.get("style") or {}
         font = font_contract(run_node, style)
         foreground = color_string(style.get("color"))
@@ -622,6 +663,7 @@ def rich_text_runs(
             background = colors[0]
         result.append({
             "text": text,
+            "sourceNodeID": run_node_id or str(run_node.get("id") or "") or None,
             "fontSize": min(max(number(style.get("fontSize"), 16) * context.design_scale, 8), 72),
             "fontWeight": str(style.get("fontWeight") or "400"),
             "fontFamily": font["family"],
@@ -1076,7 +1118,8 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             or str(style.get("overflowY") or "visible") == "hidden"
         )
     )
-    if not presentation and (node.get("state") or {}).get("initiallyVisible") is False and not expansion_content:
+    has_native_motion = bool(context.motions.get(node_id))
+    if not presentation and (node.get("state") or {}).get("initiallyVisible") is False and not expansion_content and not has_native_motion:
         return None
     if style.get("display") == "none" and not presentation and not expansion_content:
         return None
@@ -1114,10 +1157,32 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
 
     flow_child_payloads = [child for child, is_positioned_child in child_entries if not is_positioned_child]
     absolute_child_payloads = [child for child, is_positioned_child in child_entries if is_positioned_child]
+    def substantially_overlaps(first_id: str, second_id: str) -> bool:
+        first = ((context.nodes.get(first_id) or {}).get("layout") or {}).get("rect") or {}
+        second = ((context.nodes.get(second_id) or {}).get("layout") or {}).get("rect") or {}
+        first_width, first_height = number(first.get("width")), number(first.get("height"))
+        second_width, second_height = number(second.get("width")), number(second.get("height"))
+        intersection_width = max(min(number(first.get("x")) + first_width, number(second.get("x")) + second_width) - max(number(first.get("x")), number(second.get("x"))), 0)
+        intersection_height = max(min(number(first.get("y")) + first_height, number(second.get("y")) + second_height) - max(number(first.get("y")), number(second.get("y"))), 0)
+        smaller_area = min(first_width * first_height, second_width * second_height)
+        return smaller_area > 0 and intersection_width * intersection_height / smaller_area >= 0.5
+
+    mixed_layer_overlay = bool(
+        flow_child_payloads
+        and absolute_child_payloads
+        and len(absolute_child_payloads) >= len(flow_child_payloads)
+        and all(
+            any(substantially_overlaps(str(flow.get("id") or ""), str(positioned.get("id") or "")) for positioned in absolute_child_payloads)
+            for flow in flow_child_payloads
+        )
+    )
     # Pure absolute-positioned groups are native overlays themselves. In mixed
     # containers, keep positioned children out of Stack layout so CSS decoration
     # and floating controls cannot change the parent's measured size.
-    if flow_child_payloads and absolute_child_payloads:
+    if mixed_layer_overlay:
+        child_payloads = []
+        overlay_child_payloads = [child for child, _ in child_entries]
+    elif flow_child_payloads and absolute_child_payloads:
         child_payloads = flow_child_payloads
         overlay_child_payloads = absolute_child_payloads
     else:
@@ -1178,6 +1243,9 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     if planned_child_order:
         planned_index = {child_id: index for index, child_id in enumerate(planned_child_order)}
         child_payloads.sort(
+            key=lambda child: planned_index.get(str(child.get("id") or ""), len(planned_index))
+        )
+        overlay_child_payloads.sort(
             key=lambda child: planned_index.get(str(child.get("id") or ""), len(planned_index))
         )
     inline_runs = rich_text_runs(context, node, allow_block_children=True)
@@ -1708,7 +1776,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "resistsCompression": str(style.get("flexShrink") or "1") == "0" or bool(layout_sizing.get("resistsHorizontalCompression")),
             "preservesIntrinsicWidth": preserves_intrinsic_width or layout_width_policy == "intrinsic",
             "fixedWidth": min(max(fixed_width, 0), context.root_width) if fixed_width is not None else None,
-            "fixedHeight": min(max(fixed_height, 0), 240) if fixed_height is not None else None,
+            "fixedHeight": max(fixed_height, 0) if fixed_height is not None else None,
             "aspectRatio": ratio if preserves_aspect_ratio else None,
             "scrollAxis": scroll_axis,
             "textLineLimit": text_line_limit,
@@ -2839,12 +2907,16 @@ struct HTMLToIOSMotionSpec: Codable, Identifiable {{
     let reverses: Bool
     let autoreverses: Bool
     let rotationDegrees: Double
+    let sampleOffsets: [Double]
+    let translationXValues: [Double]
+    let translationYValues: [Double]
     let scaleValues: [Double]
     let opacityValues: [Double]
 }}
 
 struct HTMLToIOSRichTextRunSpec: Codable {{
     let text: String
+    let sourceNodeID: String?
     let fontSize: Double?
     let fontWeight: String?
     let fontFamily: String?
@@ -3543,6 +3615,7 @@ private struct HTMLToIOSMotionModifier: ViewModifier {
         } else {
             TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: HTMLToIOSLaunchConfiguration.motionProgress != nil)) { timeline in
                 content
+                    .offset(x: translationX(at: timeline.date), y: translationY(at: timeline.date))
                     .rotationEffect(.degrees(rotation(at: timeline.date)))
                     .scaleEffect(scale(at: timeline.date))
                     .opacity(opacity(at: timeline.date))
@@ -3568,12 +3641,16 @@ private struct HTMLToIOSMotionModifier: ViewModifier {
         return motion.reverses ? 1 - value : value
     }
 
-    private func sampled(_ values: [Double], progress: Double, fallback: Double) -> Double {
-        guard values.count >= 3 else { return values.first ?? fallback }
-        if progress <= 0.5 {
-            return values[0] + (values[1] - values[0]) * progress * 2
+    private func sampled(_ values: [Double], offsets: [Double], progress: Double, fallback: Double) -> Double {
+        guard !values.isEmpty else { return fallback }
+        guard values.count == offsets.count, values.count >= 2 else { return values.first ?? fallback }
+        if progress <= offsets[0] { return values[0] }
+        for index in 1..<offsets.count where progress <= offsets[index] {
+            let distance = max(offsets[index] - offsets[index - 1], 0.0001)
+            let local = (progress - offsets[index - 1]) / distance
+            return values[index - 1] + (values[index] - values[index - 1]) * local
         }
-        return values[1] + (values[2] - values[1]) * (progress - 0.5) * 2
+        return values.last ?? fallback
     }
 
     private func rotation(at date: Date) -> Double {
@@ -3581,11 +3658,19 @@ private struct HTMLToIOSMotionModifier: ViewModifier {
     }
 
     private func scale(at date: Date) -> Double {
-        motions.reduce(1) { $0 * sampled($1.scaleValues, progress: progress($1, at: date), fallback: 1) }
+        motions.reduce(1) { $0 * sampled($1.scaleValues, offsets: $1.sampleOffsets, progress: progress($1, at: date), fallback: 1) }
     }
 
     private func opacity(at date: Date) -> Double {
-        motions.reduce(1) { $0 * sampled($1.opacityValues, progress: progress($1, at: date), fallback: 1) }
+        motions.reduce(1) { $0 * sampled($1.opacityValues, offsets: $1.sampleOffsets, progress: progress($1, at: date), fallback: 1) }
+    }
+
+    private func translationX(at date: Date) -> Double {
+        motions.reduce(0) { $0 + sampled($1.translationXValues, offsets: $1.sampleOffsets, progress: progress($1, at: date), fallback: 0) }
+    }
+
+    private func translationY(at date: Date) -> Double {
+        motions.reduce(0) { $0 + sampled($1.translationYValues, offsets: $1.sampleOffsets, progress: progress($1, at: date), fallback: 0) }
     }
 }
 
@@ -6417,6 +6502,23 @@ final class HTMLToIOSNodeRenderer {
                     : makeLabel(flattenedText(spec), spec: spec)
             }
         default:
+            if spec.selectionIndicator == true {
+                let indicator = UIView()
+                let image = UIImageView(image: UIImage(systemName: "checkmark"))
+                image.translatesAutoresizingMaskIntoConstraints = false
+                image.contentMode = .scaleAspectFit
+                image.tintColor = .white
+                image.isHidden = !state.isSelected(spec)
+                indicator.addSubview(image)
+                NSLayoutConstraint.activate([
+                    image.centerXAnchor.constraint(equalTo: indicator.centerXAnchor),
+                    image.centerYAnchor.constraint(equalTo: indicator.centerYAnchor),
+                    image.widthAnchor.constraint(equalToConstant: 9),
+                    image.heightAnchor.constraint(equalToConstant: 9),
+                ])
+                view = indicator
+                break
+            }
             let stack: UIView
             if spec.axis == "grid" {
                 stack = makeGrid(spec)
@@ -6933,6 +7035,7 @@ final class HTMLToIOSNodeRenderer {
         let runs = (spec.richTextRuns?.isEmpty == false ? spec.richTextRuns : nil) ?? [
             HTMLToIOSRichTextRunSpec(
                 text: text,
+                sourceNodeID: nil,
                 fontSize: spec.style.fontSize,
                 fontWeight: spec.style.fontWeight,
                 fontFamily: spec.style.fontFamily,
@@ -7036,12 +7139,16 @@ final class HTMLToIOSNodeRenderer {
         motion.reverses ? 1 - forced : forced
     }
 
-    private func sampled(_ values: [Double], progress: Double, fallback: Double) -> Double {
-        guard values.count >= 3 else { return values.first ?? fallback }
-        if progress <= 0.5 {
-            return values[0] + (values[1] - values[0]) * progress * 2
+    private func sampled(_ values: [Double], offsets: [Double], progress: Double, fallback: Double) -> Double {
+        guard !values.isEmpty else { return fallback }
+        guard values.count == offsets.count, values.count >= 2 else { return values.first ?? fallback }
+        if progress <= offsets[0] { return values[0] }
+        for index in 1..<offsets.count where progress <= offsets[index] {
+            let distance = max(offsets[index] - offsets[index - 1], 0.0001)
+            let local = (progress - offsets[index - 1]) / distance
+            return values[index - 1] + (values[index] - values[index - 1]) * local
         }
-        return values[1] + (values[2] - values[1]) * (progress - 0.5) * 2
+        return values.last ?? fallback
     }
 
     private func applyMotion(_ spec: HTMLToIOSNodeSpec, to view: UIView) {
@@ -7052,12 +7159,16 @@ final class HTMLToIOSNodeRenderer {
             for motion in spec.motions {
                 let progress = motionProgress(motion, forced: forced)
                 transform = transform
+                    .translatedBy(
+                        x: CGFloat(sampled(motion.translationXValues, offsets: motion.sampleOffsets, progress: progress, fallback: 0)),
+                        y: CGFloat(sampled(motion.translationYValues, offsets: motion.sampleOffsets, progress: progress, fallback: 0))
+                    )
                     .rotated(by: CGFloat(motion.rotationDegrees * progress * .pi / 180))
                     .scaledBy(
-                        x: CGFloat(sampled(motion.scaleValues, progress: progress, fallback: 1)),
-                        y: CGFloat(sampled(motion.scaleValues, progress: progress, fallback: 1))
+                        x: CGFloat(sampled(motion.scaleValues, offsets: motion.sampleOffsets, progress: progress, fallback: 1)),
+                        y: CGFloat(sampled(motion.scaleValues, offsets: motion.sampleOffsets, progress: progress, fallback: 1))
                     )
-                alpha *= sampled(motion.opacityValues, progress: progress, fallback: 1)
+                alpha *= sampled(motion.opacityValues, offsets: motion.sampleOffsets, progress: progress, fallback: 1)
             }
             view.transform = transform
             view.alpha = alpha
@@ -7076,15 +7187,30 @@ final class HTMLToIOSNodeRenderer {
                 rotation.timingFunction = CAMediaTimingFunction(name: .linear)
                 view.layer.add(rotation, forKey: "html-to-ios-\(motion.id)-rotation")
             }
-            if motion.scaleValues.count >= 3 && motion.scaleValues.max() != motion.scaleValues.min() {
+            if motion.scaleValues.count >= 2 && motion.scaleValues.max() != motion.scaleValues.min() {
                 let scale = CAKeyframeAnimation(keyPath: "transform.scale")
                 scale.values = motion.scaleValues
-                scale.keyTimes = [0, 0.5, 1]
+                scale.keyTimes = motion.sampleOffsets.map { NSNumber(value: $0) }
                 scale.duration = duration
                 scale.beginTime = CACurrentMediaTime() + Double(motion.delayMilliseconds) / 1000
                 scale.repeatCount = motion.repeats ? .infinity : 0
                 scale.autoreverses = motion.autoreverses
                 view.layer.add(scale, forKey: "html-to-ios-\(motion.id)-scale")
+            }
+            for (keyPath, values, suffix) in [
+                ("transform.translation.x", motion.translationXValues, "translation-x"),
+                ("transform.translation.y", motion.translationYValues, "translation-y"),
+                ("opacity", motion.opacityValues, "opacity"),
+            ] where values.count >= 2 && values.max() != values.min() {
+                let animation = CAKeyframeAnimation(keyPath: keyPath)
+                animation.values = values
+                animation.keyTimes = motion.sampleOffsets.map { NSNumber(value: $0) }
+                animation.duration = duration
+                animation.beginTime = CACurrentMediaTime() + Double(motion.delayMilliseconds) / 1000
+                animation.repeatCount = motion.repeats ? .infinity : 0
+                animation.autoreverses = motion.autoreverses
+                animation.timingFunction = CAMediaTimingFunction(name: .linear)
+                view.layer.add(animation, forKey: "html-to-ios-\(motion.id)-\(suffix)")
             }
         }
     }
@@ -8605,7 +8731,102 @@ def direct_payload_child_ids(node: dict[str, Any] | None) -> list[str]:
     return list(dict.fromkeys(result))
 
 
-def native_optimization_reason(node: dict[str, Any], payload_nodes: dict[str, dict[str, Any]]) -> str | None:
+def build_native_merge_evidence(
+    ir_nodes: dict[str, dict[str, Any]],
+    payload_nodes: dict[str, dict[str, Any]],
+    motions_by_node: dict[str, list[dict[str, Any]]],
+) -> dict[str, dict[str, Any]]:
+    motion_node_ids = set(motions_by_node)
+    children: dict[str, list[str]] = {}
+    for node_id, node in ir_nodes.items():
+        children.setdefault(str(node.get("parentId") or ""), []).append(node_id)
+
+    def descendants(node_id: str) -> list[str]:
+        result: list[str] = []
+        pending = list(children.get(node_id) or [])
+        while pending:
+            child_id = pending.pop(0)
+            result.append(child_id)
+            pending.extend(children.get(child_id) or [])
+        return result
+
+    evidence: dict[str, dict[str, Any]] = {}
+    for owner_id, payload in payload_nodes.items():
+        run_source_ids = [
+            str(run.get("sourceNodeID") or "")
+            for run in payload.get("richTextRuns") or []
+            if run.get("sourceNodeID")
+        ]
+        for source_id in run_source_ids:
+            if source_id != owner_id and source_id in ir_nodes:
+                evidence[source_id] = {
+                    "strategy": "attributed-text-merged",
+                    "ownerNodeId": owner_id,
+                    "sourceNodeIds": list(dict.fromkeys(run_source_ids)),
+                    "nativePrimitive": "AttributedString" if payload.get("semantic") in {"text", "label", "heading"} else "native-rich-text",
+                }
+        if payload.get("selectionIndicator") is True:
+            merged_ids = [
+                node_id for node_id in descendants(owner_id)
+                if node_id not in payload_nodes
+                and (
+                    (ir_nodes.get(node_id) or {}).get("assetRef")
+                    or str((ir_nodes.get(node_id) or {}).get("semanticType") or "") == "icon"
+                )
+            ]
+            for source_id in merged_ids:
+                evidence[source_id] = {
+                    "strategy": "selection-indicator-merged",
+                    "ownerNodeId": owner_id,
+                    "sourceNodeIds": merged_ids,
+                    "nativePrimitive": "checkmark-system-image",
+                }
+        if payload.get("assetName"):
+            merged_ids = [node_id for node_id in descendants(owner_id) if node_id not in payload_nodes]
+            for source_id in merged_ids:
+                if source_id in motion_node_ids:
+                    motions = motions_by_node.get(source_id) or []
+                    captures_idle_computed_state = bool(motions) and all(
+                        str(item.get("playState") or "idle") == "idle" and not item.get("keyframes")
+                        for item in motions
+                    )
+                    if not captures_idle_computed_state:
+                        continue
+                    evidence[source_id] = {
+                        "strategy": "svg-computed-state-merged",
+                        "ownerNodeId": owner_id,
+                        "sourceNodeIds": merged_ids,
+                        "nativePrimitive": "generated-vector-asset",
+                        "assetName": payload.get("assetName"),
+                        "motionStatus": "idle-computed-state",
+                        "degradedInteraction": True,
+                        "transitionProperties": sorted({
+                            str(prop)
+                            for item in motions for prop in item.get("properties") or []
+                        }),
+                    }
+                    continue
+                evidence[source_id] = {
+                    "strategy": "svg-resource-merged",
+                    "ownerNodeId": owner_id,
+                    "sourceNodeIds": merged_ids,
+                    "nativePrimitive": "generated-vector-asset",
+                    "assetName": payload.get("assetName"),
+                }
+    return evidence
+
+
+def native_optimization_reason(
+    node: dict[str, Any],
+    payload_nodes: dict[str, dict[str, Any]],
+    merge_evidence: dict[str, dict[str, Any]] | None = None,
+    motion_node_ids: set[str] | None = None,
+) -> str | None:
+    node_id = str(node.get("id") or "")
+    if node_id in (merge_evidence or {}):
+        return str((merge_evidence or {})[node_id].get("strategy") or "native-component-merged")
+    if node_id in (motion_node_ids or set()):
+        return None
     semantic = str(node.get("semanticType") or "")
     parent_id = str(node.get("parentId") or "")
     parent = payload_nodes.get(parent_id) or {}
@@ -8639,13 +8860,17 @@ def relation_native_consumption(
     ir_nodes: dict[str, dict[str, Any]],
     architecture_relations: dict[str, dict[str, Any]],
     detached_native_ids: set[str],
+    merge_evidence: dict[str, dict[str, Any]],
+    motion_node_ids: set[str],
 ) -> dict[str, Any]:
     relation_id = str(relation.get("id") or "")
     kind = str(relation.get("kind") or "")
     node_ids = [str(item) for item in relation.get("nodeIds") or []]
     missing = [node_id for node_id in node_ids if node_id not in represented_ids]
     optimized = {
-        node_id: native_optimization_reason(ir_nodes.get(node_id) or {}, payload_nodes)
+        node_id: native_optimization_reason(
+            ir_nodes.get(node_id) or {}, payload_nodes, merge_evidence, motion_node_ids
+        )
         for node_id in missing
     }
     unresolved = [node_id for node_id, reason in optimized.items() if not reason]
@@ -8661,7 +8886,23 @@ def relation_native_consumption(
         "unresolved": unresolved,
     })
 
-    if kind == "containment":
+    merge_owners = {
+        str(merge_evidence[node_id].get("ownerNodeId") or "")
+        for node_id in node_ids if node_id in merge_evidence
+    }
+    fully_merged_by_one_owner = (
+        bool(node_ids)
+        and all(node_id in merge_evidence for node_id in node_ids)
+        and len(merge_owners) == 1
+    )
+
+    if fully_merged_by_one_owner:
+        strategy = str(merge_evidence[node_ids[0]].get("strategy") or "native-component-merged")
+        check("merged-native-owner", True, {
+            "ownerNodeId": next(iter(merge_owners)),
+            "sourceNodeIds": node_ids,
+        })
+    elif kind == "containment":
         parent_id = str(relation.get("parentNodeId") or "")
         child_id = str(relation.get("childNodeId") or "")
         direct_children = direct_payload_child_ids(payload_nodes.get(parent_id))
@@ -8671,7 +8912,15 @@ def relation_native_consumption(
             if isinstance(item, dict) and isinstance(item.get("node") or {}, dict)
         }
         detached_ids = detached_native_ids | presentation_ids
-        consumed = child_id in direct_children or child_id in detached_ids or bool(optimized.get(child_id))
+        parent_optimization = native_optimization_reason(
+            ir_nodes.get(parent_id) or {}, payload_nodes, merge_evidence, motion_node_ids
+        )
+        consumed = (
+            child_id in direct_children
+            or child_id in detached_ids
+            or bool(optimized.get(child_id))
+            or bool(parent_optimization and (child_id in payload_nodes or child_id in detached_ids))
+        )
         strategy = (
             "native-layer-detachment" if child_id in detached_ids
             else "native-child-tree"
@@ -8681,6 +8930,7 @@ def relation_native_consumption(
             "childNodeId": child_id,
             "directChildNodeIds": direct_children,
             "detachedPresentationNodeIds": sorted(detached_ids),
+            "parentOptimization": parent_optimization,
         })
     elif kind == "visual-sequence":
         before_id = str(relation.get("beforeNodeId") or "")
@@ -8814,6 +9064,10 @@ def relation_native_consumption(
         "status": "optimized-equivalent" if passed and optimized else "consumed" if passed else "not-consumed",
         "strategy": strategy,
         "checks": checks,
+        "mergeEvidence": {
+            node_id: merge_evidence[node_id]
+            for node_id in node_ids if node_id in merge_evidence
+        },
     }
 
 
@@ -8918,11 +9172,19 @@ def build_native_structure_manifest(
     payload_by_screen = {str(screen.get("id") or ""): screen for screen in screens}
     manifest_screens = []
     for screen_id, graph_screen in graph_by_screen.items():
-        ir_screen = (ir_by_screen.get(screen_id) or {}).get("screens", [{}])[0]
-        design_scale = min(max(number(((ir_by_screen.get(screen_id) or {}).get("target") or {}).get("scale"), 1), 0.5), 3.0)
+        ir_payload = ir_by_screen.get(screen_id) or {}
+        ir_screen = ir_payload.get("screens", [{}])[0]
+        design_scale = min(max(number((ir_payload.get("target") or {}).get("scale"), 1), 0.5), 3.0)
         ir_nodes = {str(node.get("id") or ""): node for node in ir_screen.get("nodes") or [] if node.get("id")}
         payload_screen = payload_by_screen.get(screen_id) or {}
         payload_nodes, represented_ids, payload_order = recursive_payload_evidence(payload_screen)
+        motions_by_node: dict[str, list[dict[str, Any]]] = {}
+        for item in ir_payload.get("motions") or []:
+            source_id = str(item.get("sourceNodeId") or "")
+            if source_id:
+                motions_by_node.setdefault(source_id, []).append(item)
+        motion_node_ids = set(motions_by_node)
+        merge_evidence = build_native_merge_evidence(ir_nodes, payload_nodes, motions_by_node)
         detached_native_ids = {
             str((payload_screen.get(key) or {}).get("id") or "")
             for key in ("topBar", "bottomBar")
@@ -8948,11 +9210,14 @@ def build_native_structure_manifest(
         node_records = []
         for graph_node in graph_screen.get("nodes") or []:
             node_id = str(graph_node.get("nodeId") or "")
-            reason = None if node_id in represented_ids else native_optimization_reason(ir_nodes.get(node_id) or {}, payload_nodes)
+            reason = None if node_id in represented_ids else native_optimization_reason(
+                ir_nodes.get(node_id) or {}, payload_nodes, merge_evidence, motion_node_ids
+            )
             node_records.append({
                 "nodeId": node_id,
                 "status": "represented" if node_id in represented_ids else "optimized-equivalent" if reason else "missing",
                 "strategy": reason or "generated-native-payload",
+                "mergeEvidence": merge_evidence.get(node_id),
             })
         relation_records = [
             relation_native_consumption(
@@ -8964,6 +9229,8 @@ def build_native_structure_manifest(
                 ir_nodes,
                 architecture_relations,
                 detached_native_ids,
+                merge_evidence,
+                motion_node_ids,
             )
             for relation in graph_screen.get("relations") or []
         ]
@@ -8990,9 +9257,18 @@ def build_native_structure_manifest(
                 "alignment": str(style.get("alignItems") or "normal") == str(container_plan.get("alignment") or "normal"),
                 "distribution": str(style.get("justifyContent") or "normal") == str(container_plan.get("distribution") or "normal"),
             }
+            optimization_reason = native_optimization_reason(
+                ir_nodes.get(container_id) or {}, payload_nodes, merge_evidence, motion_node_ids
+            )
             container_consumption.append({
                 "containerNodeId": container_id,
-                "status": "consumed" if payload_container and all(checks.values()) else "not-consumed",
+                "status": (
+                    "consumed" if payload_container and all(checks.values())
+                    else "optimized-equivalent" if optimization_reason
+                    else "not-consumed"
+                ),
+                "strategy": optimization_reason or "native-container-layout-contract",
+                "mergeEvidence": merge_evidence.get(container_id),
                 "checks": checks,
                 "expectedChildNodeIds": expected_children,
                 "actualChildNodeIds": actual_children,
@@ -9006,19 +9282,32 @@ def build_native_structure_manifest(
             expected_slots = [str(item) for item in compound_plan.get("orderedSlotIds") or []]
             generated_slots = [str(item) for item in generated_compound.get("orderedSlotIds") or []]
             content_slots = [str(item.get("id") or "") for item in payload_node.get("contentItems") or []]
+            merged = merge_evidence.get(node_id) or {}
+            merged_source_ids = [str(item) for item in merged.get("sourceNodeIds") or []]
+            expected_source_ids = [
+                str(item.get("nodeId") or node_id)
+                for item in compound_plan.get("orderedSlots") or []
+            ]
+            merged_slots_consumed = bool(merged) and all(item in merged_source_ids for item in expected_source_ids)
             checks = {
-                "slotContract": generated_slots == expected_slots,
+                "slotContract": generated_slots == expected_slots or merged_slots_consumed,
                 "contentOrder": [item for item in content_slots if item in expected_slots] == [
                     item for item in expected_slots if item in content_slots
-                ],
-                "axis": str(payload_node.get("axis") or "") == str(compound_plan.get("axis") or ""),
+                ] or merged_slots_consumed,
+                "axis": str(payload_node.get("axis") or "") == str(compound_plan.get("axis") or "") or merged_slots_consumed,
             }
             compound_consumption.append({
                 "nodeId": node_id,
-                "status": "consumed" if payload_node and all(checks.values()) else "not-consumed",
+                "status": (
+                    "consumed" if payload_node and all(checks.values())
+                    else "optimized-equivalent" if merged_slots_consumed
+                    else "not-consumed"
+                ),
+                "strategy": merged.get("strategy") or "native-compound-layout-contract",
+                "mergeEvidence": merged or None,
                 "checks": checks,
                 "expectedSlotIds": expected_slots,
-                "actualSlotIds": content_slots,
+                "actualSlotIds": content_slots or merged_source_ids,
             })
         collection_consumption = []
         for collection_plan in native_layout.get("collectionLayouts") or []:
@@ -9112,7 +9401,9 @@ def build_native_structure_manifest(
                 ),
             }
             optimized_reason = (
-                native_optimization_reason(ir_nodes.get(node_id) or {}, payload_nodes)
+                native_optimization_reason(
+                    ir_nodes.get(node_id) or {}, payload_nodes, merge_evidence, motion_node_ids
+                )
                 or ("detached-native-owner" if node_id in detached_native_ids and node_id in represented_ids else None)
             )
             node_layout_consumption.append({
@@ -9123,6 +9414,7 @@ def build_native_structure_manifest(
                     else "not-consumed"
                 ),
                 "strategy": optimized_reason or "native-node-layout-contract",
+                "mergeEvidence": merge_evidence.get(node_id),
                 "checks": checks,
             })
         state_layout_consumption = []

@@ -28,6 +28,8 @@ HTML 节点不一定仍作为页面 Content 子树中的普通节点存在。以
 - 没有视觉内容和行为的结构包装被原生 Stack/View 合并；
 - 装饰性内部节点由父级系统控件、Shape、Layer 或项目组件吸收。
 
+每个被合并的来源节点必须携带 `mergeEvidence`，至少包含 `strategy`、`ownerNodeId`、`sourceNodeIds` 和 `nativePrimitive`。允许的策略必须由独立验证器白名单控制，例如 `attributed-text-merged`、`selection-indicator-merged`、`svg-resource-merged` 和 `svg-computed-state-merged`；仅写 `optimized-equivalent` 不构成消费证据。SVG 的 computed-state 合并只证明当前静态外观被矢量资源捕获，必须同时标记 `degradedInteraction=true`，不得等同于已实现 transition 或 keyframes。
+
 节点同时存在于 Payload 且被提升到原生层时，按“该约束是否仍有有效原生证据”判断，不能用 Payload 是否包含该 ID 作为唯一依据。例如，提升后的状态层可能保留追溯记录，但不再携带页面内 `preferredWidth`。
 
 ## 生成后硬门禁
@@ -35,7 +37,7 @@ HTML 节点不一定仍作为页面 Content 子树中的普通节点存在。以
 `scripts/validate_native_structure_manifest.py` 必须在 `integrate_generated_sources.rb` 之前运行。以下任一情况停止接入：
 
 1. 原生架构计划、布局关系图或生成清单哈希不一致，或 screen/node/relation 集合不一致。
-2. 节点状态为 `missing`，且没有受支持的原生等价优化证据。
+2. 节点状态为 `missing`，或状态为 `optimized-equivalent` 但缺少受支持、可审计的原生合并证据。
 3. 任一布局关系状态不是 `consumed` 或 `optimized-equivalent`。
 4. Content Container、top region 或 bottom region 与架构计划的 owner 不一致。
 5. 结构消费文件缺失，或文件哈希与生成清单不一致。

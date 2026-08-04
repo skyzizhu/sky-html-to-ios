@@ -29,6 +29,8 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 18. 布局契约必须区分 stack、wrapping stack、grid 与 positioned overlay，并保存 Grid 轨道、独立 row/column gap、Flex reverse/wrap、定位 containing block 和状态布局增量。百分比、`calc()`、viewport/font 相对单位必须保持可解析表达式；不得截取其中一个数字冒充固定尺寸。
 19. 内容容器遵循最小充分原则：少量固定内容使用 Stack/Grid，长单列同构内容使用 Table/Lazy 容器，多列、横向、数据表或异构 Section 使用 Collection/组合布局。集合容器只有与页面主轴一致且在直接内容层中占主导时才能替换根 Scroll；嵌套横向 Collection 只拥有横轴，禁止夺走页面纵轴或产生同轴双重滚动。
 20. Table/Collection 必须具有可执行的 Section 与 item sizing 契约。Header/Footer 从可复用 item 中分离；只有 `position: sticky` 或等价行为证据才能生成 pinned supplementary view。内容驱动的 Table 行使用自动高度，显式固定高度才生成固定 row/item；横向 item 必须保留来源宽度、宽高比与抗压缩语义。无法映射为 Screen Region 或原生 supplementary 的 sticky 节点必须在生成前阻断。
+21. 初始隐藏或透明的节点只要拥有可执行 motion/keyframes，就必须保留并绑定动画。关键帧需保存真实 sample offset、translate、scale、rotation 与 opacity；`calc()` 中带空格的正负位移不得丢失符号。
+22. SVG 内部节点、富文本子节点、系统选择标记等被原生 owner 合并时，必须在生成后清单中记录 strategy、owner node ID、source node IDs 和 native primitive。只捕获 SVG 当前 computed state 时必须标记交互降级，不能声称原 transition/keyframes 已实现。
 
 ## 支持范围
 
@@ -308,6 +310,7 @@ python3 "$SKILL_ROOT/scripts/generate_ios_from_ir.py" \
 - 六层架构计划必须物化为强类型页面源码：每个 screen 生成 UIContract，Section 生成独立容器，复用内容生成真实 UIKit Cell 子类或 SwiftUI Item View，并通过稳定 node ID 注册进入实际渲染链路。禁止只生成目录占位，或让一个通用 JSON NodeRenderer 独占全部页面架构。
 - 每个 screen 生成 LayoutContract，保存容器的 source/visual order、axis、alignment、distribution、wrap、gap 和子项尺寸策略。它用于关系约束和视觉校准，不得转成逐节点页面绝对 frame。
 - 读取 `references/native-structure-consumption.md`。生成器必须消费 `layout-relation-graph.json` 并写出 `native-structure-manifest.json`；随后运行 `scripts/validate_native_structure_manifest.py`。只有 screen/node/relation 集合、原生等价提升、区域所有权及 Swift/Payload 哈希全部通过，才能接入 Xcode target。
+- 普通流子节点与 absolute/fixed 子节点发生实质重叠时，必须按浏览器绘制顺序进入同一 Overlay/ZStack；没有实质重叠时仍保持普通流与独立 overlay，避免装饰节点改变内容测量。
 - 叶子强类型化只覆盖输入状态所有者、显式/项目组件、特殊媒体或绘制组件，以及拥有稳定业务 ID 的交互控件。普通文本、装饰节点、SVG 内部路径、自动编号节点和已由 Cell 拥有的 item 不按一节点一文件生成。
 - 保持项目命名、目录、访问控制和状态管理风格。
 - 静态页面不强制创建 ViewModel。
