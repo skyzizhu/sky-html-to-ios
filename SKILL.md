@@ -36,6 +36,7 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 25. 滚动与区域归属必须形成独立的 `scroll-and-attachment-plan.json`。每个 Scroll、固定/粘性/随内容滚动区域、Safe Area 和键盘避让只能有一个 owner；计划和生成后的消费清单都必须通过确定性门禁，不能依赖截图发现整页双轴滚动。
 26. 系统控件覆盖必须以当前本机 iPhoneOS SDK 审计，不使用永久硬编码的“最新控件”结论。公开 `UIControl` 子类及页面常用 UIKit 输入/选择/状态控件必须贯通识别、UI IR、架构、SwiftUI/UIKit 执行和编译测试；SwiftUI 对无直接等价物可使用局部 `UIViewRepresentable`，但禁止整页 UIKit/WebView 包装。
 27. 系统控件内部视觉必须形成独立的 `native-control-configuration-plan.json`。浏览器实测的 `accent-color`、`appearance`、normal、highlighted/pressed、editing/focused、checked/selected、disabled/loading，以及 Switch 轨道/滑块、Slider/Progress 轨道与填充、Segmented 选中项、PageControl 当前页、content inset、item spacing、preferred style 和固有尺寸都要由 SwiftUI/UIKit 共同消费，并在生成后清单中证明；不得由两套生成器各自猜测。
+28. 版本与设备兼容性必须形成 `native-api-fallback-plan.json` 和 `compatibility-matrix.json`。计划同时绑定本机 SDK、target deployment、SwiftUI/UIKit、来源实测宽度、Size Class 与 iPad 待验证项；低于运行时基线、必需能力无降级实现或生成器不认识降级策略时必须在代码生成前停止。`source-analyzed`、`pending-runtime-validation` 和视觉验收通过不得混为同一状态。
 
 ## 支持范围
 
@@ -168,6 +169,8 @@ python3 "$SKILL_ROOT/scripts/inspect_ios_sdk.py" \
 ```
 
 以 Apple 当前文档、本机 iPhoneOS SDK 和工程 deployment target 共同决定 API。禁止把技能编写时的某个固定 SDK 当成永久最新版。
+
+UI IR 准备完成后，总控必须生成并校验 `native-api-fallback-plan.json`、`compatibility-matrix.json` 和 `ios-compatibility-validation.json`。生成器必须消费两份计划并把哈希与逐项消费结果写入生成清单及 `native-structure-manifest.json`；不能只输出兼容报告而继续生成不受约束的代码。
 
 ### 3. 在浏览器中渲染 HTML
 

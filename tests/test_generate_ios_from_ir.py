@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import shutil
 import subprocess
 import tempfile
@@ -93,6 +94,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
         architecture_plan: Path | None = None,
         control_configuration_plan: Path | None = None,
         presentation_plan: Path | None = None,
+        compatibility_matrix: Path | None = None,
+        api_fallback_plan: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         command = ["python3", str(SCRIPT)]
         for path in paths:
@@ -106,6 +109,10 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             command.extend(["--control-configuration-plan", str(control_configuration_plan)])
         if presentation_plan:
             command.extend(["--presentation-plan", str(presentation_plan)])
+        if compatibility_matrix:
+            command.extend(["--compatibility-matrix", str(compatibility_matrix)])
+        if api_fallback_plan:
+            command.extend(["--api-fallback-plan", str(api_fallback_plan)])
         if out_dir.parts[-2:] != ("Generated", "HTMLToIOS"):
             command.append("--allow-nonstandard-output")
         result = subprocess.run(command, text=True, capture_output=True, check=False)
@@ -1343,6 +1350,54 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("isPresentationActive(stateID)", uikit_root)
             self.assertIn("controller.popoverPresentationController", uikit_root)
             self.assertIn("scroll.contentOffset.y > -scroll.adjustedContentInset.top + 0.5", uikit_root)
+
+    def test_generator_consumes_compatible_api_fallback_contracts_and_rejects_unknown_fallbacks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            ir_path = root / "home.json"
+            ir_path.write_text(json.dumps(ir("home")), encoding="utf-8")
+            fallback_path = root / "fallback.json"
+            fallback = {
+                "schemaVersion": "native-api-fallback-plan-1.0",
+                "uiStack": "swiftui",
+                "minimumIOS": "16.0",
+                "runtimeBaseline": {"minimumIOS": "16.0"},
+                "capabilities": [{
+                    "id": "keyframe-animation",
+                    "required": True,
+                    "activeResolution": "fallback",
+                    "stacks": {"swiftui": {"fallback": "timeline-sampled-animation"}},
+                }],
+                "summary": {"blockedCapabilityIDs": [], "fallbackCapabilityIDs": ["keyframe-animation"]},
+            }
+            fallback_path.write_text(json.dumps(fallback), encoding="utf-8")
+            matrix_path = root / "matrix.json"
+            matrix_path.write_text(json.dumps({
+                "schemaVersion": "ios-compatibility-matrix-1.0",
+                "uiStack": "swiftui",
+                "minimumIOS": "16.0",
+                "summary": {"runtimeBaselineSatisfied": True},
+            }), encoding="utf-8")
+
+            out_dir = root / "valid"
+            self.run_generator(
+                [ir_path], out_dir,
+                compatibility_matrix=matrix_path,
+                api_fallback_plan=fallback_path,
+            )
+            generation = json.loads((out_dir / ".html-to-ios-generation.json").read_text(encoding="utf-8"))
+            self.assertEqual(generation["activeAPIFallbacks"], ["keyframe-animation"])
+            self.assertEqual(generation["compatibilityMatrixSha256"], hashlib.sha256(matrix_path.read_bytes()).hexdigest())
+
+            fallback["capabilities"][0]["stacks"]["swiftui"]["fallback"] = "unknown-runtime"
+            fallback_path.write_text(json.dumps(fallback), encoding="utf-8")
+            result = self.run_generator(
+                [ir_path], root / "invalid", expect_success=False,
+                compatibility_matrix=matrix_path,
+                api_fallback_plan=fallback_path,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("generator does not implement API fallbacks", result.stderr)
 
     def test_viewport_bar_releases_large_direct_children_without_relaxing_icons(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

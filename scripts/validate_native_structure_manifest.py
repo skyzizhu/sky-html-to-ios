@@ -44,6 +44,8 @@ def main() -> int:
     parser.add_argument("--scroll-attachment-plan", type=Path)
     parser.add_argument("--control-configuration-plan", type=Path)
     parser.add_argument("--presentation-plan", type=Path)
+    parser.add_argument("--compatibility-matrix", type=Path)
+    parser.add_argument("--api-fallback-plan", type=Path)
     parser.add_argument("--generated-dir", required=True, type=Path)
     parser.add_argument("--generation-manifest", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
@@ -56,6 +58,8 @@ def main() -> int:
     scroll_attachment = load_json(args.scroll_attachment_plan) if args.scroll_attachment_plan else {}
     control_configuration = load_json(args.control_configuration_plan) if args.control_configuration_plan else {}
     presentation_plan = load_json(args.presentation_plan) if args.presentation_plan else {}
+    compatibility_matrix = load_json(args.compatibility_matrix) if args.compatibility_matrix else {}
+    api_fallback_plan = load_json(args.api_fallback_plan) if args.api_fallback_plan else {}
     generation = load_json(args.generation_manifest)
     if manifest.get("schemaVersion") != "native-structure-manifest-1.0":
         raise ValueError("--manifest must use native-structure-manifest-1.0")
@@ -71,6 +75,10 @@ def main() -> int:
         raise ValueError("--control-configuration-plan must use native-control-configuration-plan-1.0")
     if args.presentation_plan and presentation_plan.get("schemaVersion") != "native-presentation-plan-1.0":
         raise ValueError("--presentation-plan must use native-presentation-plan-1.0")
+    if args.compatibility_matrix and compatibility_matrix.get("schemaVersion") != "ios-compatibility-matrix-1.0":
+        raise ValueError("--compatibility-matrix must use ios-compatibility-matrix-1.0")
+    if args.api_fallback_plan and api_fallback_plan.get("schemaVersion") != "native-api-fallback-plan-1.0":
+        raise ValueError("--api-fallback-plan must use native-api-fallback-plan-1.0")
     if generation.get("schemaVersion") != "html-to-ios-generation-1.0":
         raise ValueError("--generation-manifest must use html-to-ios-generation-1.0")
 
@@ -109,6 +117,17 @@ def main() -> int:
         ))
     if args.presentation_plan and manifest.get("presentationPlanSha256") != sha256_file(args.presentation_plan):
         issues.append(issue("STALE_PRESENTATION_PLAN_PROVENANCE", None, "Native structure manifest was not generated from the current presentation plan."))
+    if args.compatibility_matrix and manifest.get("compatibilityMatrixSha256") != sha256_file(args.compatibility_matrix):
+        issues.append(issue("STALE_COMPATIBILITY_MATRIX_PROVENANCE", None, "Native structure manifest was not generated from the current compatibility matrix."))
+    if args.api_fallback_plan and manifest.get("apiFallbackPlanSha256") != sha256_file(args.api_fallback_plan):
+        issues.append(issue("STALE_API_FALLBACK_PLAN_PROVENANCE", None, "Native structure manifest was not generated from the current API fallback plan."))
+    for record in manifest.get("apiFallbackConsumption") or []:
+        if record.get("required") is True and record.get("consumed") is not True:
+            issues.append(issue(
+                "NATIVE_API_FALLBACK_NOT_CONSUMED", None,
+                f"Generated runtime does not consume compatibility decision {record.get('capabilityId')!r}.",
+                str(record.get("capabilityId") or "") or None,
+            ))
     if manifest.get("generationManifestSha256") != sha256_file(args.generation_manifest):
         issues.append(issue(
             "STALE_GENERATION_MANIFEST_PROVENANCE", None,

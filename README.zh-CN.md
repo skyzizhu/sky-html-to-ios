@@ -105,7 +105,7 @@ HTML 可以引用本地 CSS、JavaScript、图片、SVG 和字体。远程资源
 | SwiftUI/UIKit 混合工程 | 条件支持 | 按目标模块和现有工程结构选择，不按全仓库多数文件猜测 |
 | Objective-C | 非默认 | 当前生成器不直接生成 Objective-C；仅可作为既有项目兼容扩展人工处理 |
 
-默认最低系统版本是 iOS 16，可通过参数调整。使用较新 SDK API 前会检查 availability，并要求提供低版本降级路径。
+当前生成运行时以 iOS 16 为基线。只有所有必需运行时能力都具备已实现的降级方案时，才允许设置更低 deployment target，否则在代码生成前停止。总控会依据本机 SDK 生成 API 降级计划及设备/Size Class 兼容矩阵，并严格区分来源已分析、iPad 待运行验证、构建通过和视觉验收通过。
 
 ## 主要能力
 
@@ -817,6 +817,9 @@ Skill 可以处理普通 HTML，但结构和语义越清楚，自动还原越稳
 | `ios-project-report.json` | iOS 工程扫描结果 |
 | `ios-component-index.json` | 可复用组件索引 |
 | `ios-sdk-report.json` | SDK API 和 availability |
+| `native-api-fallback-plan.json` | 必需 API 的原生/降级决策及已实现的低版本方案 |
+| `compatibility-matrix.json` | Deployment target、手机/iPad、Size Class 与来源证据矩阵 |
+| `ios-compatibility-validation.json` | 代码生成前的兼容性一致性门禁 |
 | `native-naming-plan.json` | 文件名、类型名前缀和冲突 |
 | `native-architecture-plan.json` | Controller、导航、滚动、Safe Area 和 presentation |
 | `layout-relation-graph.json` | 父子归属、视觉顺序、间距、对齐、宽高比、层级和滚动轴所有权 |

@@ -16,8 +16,18 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.43.0"
+GENERATOR_VERSION = "1.44.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
+SUPPORTED_API_FALLBACKS = {
+    "custom-overlay-container", "over-full-screen-container",
+    "anchored-overlay", "anchored-child-controller",
+    "accessible-custom-alert", "accessible-custom-alert-controller",
+    "accessible-action-sheet-overlay", "accessible-action-sheet-controller",
+    "date-picker-calendar-mode", "UIDatePicker", "pasteboard-button",
+    "color-picker-bridge", "UIColorPickerViewController",
+    "semantic-empty-state-stack", "semantic-empty-state-view",
+    "timeline-sampled-animation", "property-animator-keyframes",
+}
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
     "status-bar",
@@ -60,6 +70,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scroll-attachment-plan", type=Path)
     parser.add_argument("--control-configuration-plan", type=Path)
     parser.add_argument("--presentation-plan", type=Path)
+    parser.add_argument("--compatibility-matrix", type=Path)
+    parser.add_argument("--api-fallback-plan", type=Path)
     parser.add_argument("--native-structure-manifest", type=Path)
     parser.add_argument("--naming-plan", type=Path)
     parser.add_argument("--conflict-dir", type=Path)
@@ -212,6 +224,41 @@ def load_presentation_plan(path: Path | None) -> tuple[dict[str, Any], dict[str,
     if not screens or "" in screens:
         raise ValueError(f"{path}: every presentation plan screen needs a screenId")
     return data, screens
+
+
+def load_compatibility_contracts(
+    matrix_path: Path | None,
+    fallback_path: Path | None,
+    ui_stack: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    if matrix_path is None and fallback_path is None:
+        return {}, {}
+    if matrix_path is None or fallback_path is None:
+        raise ValueError("--compatibility-matrix and --api-fallback-plan must be supplied together")
+    matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
+    fallback = json.loads(fallback_path.read_text(encoding="utf-8"))
+    if matrix.get("schemaVersion") != "ios-compatibility-matrix-1.0":
+        raise ValueError(f"{matrix_path}: expected ios-compatibility-matrix-1.0")
+    if fallback.get("schemaVersion") != "native-api-fallback-plan-1.0":
+        raise ValueError(f"{fallback_path}: expected native-api-fallback-plan-1.0")
+    if matrix.get("uiStack") != ui_stack or fallback.get("uiStack") != ui_stack:
+        raise ValueError("compatibility contracts do not match the selected UI stack")
+    if str(matrix.get("minimumIOS")) != str(fallback.get("minimumIOS")):
+        raise ValueError("compatibility contracts disagree on minimumIOS")
+    if not (matrix.get("summary") or {}).get("runtimeBaselineSatisfied"):
+        raise ValueError("compatibility matrix does not satisfy the generated runtime baseline")
+    blocked = (fallback.get("summary") or {}).get("blockedCapabilityIDs") or []
+    if blocked:
+        raise ValueError("required native capabilities are blocked: " + ", ".join(map(str, blocked)))
+    selected_fallbacks = {
+        str((item.get("stacks") or {}).get(ui_stack, {}).get("fallback") or "")
+        for item in fallback.get("capabilities") or []
+        if item.get("required") and item.get("activeResolution") == "fallback"
+    }
+    unsupported = sorted(selected_fallbacks - SUPPORTED_API_FALLBACKS)
+    if unsupported:
+        raise ValueError("generator does not implement API fallbacks: " + ", ".join(unsupported))
+    return matrix, fallback
 
 
 def load_naming_prefix(path: Path | None) -> tuple[str, str | None, set[str]]:
@@ -10332,6 +10379,8 @@ def build_native_structure_manifest(
     control_configuration_by_screen: dict[str, dict[str, Any]],
     presentation_plan: dict[str, Any],
     presentation_by_screen: dict[str, dict[str, Any]],
+    compatibility_matrix: dict[str, Any],
+    api_fallback_plan: dict[str, Any],
     screen_source_files: dict[str, list[str]],
     generation_manifest: dict[str, Any],
     out_dir: Path,
@@ -10341,6 +10390,8 @@ def build_native_structure_manifest(
     scroll_attachment_path: Path | None,
     control_configuration_path: Path | None,
     presentation_path: Path | None,
+    compatibility_matrix_path: Path | None,
+    api_fallback_path: Path | None,
     ui_stack: str,
 ) -> dict[str, Any]:
     runtime_path = out_dir / "Core/Runtime/HTMLToIOSGeneratedRuntime.swift"
@@ -10898,6 +10949,26 @@ def build_native_structure_manifest(
         "presentationPlan": str(presentation_path.resolve()) if presentation_path else None,
         "presentationPlanSha256": sha256_file(presentation_path) if presentation_path else None,
         "presentationPlanSchemaVersion": presentation_plan.get("schemaVersion") if presentation_plan else None,
+        "compatibilityMatrix": str(compatibility_matrix_path.resolve()) if compatibility_matrix_path else None,
+        "compatibilityMatrixSha256": sha256_file(compatibility_matrix_path) if compatibility_matrix_path else None,
+        "compatibilityMatrixSchemaVersion": compatibility_matrix.get("schemaVersion") if compatibility_matrix else None,
+        "apiFallbackPlan": str(api_fallback_path.resolve()) if api_fallback_path else None,
+        "apiFallbackPlanSha256": sha256_file(api_fallback_path) if api_fallback_path else None,
+        "apiFallbackPlanSchemaVersion": api_fallback_plan.get("schemaVersion") if api_fallback_plan else None,
+        "apiFallbackConsumption": [
+            {
+                "capabilityId": item.get("id"),
+                "required": item.get("required") is True,
+                "resolution": item.get("activeResolution"),
+                "fallback": ((item.get("stacks") or {}).get(ui_stack) or {}).get("fallback"),
+                "consumed": (
+                    item.get("required") is not True
+                    or item.get("activeResolution") in {"system-native", "system-native-review"}
+                    or ((item.get("stacks") or {}).get(ui_stack) or {}).get("fallback") in SUPPORTED_API_FALLBACKS
+                ),
+            }
+            for item in api_fallback_plan.get("capabilities") or []
+        ],
         "runtimeCapabilities": runtime_capabilities,
         "generationManifest": str((out_dir / MANIFEST_NAME).resolve()),
         "generationManifestSha256": sha256_file(out_dir / MANIFEST_NAME),
@@ -10931,6 +11002,12 @@ def main() -> int:
     ui_stack = args.ui_stack or (next(iter(inferred_stacks)) if len(inferred_stacks) == 1 else None)
     if ui_stack not in {"swiftui", "uikit"}:
         raise ValueError("--ui-stack is required when UI IR files disagree")
+
+    compatibility_matrix, api_fallback_plan = load_compatibility_contracts(
+        args.compatibility_matrix,
+        args.api_fallback_plan,
+        ui_stack,
+    )
 
     architecture_by_screen = load_architecture_plan(args.architecture_plan)
     layout_graph, graph_by_screen = load_layout_relation_graph(args.layout_relation_graph)
@@ -11075,6 +11152,11 @@ def main() -> int:
         "controlConfigurationPlanSha256": sha256_file(args.control_configuration_plan) if args.control_configuration_plan else None,
         "presentationPlan": str(args.presentation_plan.resolve()) if args.presentation_plan else None,
         "presentationPlanSha256": sha256_file(args.presentation_plan) if args.presentation_plan else None,
+        "compatibilityMatrix": str(args.compatibility_matrix.resolve()) if args.compatibility_matrix else None,
+        "compatibilityMatrixSha256": sha256_file(args.compatibility_matrix) if args.compatibility_matrix else None,
+        "apiFallbackPlan": str(args.api_fallback_plan.resolve()) if args.api_fallback_plan else None,
+        "apiFallbackPlanSha256": sha256_file(args.api_fallback_plan) if args.api_fallback_plan else None,
+        "activeAPIFallbacks": (api_fallback_plan.get("summary") or {}).get("fallbackCapabilityIDs") or [],
         "namingPlan": str(args.naming_plan.resolve()) if args.naming_plan else None,
         "namePrefix": name_prefix,
         "namingSource": naming_source,
@@ -11097,6 +11179,8 @@ def main() -> int:
             control_configuration_by_screen,
             presentation_plan,
             presentation_by_screen,
+            compatibility_matrix,
+            api_fallback_plan,
             screen_source_files,
             manifest,
             args.out_dir,
@@ -11106,6 +11190,8 @@ def main() -> int:
             args.scroll_attachment_plan,
             args.control_configuration_plan,
             args.presentation_plan,
+            args.compatibility_matrix,
+            args.api_fallback_plan,
             ui_stack,
         )
         native_structure_path.parent.mkdir(parents=True, exist_ok=True)

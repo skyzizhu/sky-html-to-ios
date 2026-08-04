@@ -9,6 +9,9 @@
 3. 读取工程的 `IPHONEOS_DEPLOYMENT_TARGET`。
 4. 运行 `scripts/inspect_ios_sdk.py --minimum-ios <version>` 检查计划使用的 UIKit/SwiftUI 符号。
 5. 对关键新 API 再核对 Apple 官方文档和 SDK interface/header 的 availability。
+6. UI IR 完成后运行 `build_native_api_fallback_plan.py`，只把实际页面需要的能力标为 required。
+7. 运行 `build_ios_compatibility_matrix.py`，将来源实测宽度、手机/iPad profile、Size Class 和运行时验证状态分开记录。
+8. 运行 `validate_ios_compatibility_contracts.py`；门禁通过后才允许生成 Swift。
 
 本技能不得把某个固定 Xcode/iOS 版本永久写成“最新”。日期变化、Xcode 更新或目标工程变化时重新检查。
 
@@ -39,6 +42,13 @@
 ```
 
 脚本无法可靠解析 introduced version 时使用 `status: review-required`，不得编造版本号。
+
+## 可执行契约
+
+- `native-api-fallback-plan.json` 记录每项能力在 SwiftUI/UIKit 下的 SDK 状态、introduced version、当前技术栈决策和降级实现名。
+- `compatibility-matrix.json` 记录 runtime baseline、来源已探测宽度、compact/regular Size Class，以及仍需模拟器或真机验证的 iPad profile。
+- 生成器只接受自己明确实现的 fallback 名称；未知名称、技术栈不匹配、低于 runtime baseline 或 required capability 被 blocked 时直接停止。
+- 生成清单和 `native-structure-manifest.json` 必须保存两份契约的 SHA-256，并证明每项 required decision 已消费。
 
 ## 降级要求
 

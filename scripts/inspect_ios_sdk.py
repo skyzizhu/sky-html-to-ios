@@ -25,10 +25,11 @@ DEFAULT_UIKIT_SYMBOLS = [
 
 DEFAULT_SWIFTUI_SYMBOLS = [
     "Button", "TextField", "SecureField", "TextEditor", "Toggle", "Picker", "Slider",
-    "Stepper", "DatePicker", "ColorPicker", "ProgressView", "ScrollView", "List",
+    "Stepper", "DatePicker", "ColorPicker", "PasteButton", "ProgressView", "ScrollView", "List",
     "Grid", "LazyVGrid", "TabView", "NavigationStack", "NavigationSplitView",
     "ContentUnavailableView", "sheet", "fullScreenCover", "popover", "alert",
-    "confirmationDialog", "presentationDetents", "keyframeAnimator", "phaseAnimator", "visualEffect",
+    "confirmationDialog", "presentationDetents", "presentationDragIndicator", "scrollDismissesKeyboard",
+    "keyframeAnimator", "phaseAnimator", "visualEffect",
 ]
 
 
@@ -48,11 +49,24 @@ def declaration_context(text: str, match: re.Match) -> tuple[str, str]:
     lines = text.splitlines()
     line_index = text.count("\n", 0, match.start())
     selected = [lines[line_index]]
-    for index in range(line_index - 1, max(-1, line_index - 9), -1):
+    searching_extension = " func " in f" {lines[line_index]} "
+    for index in range(line_index - 1, max(-1, line_index - 41), -1):
         line = lines[index].strip()
+        if searching_extension:
+            if "available" in line.lower() or line.startswith("@_"):
+                selected.insert(0, lines[index])
+            elif line.startswith("extension "):
+                selected.insert(0, lines[index])
+                searching_extension = False
+            elif line == "}":
+                break
+            continue
         if not line:
             break
-        if "available" in line.lower() or line.startswith(("@_", "UIKIT_EXTERN", "NS_SWIFT", "API_")):
+        if (
+            "available" in line.lower()
+            or line.startswith(("@_", "UIKIT_EXTERN", "NS_SWIFT", "API_", "extension "))
+        ):
             selected.insert(0, lines[index])
             continue
         break

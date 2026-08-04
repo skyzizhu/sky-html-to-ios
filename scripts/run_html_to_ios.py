@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = "html-to-ios-orchestration-1.6"
+SCHEMA_VERSION = "html-to-ios-orchestration-1.7"
 PROJECT_MARKER_NAME = ".html-to-ios-created-project.json"
 SKIP_PARTS = {".git", ".build", "build", "DerivedData", "Pods", "Carthage", "node_modules", "xcuserdata"}
 MAX_VISUAL_CORRECTION_ITERATIONS = 3
@@ -197,6 +197,9 @@ class Orchestrator:
                 "nativeControlConfigurationValidation": "pending",
                 "nativePresentationPlan": "pending",
                 "nativePresentationValidation": "pending",
+                "nativeAPIFallbackPlan": "pending",
+                "iosCompatibilityMatrix": "pending",
+                "iosCompatibilityValidation": "pending",
                 "nativeStructureManifest": "pending",
                 "nativeStructureValidation": "pending",
                 "projectGenerationDecision": "pending",
@@ -547,6 +550,61 @@ class Orchestrator:
         self.artifacts["systemControlCoverage"] = str(control_coverage)
         self.report["qualityGates"]["systemControlCoverage"] = "passed"
         return sdk_report, component_report
+
+    def build_and_validate_ios_compatibility(
+        self,
+        ir_paths: list[Path],
+        sdk_report: Path,
+        ui_stack: str,
+        minimum_ios: str,
+    ) -> tuple[Path, Path]:
+        fallback_plan = self.report_dir / "native-api-fallback-plan.json"
+        fallback_command: list[str | Path] = [
+            sys.executable,
+            self.scripts / "build_native_api_fallback_plan.py",
+            "--sdk-report", sdk_report,
+            "--ui-stack", ui_stack,
+            "--minimum-ios", minimum_ios,
+            "--out", fallback_plan,
+        ]
+        for path in ir_paths:
+            fallback_command.extend(["--ir", path])
+        self.run_command("build-native-api-fallback-plan", fallback_command)
+
+        matrix = self.report_dir / "compatibility-matrix.json"
+        matrix_command: list[str | Path] = [
+            sys.executable,
+            self.scripts / "build_ios_compatibility_matrix.py",
+            "--sdk-report", sdk_report,
+            "--api-fallback-plan", fallback_plan,
+            "--ui-stack", ui_stack,
+            "--minimum-ios", minimum_ios,
+            "--out", matrix,
+        ]
+        for path in ir_paths:
+            matrix_command.extend(["--ir", path])
+        for path in self.artifacts.get("responsiveAnalyses") or []:
+            matrix_command.extend(["--responsive-analysis", Path(path)])
+        self.run_command("build-ios-compatibility-matrix", matrix_command)
+
+        validation = self.report_dir / "ios-compatibility-validation.json"
+        self.run_command(
+            "validate-ios-compatibility-contracts",
+            [
+                sys.executable,
+                self.scripts / "validate_ios_compatibility_contracts.py",
+                "--matrix", matrix,
+                "--api-fallback-plan", fallback_plan,
+                "--out", validation,
+            ],
+        )
+        self.artifacts["nativeAPIFallbackPlan"] = str(fallback_plan)
+        self.artifacts["iosCompatibilityMatrix"] = str(matrix)
+        self.artifacts["iosCompatibilityValidation"] = str(validation)
+        self.report["qualityGates"]["nativeAPIFallbackPlan"] = "passed"
+        self.report["qualityGates"]["iosCompatibilityMatrix"] = "passed"
+        self.report["qualityGates"]["iosCompatibilityValidation"] = "passed"
+        return matrix, fallback_plan
 
     def build_native_naming_plan(
         self,
@@ -1254,6 +1312,8 @@ class Orchestrator:
         scroll_attachment_plan: Path,
         control_configuration_plan: Path,
         presentation_plan: Path,
+        compatibility_matrix: Path,
+        api_fallback_plan: Path,
         naming_plan: Path,
     ) -> Path:
         generated_dir = source_root / "Generated" / "HTMLToIOS"
@@ -1271,6 +1331,8 @@ class Orchestrator:
             "--scroll-attachment-plan", scroll_attachment_plan,
             "--control-configuration-plan", control_configuration_plan,
             "--presentation-plan", presentation_plan,
+            "--compatibility-matrix", compatibility_matrix,
+            "--api-fallback-plan", api_fallback_plan,
             "--native-structure-manifest", native_structure_manifest,
             "--naming-plan", naming_plan,
         ])
@@ -1296,6 +1358,8 @@ class Orchestrator:
                 "--scroll-attachment-plan", scroll_attachment_plan,
                 "--control-configuration-plan", control_configuration_plan,
                 "--presentation-plan", presentation_plan,
+                "--compatibility-matrix", compatibility_matrix,
+                "--api-fallback-plan", api_fallback_plan,
                 "--generated-dir", generated_dir,
                 "--generation-manifest", generation_manifest,
                 "--out", native_structure_report,
@@ -1658,6 +1722,9 @@ struct ContentView: View {
             )
         if ir_paths is None:
             raise OrchestrationError("prepare-ui-ir", "No UI IR inputs are available.")
+        compatibility_matrix, api_fallback_plan = self.build_and_validate_ios_compatibility(
+            ir_paths, sdk_report, ui_stack, minimum_ios,
+        )
         architecture_plan = self.build_native_architecture_plan(ir_paths, ui_stack, minimum_ios)
         scroll_attachment_plan = self.build_and_validate_scroll_attachment_plan(ir_paths, architecture_plan)
         control_configuration_plan = self.build_and_validate_native_control_configuration_plan(ir_paths)
@@ -1669,7 +1736,8 @@ struct ContentView: View {
         self.generate_and_integrate(
             ir_paths, project, target, source_root, ui_stack, minimum_ios,
             architecture_plan, layout_relation_graph, native_layout_plan, scroll_attachment_plan,
-            control_configuration_plan, presentation_plan, naming_plan,
+            control_configuration_plan, presentation_plan, compatibility_matrix, api_fallback_plan,
+            naming_plan,
         )
         self.wire_managed_entry(source_root, ui_stack)
         symbol = "HTMLToIOSGeneratedRootView" if ui_stack == "swiftui" else "HTMLToIOSGeneratedRootViewController"
@@ -1733,6 +1801,9 @@ struct ContentView: View {
                         )
                     ir_paths = corrected_irs
                     self.artifacts["uiIRs"] = [str(path) for path in ir_paths]
+                    compatibility_matrix, api_fallback_plan = self.build_and_validate_ios_compatibility(
+                        ir_paths, sdk_report, ui_stack, minimum_ios,
+                    )
                     architecture_plan = self.build_native_architecture_plan(ir_paths, ui_stack, minimum_ios)
                     scroll_attachment_plan = self.build_and_validate_scroll_attachment_plan(ir_paths, architecture_plan)
                     control_configuration_plan = self.build_and_validate_native_control_configuration_plan(ir_paths)
@@ -1754,6 +1825,8 @@ struct ContentView: View {
                         scroll_attachment_plan,
                         control_configuration_plan,
                         presentation_plan,
+                        compatibility_matrix,
+                        api_fallback_plan,
                         naming_plan,
                     )
                     self.build(project, scheme)
