@@ -53,6 +53,10 @@ NODE_PATH=<playwright-node-modules> node "$SKILL_ROOT/scripts/analyze_responsive
 
 工具自动区分 viewport 与 fixed-artboard，按目标宽度探测节点相对父容器的位置、宽高响应和文字行数，输出 Auto Layout 建议。
 
+分析结果还必须保留每个宽度下可见节点的 selector/runtime ID、rect、parent rect 和文字行数快照，使 Grid/Collection 降级阶段能确定真实列数和异构 item 尺寸。截图目录仍是可选项；这些结构化浏览器测量不依赖截图或多模态模型。
+
+CSS Grid 解析覆盖 `repeat()`、`minmax()`、`auto-fit`、`auto-fill`、`fr`、固定/百分比/计算轨道和显式 span。存在多个宽度样本时，以实测断点验证 authored CSS；两者冲突时保留 authored 规则并将冲突列入门禁，不能静默固定为基准宽度列数。
+
 ## 动态内容与架构
 
 内容变体应先进入 ViewModel/store，再由 `LazyVGrid`、Stack、`UICollectionView`、`UITableView` 和 Auto Layout 的 intrinsic content size 重新布局。若来源中的弹层或固定容器会随内容状态改变尺寸，记录浏览器前后 rect，并把差值转换为状态化约束；不要在页面控制器里为每种分类写一组绝对 frame。自动生成的尺寸覆盖只允许作用于实测发生变化的内容容器及其 presentation 根，不向无关祖先传播。若 `overflow:auto` 只在某个内容变体中产生真实溢出，滚动轴也属于状态数据；该容器转换为独立原生滚动 viewport，不能让溢出内容压缩同级标题、标签栏或操作区。

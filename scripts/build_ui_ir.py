@@ -861,6 +861,7 @@ def normalize_dynamic_contracts(
         selector = source.get("sourceSelector")
         node_ids = selector_to_node_ids.get(selector, []) if selector else []
         runtime_ids = selector_to_runtime_ids.get(selector, []) if selector else []
+        source_scope = source.get("sourceScope") or ("application" if selector and not node_ids else None)
         action = primary.get("action") or "unknown"
         runtime_evidence = source.get("runtimeEvidence") or {}
         runtime_variants = runtime_evidence.get("contentVariants") or ([{
@@ -919,7 +920,7 @@ def normalize_dynamic_contracts(
             "sourceNodeIds": node_ids,
             "sourceRuntimeIds": runtime_ids,
             "sourceSelector": selector,
-            "sourceScope": source.get("sourceScope"),
+            "sourceScope": source_scope,
             "sourceVisibleInitially": any(selector_visibility.get(selector, [])) if selector else False,
             "trigger": source.get("trigger") or "tap",
             "action": action,
@@ -932,13 +933,13 @@ def normalize_dynamic_contracts(
             "requiresResolution": any(item.get("resolution", {}).get("status") == "recommended-unresolved" for item in transitions),
             "evidence": {"ast": source.get("astEvidence"), "runtime": runtime_evidence},
         })
-        if not node_ids and not source.get("sourceScope"):
+        if not node_ids and selector:
             warnings.append({
-                "code": "DYNAMIC_SOURCE_NODE_UNMAPPED",
+                "code": "APPLICATION_SCOPED_SOURCE_NODE_UNMAPPED",
                 "severity": "warning",
                 "nodeId": None,
-                "message": f"Unable to map dynamic interaction {source.get('id')} selector {selector!r} into this render tree.",
-                "fallback": "Re-extract the screen with the shared control inside the selected app root.",
+                "message": f"Interaction {source.get('id')} selector {selector!r} is outside this screen root and was retained with application scope.",
+                "fallback": "Map the shared control into an application chrome or presentation owner; do not attach it to an unrelated screen node.",
             })
 
     for transition in automatic_transitions:

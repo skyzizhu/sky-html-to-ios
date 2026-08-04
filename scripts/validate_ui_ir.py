@@ -470,7 +470,7 @@ def validate(data):
             interaction_ids.add(iid)
         source = interaction.get("sourceNodeId")
         source_scope = interaction.get("sourceScope")
-        if source is None and source_scope not in {"screen", "document", "window"}:
+        if source is None and source_scope not in {"screen", "application", "document", "window"}:
             errors.append(f"{where} needs sourceNodeId or a valid sourceScope")
         elif source is not None and source not in all_ids:
             errors.append(f"{where}.sourceNodeId references missing node {source}")

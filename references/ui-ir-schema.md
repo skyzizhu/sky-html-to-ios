@@ -318,7 +318,7 @@ UI IR 是浏览器渲染结果与原生代码之间的稳定中间层。不要�
 }
 ```
 
-`sourceInteractionId` 追溯到动态交互图；重复 selector 使用 `sourceNodeIds` 保留全部原生节点，`sourceNodeId` 是测试所用的首选节点。`target` 可引用 route graph screen ID 或 interaction graph state ID。自动迁移允许 `sourceNodeId=null`、`sourceScope=screen`、`trigger=appear/timer-complete`；document/window 环境事件也允许无 node，但必须保留 scope。AST-only、runtime-verified 与 override-resolved 状态应进入 warning/evidence，不能合并成一个虚假的“已验证”。
+`sourceInteractionId` 追溯到动态交互图；重复 selector 使用 `sourceNodeIds` 保留全部原生节点，`sourceNodeId` 是测试所用的首选节点。`target` 可引用 route graph screen ID 或 interaction graph state ID。自动迁移允许 `sourceNodeId=null`、`sourceScope=screen`、`trigger=appear/timer-complete`；页面根之外、应用壳以内的共享导航、底栏和弹层控件使用 `sourceScope=application`，并在六层架构中绑定 Application Container 或 Screen Region；document/window 环境事件也允许无 node，但必须保留 scope。AST-only、runtime-verified 与 override-resolved 状态应进入 warning/evidence，不能合并成一个虚假的“已验证”。
 
 一个 Web 事件可以产生多个副作用，全部写入 `payload.transitions`。每项包含 source transition ID、action、screen/state target、state owner、schedule、resolution 状态、confidence 和 evidence。返回首页时同时重置检测进度等跨 screen state 是合法副作用，不得因目标 state 不属于当前 screen 而删除。
 

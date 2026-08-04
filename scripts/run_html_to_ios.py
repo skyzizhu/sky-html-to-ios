@@ -1117,6 +1117,8 @@ class Orchestrator:
         ]
         for path in ir_paths:
             command.extend(["--ir", path])
+        for path in self.artifacts.get("responsiveAnalyses") or []:
+            command.extend(["--responsive-analysis", path])
         command.extend([
             "--architecture-plan", architecture_plan,
             "--layout-graph", layout_relation_graph,
@@ -1131,6 +1133,8 @@ class Orchestrator:
         ]
         for path in ir_paths:
             validation_command.extend(["--ir", path])
+        for path in self.artifacts.get("responsiveAnalyses") or []:
+            validation_command.extend(["--responsive-analysis", path])
         validation_command.extend([
             "--architecture-plan", architecture_plan,
             "--layout-graph", layout_relation_graph,

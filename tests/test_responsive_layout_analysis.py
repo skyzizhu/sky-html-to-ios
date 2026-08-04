@@ -45,6 +45,13 @@ class ResponsiveLayoutAnalysisTests(unittest.TestCase):
         self.assertEqual(classification["kind"], "responsive-document")
         self.assertEqual(classification["conversionStatus"], "automatic")
         self.assertFalse(classification["hasMaterialHorizontalOverflow"])
+        self.assertEqual([sample["targetWidthPt"] for sample in result["samples"]], [320, 375, 393, 430])
+        self.assertTrue(all(sample["nodes"] for sample in result["samples"]))
+        grid_samples = [
+            next(node for node in sample["nodes"] if node["selector"].endswith("div.grid"))
+            for sample in result["samples"]
+        ]
+        self.assertTrue(all(sample["rect"]["width"] > 0 for sample in grid_samples))
 
     def test_desktop_min_width_is_blocked_instead_of_scaled_to_phone(self) -> None:
         result = self.analyze("""

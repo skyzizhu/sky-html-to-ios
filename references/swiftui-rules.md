@@ -99,3 +99,5 @@ content
 ```
 
 必要时为自定义点击容器补充 `.contentShape`，但点击区域应与 HTML 命中区域一致。
+- 响应式 Grid 优先使用来源轨道或多宽度实测推导的 `.adaptive(minimum:)`；固定列数组只用于所有采样宽度列数稳定的来源。
+- `LazyVGrid`/`LazyHStack` 中每个 item 优先消费自己的 fixed/estimated/aspect-ratio/span 契约，section 级尺寸只作 fallback；行选择和滑动操作使用原生 `Button`/`.swipeActions`。

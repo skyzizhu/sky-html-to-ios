@@ -28,6 +28,7 @@ def main() -> int:
     parser.add_argument("--ir", action="append", required=True, type=Path)
     parser.add_argument("--architecture-plan", required=True, type=Path)
     parser.add_argument("--layout-graph", required=True, type=Path)
+    parser.add_argument("--responsive-analysis", action="append", type=Path)
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args()
     plan = load_json(args.plan)
@@ -48,6 +49,10 @@ def main() -> int:
     actual_inputs = {str(item.get("path") or ""): str(item.get("sha256") or "") for item in plan.get("inputs") or []}
     if expected_inputs != actual_inputs:
         add("STALE_LAYOUT_UI_IR", None, "Native layout plan does not match the supplied UI IR files.")
+    expected_responsive = {str(path.resolve()): sha256(path) for path in (args.responsive_analysis or [])}
+    actual_responsive = {str(item.get("path") or ""): str(item.get("sha256") or "") for item in plan.get("responsiveInputs") or []}
+    if expected_responsive != actual_responsive:
+        add("STALE_RESPONSIVE_LAYOUT_ANALYSIS", None, "Native layout plan does not match the supplied responsive analyses.")
 
     ir_screens: dict[str, dict[str, Any]] = {}
     ir_states_by_screen: dict[str, dict[str, dict[str, Any]]] = {}
@@ -170,6 +175,44 @@ def main() -> int:
                 add("INVALID_COLLECTION_WIDTH_MODE", screen_id, "Collection item width mode is not executable.", container_id)
             if sizing.get("heightMode") not in {"fixed", "estimated", "aspect-ratio"}:
                 add("INVALID_COLLECTION_HEIGHT_MODE", screen_id, "Collection item height mode is not executable.", container_id)
+            item_sizing = collection.get("itemSizingByNodeId") or {}
+            if set(item_sizing) != set(collection.get("itemNodeIds") or []):
+                add("COLLECTION_ITEM_SIZING_SET_MISMATCH", screen_id, "Every reusable item requires an item-level sizing contract.", container_id)
+            for item_id, item_contract in item_sizing.items():
+                if item_contract.get("widthMode") not in {"full-width", "fixed", "fractional", "estimated"}:
+                    add("INVALID_ITEM_WIDTH_MODE", screen_id, "Item-level width mode is not executable.", item_id)
+                if item_contract.get("heightMode") not in {"fixed", "estimated", "aspect-ratio"}:
+                    add("INVALID_ITEM_HEIGHT_MODE", screen_id, "Item-level height mode is not executable.", item_id)
+                if int(item_contract.get("columnSpan") or 1) < 1 or int(item_contract.get("rowSpan") or 1) < 1:
+                    add("INVALID_ITEM_GRID_SPAN", screen_id, "Item-level Grid spans must be positive.", item_id)
+            breakpoints = collection.get("responsiveBreakpoints") or []
+            target_widths = [float(item.get("targetWidthPt") or 0) for item in breakpoints]
+            container_widths = [float(item.get("containerWidthPt") or 0) for item in breakpoints]
+            layouts_by_container_width: dict[float, set[tuple[int, float, float]]] = {}
+            for item in breakpoints:
+                container_width = round(float(item.get("containerWidthPt") or 0), 3)
+                layouts_by_container_width.setdefault(container_width, set()).add((
+                    int(item.get("columnCount") or 0),
+                    round(float(item.get("itemWidthPt") or 0), 3),
+                    round(float(item.get("itemHeightPt") or 0), 3),
+                ))
+            if (
+                any(width <= 0 for width in target_widths)
+                or len(target_widths) != len(set(target_widths))
+                or any(width <= 0 for width in container_widths)
+                or any(len(layouts) > 1 for layouts in layouts_by_container_width.values())
+            ):
+                add(
+                    "INVALID_COLLECTION_BREAKPOINTS",
+                    screen_id,
+                    "Responsive collection breakpoints require unique positive target widths, positive container widths, and one executable layout per container width.",
+                    container_id,
+                )
+            if any(int(item.get("columnCount") or 0) < 1 for item in breakpoints):
+                add("INVALID_BREAKPOINT_COLUMN_COUNT", screen_id, "Every responsive breakpoint requires at least one column.", container_id)
+            adaptive = collection.get("adaptiveColumns") or {}
+            if adaptive and adaptive.get("minimumItemWidthPt") is not None and float(adaptive["minimumItemWidthPt"]) <= 0:
+                add("INVALID_ADAPTIVE_ITEM_WIDTH", screen_id, "Adaptive Grid minimum item width must be positive.", container_id)
             header_id = str(collection.get("headerNodeId") or "")
             if collection.get("pinsHeader") is True:
                 header_plan = plan_nodes.get(header_id) or {}

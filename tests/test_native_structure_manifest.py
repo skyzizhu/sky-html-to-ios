@@ -125,6 +125,7 @@ class NativeStructureManifestTests(unittest.TestCase):
         root: Path,
         ui_stack: str,
         payload: dict | None = None,
+        responsive: dict | None = None,
     ) -> tuple[Path, Path, Path, Path, Path]:
         ir_path = root / "ui-ir.json"
         graph_path = root / "layout-relation-graph.json"
@@ -133,6 +134,9 @@ class NativeStructureManifestTests(unittest.TestCase):
         native_layout_path = root / "native-layout-plan.json"
         out_dir = root / "Generated" / "HTMLToIOS"
         ir_path.write_text(json.dumps(payload or make_ir(ui_stack)), encoding="utf-8")
+        responsive_path = root / "responsive-layout.json"
+        if responsive is not None:
+            responsive_path.write_text(json.dumps(responsive), encoding="utf-8")
         self.run_command([
             "python3", str(GRAPH_SCRIPT), "--ir", str(ir_path), "--out", str(graph_path),
         ])
@@ -140,16 +144,22 @@ class NativeStructureManifestTests(unittest.TestCase):
             "python3", str(ARCHITECTURE_SCRIPT), "--ir", str(ir_path),
             "--out", str(architecture_path), "--ui-stack", ui_stack,
         ])
-        self.run_command([
+        layout_command = [
             "python3", str(LAYOUT_PLAN_SCRIPT), "--ir", str(ir_path),
             "--architecture-plan", str(architecture_path),
             "--layout-graph", str(graph_path), "--out", str(native_layout_path),
-        ])
-        self.run_command([
+        ]
+        if responsive is not None:
+            layout_command.extend(["--responsive-analysis", str(responsive_path)])
+        self.run_command(layout_command)
+        validation_command = [
             "python3", str(LAYOUT_PLAN_VALIDATOR_SCRIPT), "--plan", str(native_layout_path),
             "--ir", str(ir_path), "--architecture-plan", str(architecture_path),
             "--layout-graph", str(graph_path), "--out", str(root / "native-layout-plan-validation.json"),
-        ])
+        ]
+        if responsive is not None:
+            validation_command.extend(["--responsive-analysis", str(responsive_path)])
+        self.run_command(validation_command)
         self.run_command([
             "python3", str(GENERATOR_SCRIPT), "--ir", str(ir_path),
             "--out-dir", str(out_dir), "--ui-stack", ui_stack,
@@ -320,7 +330,8 @@ class NativeStructureManifestTests(unittest.TestCase):
                 count["layout"]["position"] = "absolute"
 
                 filters = next(item for item in nodes if item["id"] == "home.filters")
-                filters["semanticType"] = "grid"
+                filters["semanticType"] = "carousel"
+                filters["layout"]["mode"] = "grid"
                 filters["layout"]["mode"] = "grid"
                 filters["layout"]["scrollAxis"] = "none"
                 filters["style"].update({
@@ -438,6 +449,88 @@ class NativeStructureManifestTests(unittest.TestCase):
                 self.assertEqual(consumption["status"], "consumed")
                 self.assertTrue(manifest["runtimeCapabilities"]["collectionSizing"]["consumed"])
                 self.assertTrue(manifest["runtimeCapabilities"]["pinnedSupplementary"]["consumed"])
+
+    def test_responsive_grid_and_heterogeneous_item_sizing_execute_in_both_stacks(self) -> None:
+        for ui_stack in ("swiftui", "uikit"):
+            with self.subTest(ui_stack=ui_stack), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                payload = make_ir(ui_stack)
+                nodes = payload["screens"][0]["nodes"]
+                filters = next(item for item in nodes if item["id"] == "home.filters")
+                filters["semanticType"] = "grid"
+                filters["layout"]["mode"] = "grid"
+                filters["layout"]["scrollAxis"] = "vertical"
+                filters["layout"]["rect"].update({"x": 16, "y": 0, "width": 361, "height": 800})
+                filters["style"].update({
+                    "display": "grid",
+                    "gridTemplateColumns": "repeat(auto-fit, minmax(144px, 1fr))",
+                    "authoredLayout": {
+                        "gridTemplateColumns": {"value": "repeat(auto-fit, minmax(144px, 1fr))"},
+                    },
+                })
+                nodes.append(node("home.filter.4", "home.filters", "button", 200, 158, 176, 52))
+                nodes[:] = [
+                    item for item in nodes
+                    if item["id"] in {"home.root", "home.filters"} or item["id"].startswith("home.filter.")
+                ]
+                for index, item in enumerate([node for node in nodes if node["id"].startswith("home.filter.")]):
+                    item["parentId"] = "home.filters"
+                    item["layout"]["scrollAxis"] = "none"
+                    item["layout"]["rect"].update({
+                        "x": 16 + (index % 2) * 184,
+                        "y": 90 + (index // 2) * 68,
+                        "width": 176,
+                        "height": 52 if index != 1 else 76,
+                    })
+                    if index == 1:
+                        item["style"]["height"] = "76px"
+                        item["style"]["authoredLayout"] = {"height": {"value": "76px"}}
+
+                samples = []
+                for width, columns in ((320, 1), (375, 2), (393, 2), (430, 2)):
+                    # An inner native Grid can keep the same executable geometry
+                    # across distinct viewport samples.
+                    container_width = 361 if width in {393, 430} else width - 32
+                    gap = 8
+                    item_width = (container_width - gap * (columns - 1)) / columns
+                    sample_nodes = [{
+                        "nodeId": "home.filters", "selector": "#home.filters",
+                        "rect": {"x": 16, "y": 90, "width": container_width, "height": 180},
+                        "parentRect": {"x": 0, "y": 0, "width": width, "height": 852},
+                    }]
+                    for index in range(4):
+                        sample_nodes.append({
+                            "nodeId": f"home.filter.{index + 1}", "selector": f"#home.filter.{index + 1}",
+                            "rect": {
+                                "x": 16 + (index % columns) * (item_width + gap),
+                                "y": 90 + (index // columns) * 84,
+                                "width": item_width,
+                                "height": 76 if index == 1 else 52,
+                            },
+                            "parentRect": {"x": 16, "y": 90, "width": container_width, "height": 180},
+                            "lineCount": 2 if index == 1 else 1,
+                        })
+                    samples.append({"targetWidthPt": width, "nodes": sample_nodes})
+                responsive = {
+                    "schemaVersion": "responsive-layout-analysis-1.0",
+                    "samples": samples,
+                    "sourceClassification": {"kind": "responsive-mobile-root", "conversionStatus": "automatic"},
+                }
+                outputs = self.build_chain(root, ui_stack, payload, responsive)
+                _, report = self.validate_chain(root, *outputs)
+                self.assertEqual(report["status"], "passed")
+                layout = json.loads(outputs[2].read_text(encoding="utf-8"))["screens"][0]
+                contract = next(item for item in layout["collectionLayouts"] if item["containerNodeId"] == "home.filters")
+                self.assertEqual(contract["adaptiveColumns"]["mode"], "auto-fit")
+                self.assertEqual(contract["adaptiveColumns"]["minimumItemWidthPt"], 144)
+                self.assertEqual([item["columnCount"] for item in contract["responsiveBreakpoints"]], [1, 2, 2, 2])
+                self.assertEqual(contract["itemSizingByNodeId"]["home.filter.2"]["heightMode"], "fixed")
+                manifest = json.loads(outputs[3].read_text(encoding="utf-8"))
+                self.assertTrue(manifest["runtimeCapabilities"]["responsiveCollectionSizing"]["consumed"])
+                consumption = manifest["screens"][0]["layoutPlanConsumption"]["collections"][0]
+                self.assertTrue(consumption["checks"]["responsiveColumns"])
+                self.assertTrue(consumption["checks"]["breakpoints"])
+                self.assertTrue(consumption["checks"]["itemSizingByNode"])
 
 
 if __name__ == "__main__":

@@ -35,6 +35,13 @@ SwiftUI 使用这些证据选择 Stack/Grid/Overlay、spacing、frame 和 layout
 
 复用容器另外生成 `collectionLayouts`：
 
+- `adaptiveColumns`：保存 `auto-fit`/`auto-fill`/实测响应式列变化及最小 item 宽度；
+- `responsiveBreakpoints`：保存每个目标宽度下的实际容器宽度、列数、item 宽高和最大文字行数；
+- `itemSizingByNodeId`：逐 item 保存宽高模式、估算高度、宽高比、Grid span 与各宽度文字行数；
+- section 级 `itemSizing` 只作为 fallback，不能覆盖已存在的 item 级证据。
+
+`responsive-layout.json` 是该契约的结构化输入，不是截图附件。总控必须把每个 Screen 对应的响应式分析传给 `build_native_layout_plan.py` 和验证器，并保存 SHA-256 来源。`repeat(auto-fit|auto-fill, minmax(...))` 降级为 adaptive Grid；媒体查询导致的列数变化降级为实测断点。SwiftUI 使用 adaptive `GridItem` 与 item modifier，UIKit Flow/Compositional Layout 使用实际 `bounds`/`effectiveContentSize` 选择断点。禁止只按 393pt 中位数生成。
+
 - `layoutEngine`：table、flow 或 compositional；
 - `itemNodeIds`：排除 supplementary 后的视觉 item 顺序；
 - `headerNodeId`/`footerNodeId` 与独立 pinning；

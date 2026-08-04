@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.41.0"
+GENERATOR_VERSION = "1.42.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -1567,6 +1567,34 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
                     ),
                     "estimatedHeightPt": number((context.collection_layouts[node_id].get("itemSizing") or {}).get("estimatedHeightPt"), 72) * context.design_scale,
                 },
+                "adaptiveColumns": (
+                    {
+                        **context.collection_layouts[node_id]["adaptiveColumns"],
+                        "minimumItemWidthPt": (
+                            number(context.collection_layouts[node_id]["adaptiveColumns"].get("minimumItemWidthPt")) * context.design_scale
+                            if context.collection_layouts[node_id]["adaptiveColumns"].get("minimumItemWidthPt") is not None else None
+                        ),
+                    }
+                    if context.collection_layouts[node_id].get("adaptiveColumns") else None
+                ),
+                "responsiveBreakpoints": [
+                    {
+                        **item,
+                        "containerWidthPt": number(item.get("containerWidthPt")) * context.design_scale,
+                        "itemWidthPt": number(item.get("itemWidthPt")) * context.design_scale if item.get("itemWidthPt") is not None else None,
+                        "itemHeightPt": number(item.get("itemHeightPt")) * context.design_scale if item.get("itemHeightPt") is not None else None,
+                    }
+                    for item in context.collection_layouts[node_id].get("responsiveBreakpoints") or []
+                ],
+                "itemSizingByNodeId": {
+                    item_id: {
+                        **sizing,
+                        "widthPt": number(sizing.get("widthPt")) * context.design_scale if sizing.get("widthPt") is not None else None,
+                        "heightPt": number(sizing.get("heightPt")) * context.design_scale if sizing.get("heightPt") is not None else None,
+                        "estimatedHeightPt": number(sizing.get("estimatedHeightPt"), 72) * context.design_scale,
+                    }
+                    for item_id, sizing in (context.collection_layouts[node_id].get("itemSizingByNodeId") or {}).items()
+                },
             }
             if node_id in context.collection_layouts else None
         ),
@@ -2615,6 +2643,30 @@ struct HTMLToIOSCollectionItemSizingSpec: Codable {{
     let estimatedHeightPt: Double
     let aspectRatio: Double?
     let preservesIntrinsicWidth: Bool
+    let columnSpan: Int?
+    let rowSpan: Int?
+    let lineCountsByWidth: [HTMLToIOSCollectionLineCountSpec]?
+}}
+
+struct HTMLToIOSCollectionLineCountSpec: Codable {{
+    let targetWidthPt: Double
+    let count: Int
+}}
+
+struct HTMLToIOSCollectionAdaptiveColumnsSpec: Codable {{
+    let mode: String
+    let minimumItemWidthPt: Double?
+    let maximumFraction: Double?
+    let raw: String?
+}}
+
+struct HTMLToIOSCollectionBreakpointSpec: Codable {{
+    let containerWidthPt: Double
+    let targetWidthPt: Double
+    let columnCount: Int
+    let itemWidthPt: Double?
+    let itemHeightPt: Double?
+    let maximumTextLineCount: Int
 }}
 
 struct HTMLToIOSCollectionLayoutSpec: Codable {{
@@ -2631,12 +2683,15 @@ struct HTMLToIOSCollectionLayoutSpec: Codable {{
     let headerHeightPt: Double?
     let footerHeightPt: Double?
     let columnCount: Int
+    let adaptiveColumns: HTMLToIOSCollectionAdaptiveColumnsSpec?
+    let responsiveBreakpoints: [HTMLToIOSCollectionBreakpointSpec]?
     let contentInsetsPt: [Double]
     let lineSpacingPt: Double
     let interItemSpacingPt: Double
     let mainAxisSpacingPt: Double
     let crossAxisSpacingPt: Double
     let itemSizing: HTMLToIOSCollectionItemSizingSpec
+    let itemSizingByNodeId: [String: HTMLToIOSCollectionItemSizingSpec]?
     let directionalLockEnabled: Bool
     let allowsSameAxisNestedScroll: Bool
 }}
@@ -4624,6 +4679,9 @@ struct HTMLToIOSNativeNodeView: View {
         let count = max(spec.collectionLayout?.columnCount ?? spec.style.gridColumnCount ?? 1, 1)
         let spacing = spec.collectionLayout?.crossAxisSpacingPt ?? spec.style.columnSpacing ?? spec.style.spacing ?? 0
         let sizing = spec.collectionLayout?.itemSizing
+        if let minimum = spec.collectionLayout?.adaptiveColumns?.minimumItemWidthPt, minimum > 0 {
+            return [GridItem(.adaptive(minimum: minimum), spacing: spacing)]
+        }
         return (0..<count).map { _ in
             if sizing?.widthMode == "fixed", let width = sizing?.widthPt {
                 return GridItem(.fixed(width), spacing: spacing)
@@ -4642,7 +4700,9 @@ struct HTMLToIOSNativeNodeView: View {
                     typedRegistry: typedRegistry,
                     bypassTypedNodeID: bypassTypedNodeID
                 )
-                .modifier(HTMLToIOSCollectionItemModifier(sizing: spec.collectionLayout?.itemSizing))
+                .modifier(HTMLToIOSCollectionItemModifier(
+                    sizing: spec.collectionLayout?.itemSizingByNodeId?[child.id] ?? spec.collectionLayout?.itemSizing
+                ))
             }
         } header: {
             if let header = nativeCollectionHeader {
@@ -5565,11 +5625,13 @@ private final class HTMLToIOSGeneratedTableView: UITableView, UITableViewDataSou
     private let contract: HTMLToIOSCollectionLayoutSpec?
     private let render: (HTMLToIOSNodeSpec) -> UIView
     private let cellType: (HTMLToIOSNodeSpec) -> HTMLToIOSGeneratedTableCell.Type
+    private let actionHandler: (HTMLToIOSActionSpec?) -> Void
 
     init(
         spec: HTMLToIOSNodeSpec,
         render: @escaping (HTMLToIOSNodeSpec) -> UIView,
-        cellType: @escaping (HTMLToIOSNodeSpec) -> HTMLToIOSGeneratedTableCell.Type
+        cellType: @escaping (HTMLToIOSNodeSpec) -> HTMLToIOSGeneratedTableCell.Type,
+        actionHandler: @escaping (HTMLToIOSActionSpec?) -> Void
     ) {
         let indexed = Dictionary(uniqueKeysWithValues: spec.children.map { ($0.id, $0) })
         self.contract = spec.collectionLayout
@@ -5578,7 +5640,8 @@ private final class HTMLToIOSGeneratedTableView: UITableView, UITableViewDataSou
         self.footerSpec = spec.collectionLayout?.footerNodeId.flatMap { indexed[$0] }
         self.render = render
         self.cellType = cellType
-        super.init(frame: .zero, style: spec.collectionLayout?.pinsHeader == true ? .plain : .grouped)
+        self.actionHandler = actionHandler
+        super.init(frame: .zero, style: .plain)
         dataSource = self
         delegate = self
         separatorStyle = .none
@@ -5598,6 +5661,16 @@ private final class HTMLToIOSGeneratedTableView: UITableView, UITableViewDataSou
             contentInset = UIEdgeInsets(top: insets[0], left: insets[3], bottom: insets[2], right: insets[1])
         }
         backgroundColor = .clear
+        if spec.collectionLayout?.pinsHeader != true, let headerSpec {
+            let header = render(headerSpec)
+            header.frame = CGRect(x: 0, y: 0, width: 1, height: spec.collectionLayout?.headerHeightPt ?? 44)
+            tableHeaderView = header
+        }
+        if spec.collectionLayout?.pinsFooter != true, let footerSpec {
+            let footer = render(footerSpec)
+            footer.frame = CGRect(x: 0, y: 0, width: 1, height: spec.collectionLayout?.footerHeightPt ?? 44)
+            tableFooterView = footer
+        }
         for spec in itemSpecs {
             let type = cellType(spec)
             register(type, forCellReuseIdentifier: String(reflecting: type))
@@ -5606,6 +5679,59 @@ private final class HTMLToIOSGeneratedTableView: UITableView, UITableViewDataSou
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { itemSpecs.count }
+
+    func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
+        let sizing = contract?.itemSizingByNodeId?[itemSpecs[indexPath.row].id] ?? contract?.itemSizing
+        if sizing?.heightMode == "fixed", let height = sizing?.heightPt {
+            return height + CGFloat(contract?.mainAxisSpacingPt ?? 0)
+        }
+        return UITableView.automaticDimension
+    }
+
+    func tableView(_ tableView: UITableView, estimatedHeightForRowAt indexPath: IndexPath) -> CGFloat {
+        let sizing = contract?.itemSizingByNodeId?[itemSpecs[indexPath.row].id] ?? contract?.itemSizing
+        return CGFloat(sizing?.estimatedHeightPt ?? 72) + CGFloat(contract?.mainAxisSpacingPt ?? 0)
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        actionHandler(itemSpecs[indexPath.row].action)
+    }
+
+    func tableView(
+        _ tableView: UITableView,
+        trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath
+    ) -> UISwipeActionsConfiguration? {
+        swipeConfiguration(for: itemSpecs[indexPath.row], edge: "trailing")
+    }
+
+    func tableView(
+        _ tableView: UITableView,
+        leadingSwipeActionsConfigurationForRowAt indexPath: IndexPath
+    ) -> UISwipeActionsConfiguration? {
+        swipeConfiguration(for: itemSpecs[indexPath.row], edge: "leading")
+    }
+
+    private func swipeConfiguration(for item: HTMLToIOSNodeSpec, edge: String) -> UISwipeActionsConfiguration? {
+        let source = item.contextualActions.filter { $0.edge == edge }
+        guard !source.isEmpty else { return nil }
+        let actions = source.map { item in
+            UIContextualAction(
+                style: item.role == "destructive" ? .destructive : .normal,
+                title: item.title
+            ) { [actionHandler] _, _, completion in
+                actionHandler(item.action)
+                completion(true)
+            }
+        }
+        for (action, item) in zip(actions, source) {
+            action.backgroundColor = UIColor(htmlToIOS: item.tint)
+            if let systemImage = item.systemImage { action.image = UIImage(systemName: systemImage) }
+        }
+        let configuration = UISwipeActionsConfiguration(actions: actions)
+        configuration.performsFirstActionWithFullSwipe = source.first?.allowsFullSwipe ?? false
+        return configuration
+    }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let type = cellType(itemSpecs[indexPath.row])
@@ -5618,24 +5744,24 @@ private final class HTMLToIOSGeneratedTableView: UITableView, UITableViewDataSou
     }
 
     func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
-        headerSpec.map(render)
+        contract?.pinsHeader == true ? headerSpec.map(render) : nil
     }
 
     func tableView(_ tableView: UITableView, heightForHeaderInSection section: Int) -> CGFloat {
-        guard headerSpec != nil else { return .leastNormalMagnitude }
+        guard contract?.pinsHeader == true, headerSpec != nil else { return .leastNormalMagnitude }
         return contract?.headerHeightPt.map { CGFloat($0) } ?? UITableView.automaticDimension
     }
 
     func tableView(_ tableView: UITableView, estimatedHeightForHeaderInSection section: Int) -> CGFloat {
-        contract?.headerHeightPt.map { CGFloat($0) } ?? 44
+        contract?.pinsHeader == true ? (contract?.headerHeightPt.map { CGFloat($0) } ?? 44) : .leastNormalMagnitude
     }
 
     func tableView(_ tableView: UITableView, viewForFooterInSection section: Int) -> UIView? {
-        footerSpec.map(render)
+        contract?.pinsFooter == true ? footerSpec.map(render) : nil
     }
 
     func tableView(_ tableView: UITableView, heightForFooterInSection section: Int) -> CGFloat {
-        guard footerSpec != nil else { return .leastNormalMagnitude }
+        guard contract?.pinsFooter == true, footerSpec != nil else { return .leastNormalMagnitude }
         return contract?.footerHeightPt.map { CGFloat($0) } ?? UITableView.automaticDimension
     }
 }
@@ -5758,12 +5884,13 @@ private final class HTMLToIOSGeneratedCollectionView: UICollectionView, UICollec
         layout collectionViewLayout: UICollectionViewLayout,
         sizeForItemAt indexPath: IndexPath
     ) -> CGSize {
-        guard let sizing = contract?.itemSizing else {
+        guard let defaultSizing = contract?.itemSizing else {
             return CGSize(width: max(bounds.width, 44), height: 72)
         }
+        let sizing = contract?.itemSizingByNodeId?[itemSpecs[indexPath.item].id] ?? defaultSizing
         let insets = contract?.contentInsetsPt ?? [0, 0, 0, 0]
         let horizontalInsets = CGFloat((insets.indices.contains(1) ? insets[1] : 0) + (insets.indices.contains(3) ? insets[3] : 0))
-        let columns = max(contract?.columnCount ?? 1, 1)
+        let columns = resolvedColumnCount(for: bounds.width)
         let availableWidth = max(bounds.width - horizontalInsets - CGFloat(columns - 1) * CGFloat(contract?.crossAxisSpacingPt ?? 0), 0)
         let width: CGFloat
         if sizing.widthMode == "fixed", let value = sizing.widthPt {
@@ -5771,7 +5898,9 @@ private final class HTMLToIOSGeneratedCollectionView: UICollectionView, UICollec
         } else if contract?.scrollAxis == "horizontal" {
             width = max(sizing.widthPt ?? itemSpecs[indexPath.item].style.preferredWidth ?? 160, 44)
         } else {
-            width = availableWidth / CGFloat(columns)
+            let span = min(max(sizing.columnSpan ?? 1, 1), columns)
+            width = (availableWidth / CGFloat(columns)) * CGFloat(span)
+                + CGFloat(span - 1) * CGFloat(contract?.crossAxisSpacingPt ?? 0)
         }
         let height: CGFloat
         if sizing.heightMode == "fixed", let value = sizing.heightPt {
@@ -5782,6 +5911,20 @@ private final class HTMLToIOSGeneratedCollectionView: UICollectionView, UICollec
             height = max(sizing.estimatedHeightPt, 1)
         }
         return CGSize(width: width, height: height)
+    }
+
+    private func resolvedColumnCount(for containerWidth: CGFloat) -> Int {
+        let samples = contract?.responsiveBreakpoints ?? []
+        if let nearest = samples.min(by: {
+            abs(CGFloat($0.containerWidthPt) - containerWidth) < abs(CGFloat($1.containerWidthPt) - containerWidth)
+        }) {
+            return max(nearest.columnCount, 1)
+        }
+        if let minimum = contract?.adaptiveColumns?.minimumItemWidthPt, minimum > 0 {
+            let spacing = CGFloat(contract?.crossAxisSpacingPt ?? 0)
+            return max(Int((containerWidth + spacing) / (CGFloat(minimum) + spacing)), 1)
+        }
+        return max(contract?.columnCount ?? 1, 1)
     }
 
     func collectionView(
@@ -5833,13 +5976,22 @@ private final class HTMLToIOSGeneratedCompositionalCollectionView: UICollectionV
             let indexed = Dictionary(uniqueKeysWithValues: section.children.map { ($0.id, $0) })
             return contract.itemNodeIds.compactMap { indexed[$0] }
         }
-        let layout = UICollectionViewCompositionalLayout { sectionIndex, _ in
+        let layout = UICollectionViewCompositionalLayout { sectionIndex, environment in
             guard sections.indices.contains(sectionIndex) else { return nil }
             let sectionSpec = sections[sectionIndex]
             let contract = sectionSpec.collectionLayout
             let sizing = contract?.itemSizing
             let horizontal = contract?.scrollAxis == "horizontal" || sectionSpec.semantic == "carousel" || sectionSpec.style.scrollAxis == "horizontal"
-            let columns = horizontal ? 1 : max(contract?.columnCount ?? sectionSpec.style.gridColumnCount ?? 1, 1)
+            let availableWidth = environment.container.effectiveContentSize.width
+            let responsiveColumns = contract?.responsiveBreakpoints?.min(by: {
+                abs(CGFloat($0.containerWidthPt) - availableWidth) < abs(CGFloat($1.containerWidthPt) - availableWidth)
+            })?.columnCount
+            let adaptiveColumns = contract?.adaptiveColumns?.minimumItemWidthPt.flatMap { minimum -> Int? in
+                guard minimum > 0 else { return nil }
+                let spacing = CGFloat(contract?.crossAxisSpacingPt ?? 0)
+                return max(Int((availableWidth + spacing) / (CGFloat(minimum) + spacing)), 1)
+            }
+            let columns = horizontal ? 1 : max(responsiveColumns ?? adaptiveColumns ?? contract?.columnCount ?? sectionSpec.style.gridColumnCount ?? 1, 1)
             let estimatedWidth = CGFloat(max(sizing?.widthPt ?? sectionSpec.style.preferredWidth ?? 160, 44))
             let estimatedHeight = CGFloat(max(sizing?.estimatedHeightPt ?? sectionSpec.style.preferredHeight ?? 72, 1))
             let mainSpacing = CGFloat(contract?.mainAxisSpacingPt ?? sectionSpec.style.spacing ?? 0)
@@ -5999,10 +6151,14 @@ final class HTMLToIOSNodeRenderer {
         typedCollectionCellTypes[nodeID] = type
     }
 
-    func makeView(_ spec: HTMLToIOSNodeSpec, bypassingTypedNodeID: String? = nil) -> UIView {
+    func makeView(
+        _ spec: HTMLToIOSNodeSpec,
+        bypassingTypedNodeID: String? = nil,
+        suppressContextualActions: Bool = false
+    ) -> UIView {
         if spec.id != bypassingTypedNodeID, let builder = typedViewBuilders[spec.id] {
             let typedView = builder(spec, self)
-            installContextualActions(spec.contextualActions, on: typedView)
+            if !suppressContextualActions { installContextualActions(spec.contextualActions, on: typedView) }
             return typedView
         }
         let view: UIView
@@ -6016,8 +6172,9 @@ final class HTMLToIOSNodeRenderer {
         } else if spec.nativeContainerKind == "table-view" {
             view = HTMLToIOSGeneratedTableView(
                 spec: spec,
-                render: { [weak self] item in self?.makeView(item) ?? UIView() },
-                cellType: { [weak self] item in self?.typedTableCellTypes[item.id] ?? HTMLToIOSGeneratedTableCell.self }
+                render: { [weak self] item in self?.makeView(item, suppressContextualActions: true) ?? UIView() },
+                cellType: { [weak self] item in self?.typedTableCellTypes[item.id] ?? HTMLToIOSGeneratedTableCell.self },
+                actionHandler: actionHandler
             )
         } else if spec.nativeContainerKind == "collection-view" {
             view = HTMLToIOSGeneratedCollectionView(
@@ -6286,7 +6443,7 @@ final class HTMLToIOSNodeRenderer {
             || (spec.visibleWhenStateID != nil && !state.flags.contains(spec.visibleWhenStateID!))
         renderedView.accessibilityIdentifier = spec.id
         renderedView.accessibilityLabel = spec.accessibilityLabel ?? (spec.text.isEmpty ? nil : spec.text)
-        installContextualActions(spec.contextualActions, on: renderedView)
+        if !suppressContextualActions { installContextualActions(spec.contextualActions, on: renderedView) }
         return renderedView
     }
 
@@ -8604,8 +8761,22 @@ def relation_native_consumption(
         payload_axis = str(((payload_nodes.get(node_id) or {}).get("style") or {}).get("scrollAxis") or "none")
         content = payload_screen.get("contentContainer") or {}
         content_match = str(content.get("nodeId") or "") == node_id and str(content.get("scrollAxis") or "none") == axis
-        consumed = payload_axis == axis or content_match
-        strategy = "native-scroll-owner"
+        replacement_id = str(content.get("nodeId") or "")
+        current_id = replacement_id
+        replacement_descends_from_owner = False
+        while current_id:
+            if current_id == node_id:
+                replacement_descends_from_owner = True
+                break
+            current_id = str((ir_nodes.get(current_id) or {}).get("parentId") or "")
+        native_replacement = bool(
+            replacement_id and replacement_id != node_id
+            and replacement_descends_from_owner
+            and str(content.get("scrollAxis") or "none") == axis
+            and str(content.get("kind") or "") in {"table-view", "collection-view", "compositional-collection"}
+        )
+        consumed = payload_axis == axis or content_match or native_replacement
+        strategy = "native-scroll-owner-replacement" if native_replacement else "native-scroll-owner"
         check("scroll-axis-contract", consumed, {"sourceAxis": axis, "payloadAxis": payload_axis, "contentContainer": content})
     elif kind == "alignment":
         container_id = str(relation.get("containerNodeId") or "")
@@ -8686,6 +8857,11 @@ def build_native_structure_manifest(
     )
     requires_state_reflow = any(screen.get("stateLayouts") for screen in all_layout_screens)
     requires_collection_sizing = any(screen.get("collectionLayouts") for screen in all_layout_screens)
+    requires_responsive_collection = any(
+        item.get("adaptiveColumns") or item.get("responsiveBreakpoints") or item.get("itemSizingByNodeId")
+        for screen in all_layout_screens
+        for item in screen.get("collectionLayouts") or []
+    )
     requires_pinned_supplementary = any(
         item.get("pinsHeader") is True or item.get("pinsFooter") is True
         for screen in all_layout_screens
@@ -8718,6 +8894,13 @@ def build_native_structure_manifest(
             "consumed": not requires_collection_sizing or (
                 "HTMLToIOSCollectionItemModifier" in runtime_text
                 if ui_stack == "swiftui" else "sizeForItemAt indexPath" in runtime_text
+            ),
+        },
+        "responsiveCollectionSizing": {
+            "required": requires_responsive_collection,
+            "consumed": not requires_responsive_collection or (
+                "adaptiveColumns?.minimumItemWidthPt" in runtime_text and "itemSizingByNodeId?[child.id]" in runtime_text
+                if ui_stack == "swiftui" else "resolvedColumnCount(for:" in runtime_text and "itemSizingByNodeId?[itemSpecs" in runtime_text
             ),
         },
         "pinnedSupplementary": {
@@ -8857,6 +9040,19 @@ def build_native_structure_manifest(
                     and generated.get("pinsFooter") == collection_plan.get("pinsFooter")
                 ),
                 "columns": generated.get("columnCount") == collection_plan.get("columnCount"),
+                "responsiveColumns": (
+                    not collection_plan.get("adaptiveColumns") and not generated.get("adaptiveColumns")
+                ) or (
+                    (generated.get("adaptiveColumns") or {}).get("mode") == (collection_plan.get("adaptiveColumns") or {}).get("mode")
+                    and abs(number((generated.get("adaptiveColumns") or {}).get("minimumItemWidthPt")) - number((collection_plan.get("adaptiveColumns") or {}).get("minimumItemWidthPt")) * design_scale) <= 0.01
+                ),
+                "breakpoints": [
+                    (round(number(item.get("containerWidthPt")), 3), int(item.get("columnCount") or 0))
+                    for item in generated.get("responsiveBreakpoints") or []
+                ] == [
+                    (round(number(item.get("containerWidthPt")) * design_scale, 3), int(item.get("columnCount") or 0))
+                    for item in collection_plan.get("responsiveBreakpoints") or []
+                ],
                 "insets": all(
                     abs(number(actual) - expected) <= 0.01
                     for actual, expected in zip(generated.get("contentInsetsPt") or [], expected_insets)
@@ -8870,6 +9066,19 @@ def build_native_structure_manifest(
                     and generated_sizing.get("heightMode") == planned_sizing.get("heightMode")
                     and generated_sizing.get("preservesIntrinsicWidth") == planned_sizing.get("preservesIntrinsicWidth")
                 ),
+                "itemSizingByNode": {
+                    key: (
+                        value.get("widthMode"), value.get("heightMode"),
+                        int(value.get("columnSpan") or 1), int(value.get("rowSpan") or 1),
+                    )
+                    for key, value in (generated.get("itemSizingByNodeId") or {}).items()
+                } == {
+                    key: (
+                        value.get("widthMode"), value.get("heightMode"),
+                        int(value.get("columnSpan") or 1), int(value.get("rowSpan") or 1),
+                    )
+                    for key, value in (collection_plan.get("itemSizingByNodeId") or {}).items()
+                },
                 "scrollIsolation": (
                     generated.get("directionalLockEnabled") is True
                     and generated.get("allowsSameAxisNestedScroll") is False

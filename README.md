@@ -201,6 +201,8 @@ Support levels:
 | Long/grouped list | `List`, sections, lazy stacks | `UITableView`/`UICollectionView` | Mapped |
 | Multi-column table | Grid/custom layout | Compositional layout | Mapped |
 
+Responsive collection lowering reads structured browser measurements at 320, 375, 393, and 430pt. It preserves `repeat()`, `minmax()`, `auto-fit`, `auto-fill`, fractional and mixed Grid tracks, then emits native adaptive columns, measured breakpoints, per-item sizing/span contracts, and text line-count evidence. SwiftUI and UIKit resolve those contracts from the actual container width instead of freezing the 393pt layout. UIKit tables use explicit plain-style geometry and native swipe/selection delegates when the prototype exposes those interactions.
+
 Scroll-axis ownership is explicit: a nested horizontal carousel must not make the root vertical page scroll horizontally.
 
 ### Text, images, and media

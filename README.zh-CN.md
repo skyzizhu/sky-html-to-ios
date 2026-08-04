@@ -212,6 +212,8 @@ UI IR 保存：
 | 分组列表 | Section/Lazy stack | table/collection sections | 映射/组合 |
 | 多列数据表 | Grid/自定义布局 | compositional collection | 映射/组合 |
 
+响应式集合降级会读取 320、375、393、430pt 下的结构化浏览器测量，保留 `repeat()`、`minmax()`、`auto-fit`、`auto-fill`、`fr` 与混合 Grid 轨道，并生成原生 adaptive columns、实测断点、逐 item 尺寸/span 契约和文字行数证据。SwiftUI/UIKit 根据实际容器宽度解析这些契约，不再把 393pt 的列数写死。UIKit Table 使用显式 plain-style 几何；当原型存在行选择或左右滑操作时，使用系统 delegate 与原生 swipe actions。
+
 ### 文本与图片
 
 | 语义 | SwiftUI | UIKit | 状态 |

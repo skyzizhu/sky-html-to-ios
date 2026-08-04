@@ -17,6 +17,7 @@ CONTROL_SEMANTICS = {
     "radio", "segmented-control", "select", "multi-select", "slider", "stepper",
     "color-picker", "disclosure-trigger", "tab-item", "menu-item",
 }
+NON_LAYOUT_CONTAINER_SEMANTICS = {"icon", "image", "decoration", "canvas-artwork"}
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -108,6 +109,10 @@ def validate_screen(
     }
     for parent_id, child_ids in children.items():
         if not parent_id or not child_ids:
+            continue
+        if str((nodes.get(parent_id) or {}).get("semanticType") or "") in NON_LAYOUT_CONTAINER_SEMANTICS:
+            # Vector/image internals remain traceable through containment but lower as one
+            # native asset/layer, so their path children do not form a native layout container.
             continue
         relation = containers.get(parent_id)
         if not relation:

@@ -161,11 +161,20 @@ def grid_track(value: str, axis: str) -> dict[str, Any]:
 def grid_tracks(value: Any, axis: str) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for token in split_css_tokens(value):
-        repeated = re.fullmatch(r"repeat\((\d+),\s*(.+)\)", token, re.IGNORECASE)
+        repeated = re.fullmatch(r"repeat\((\d+|auto-fit|auto-fill),\s*(.+)\)", token, re.IGNORECASE)
         if repeated:
-            count = min(max(int(repeated.group(1)), 0), 64)
             repeated_tracks = grid_tracks(repeated.group(2), axis)
-            result.extend(repeated_tracks * count)
+            repeat_value = repeated.group(1).lower()
+            if repeat_value.isdigit():
+                count = min(max(int(repeat_value), 0), 64)
+                result.extend(repeated_tracks * count)
+            else:
+                result.append({
+                    "raw": token.strip().lower(),
+                    "kind": "repeat",
+                    "repeatMode": repeat_value,
+                    "tracks": repeated_tracks,
+                })
         else:
             result.append(grid_track(token, axis))
     return result
@@ -230,6 +239,60 @@ def inferred_column_count(item_nodes: list[dict[str, Any]], tolerance: float = 2
         if not any(abs(x - existing) <= tolerance for existing in columns):
             columns.append(x)
     return max(len(columns), 1)
+
+
+def responsive_node_index(analysis: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    indexed: dict[str, list[dict[str, Any]]] = {}
+    for sample in analysis.get("samples") or []:
+        width = number(sample.get("targetWidthPt"))
+        for node in sample.get("nodes") or []:
+            selector = str(node.get("selector") or "")
+            selector_parts = [part.strip() for part in selector.split(" > ") if part.strip()]
+            suffixes = {
+                f"selector-suffix:{' > '.join(selector_parts[-length:])}"
+                for length in range(1, min(len(selector_parts), 6) + 1)
+            }
+            for key in ({str(node.get("nodeId") or ""), selector} | suffixes) - {""}:
+                indexed.setdefault(key, []).append({"widthPt": width, **node})
+    return indexed
+
+
+def responsive_entries(node: dict[str, Any], indexed: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    source = node.get("source") or {}
+    candidates = (
+        str(source.get("runtimeId") or ""),
+        str(source.get("selector") or ""),
+        str(source.get("domId") or ""),
+    )
+    exact = next((indexed[key] for key in candidates if key and key in indexed), None)
+    if exact is not None:
+        return exact
+    selector_parts = [part.strip() for part in str(source.get("selector") or "").split(" > ") if part.strip()]
+    for length in range(min(len(selector_parts), 6), 0, -1):
+        matches = indexed.get(f"selector-suffix:{' > '.join(selector_parts[-length:])}") or []
+        if matches:
+            # A stable nth-of-type suffix should resolve to one node per sampled width.
+            widths = [number(item.get("widthPt")) for item in matches]
+            if len(widths) == len(set(widths)):
+                return matches
+    return []
+
+
+def adaptive_track_contract(tracks: list[dict[str, Any]]) -> dict[str, Any] | None:
+    repeated = next((track for track in tracks if track.get("kind") == "repeat" and track.get("repeatMode") in {"auto-fit", "auto-fill"}), None)
+    if not repeated:
+        return None
+    track = next(iter(repeated.get("tracks") or []), {})
+    minimum = track.get("minimum") if track.get("kind") == "minmax" else track
+    maximum = track.get("maximum") if track.get("kind") == "minmax" else track
+    minimum_length = (minimum.get("length") or {}) if minimum.get("kind") == "length" else {}
+    maximum_fraction = maximum.get("fraction") if maximum.get("kind") == "fraction" else None
+    return {
+        "mode": repeated.get("repeatMode"),
+        "minimumItemWidthPt": minimum_length.get("fixedValuePt"),
+        "maximumFraction": maximum_fraction,
+        "raw": repeated.get("raw"),
+    }
 
 
 def classify_slot(node: dict[str, Any], container_text: bool) -> str:
@@ -328,9 +391,11 @@ def build_screen(
     architecture: dict[str, Any],
     graph: dict[str, Any],
     states: list[dict[str, Any]],
+    responsive: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     screen_id = str(screen.get("id") or "")
     nodes = {str(item.get("id") or ""): item for item in screen.get("nodes") or [] if item.get("id")}
+    responsive_index = responsive_node_index(responsive or {})
     children: dict[str, list[str]] = {}
     for node_id, node in nodes.items():
         children.setdefault(str(node.get("parentId") or ""), []).append(node_id)
@@ -546,10 +611,70 @@ def build_screen(
         horizontal = str(section.get("scrollAxis") or "vertical") == "horizontal"
         container_plan = container_by_id.get(source_id) or {}
         grid_tracks_plan = (container_plan.get("grid") or {}).get("columnTracks") or []
+        adaptive_track = adaptive_track_contract(grid_tracks_plan)
         column_count = (
             1 if section_kind == "list" or horizontal
-            else len(grid_tracks_plan) or inferred_column_count(item_nodes)
+            else (0 if adaptive_track else len(grid_tracks_plan)) or inferred_column_count(item_nodes)
         )
+        source_samples = responsive_entries(source, responsive_index)
+        item_sample_sets = {item_id: responsive_entries(nodes[item_id], responsive_index) for item_id in item_ids}
+        responsive_breakpoints = []
+        for sample in source_samples:
+            width_pt = number(sample.get("widthPt"))
+            sampled_items = [
+                next((entry for entry in entries if abs(number(entry.get("widthPt")) - width_pt) <= 0.1), None)
+                for entries in item_sample_sets.values()
+            ]
+            sampled_items = [item for item in sampled_items if item]
+            if not sampled_items:
+                continue
+            sampled_nodes = [{"layout": {"rect": item.get("rect") or {}}} for item in sampled_items]
+            responsive_breakpoints.append({
+                "containerWidthPt": number((sample.get("rect") or {}).get("width")),
+                "targetWidthPt": width_pt,
+                "columnCount": 1 if section_kind == "list" or horizontal else inferred_column_count(sampled_nodes),
+                "itemWidthPt": median([number((item.get("rect") or {}).get("width")) for item in sampled_items]),
+                "itemHeightPt": median([number((item.get("rect") or {}).get("height")) for item in sampled_items]),
+                "maximumTextLineCount": max([int(item.get("lineCount") or 0) for item in sampled_items] or [0]),
+            })
+        observed_column_counts = {int(item["columnCount"]) for item in responsive_breakpoints}
+        if not adaptive_track and len(observed_column_counts) > 1:
+            multi_column_widths = [
+                number(item.get("itemWidthPt"))
+                for item in responsive_breakpoints
+                if int(item.get("columnCount") or 1) > 1 and number(item.get("itemWidthPt")) > 0
+            ]
+            adaptive_track = {
+                "mode": "responsive-observed",
+                "minimumItemWidthPt": min(multi_column_widths) if multi_column_widths else None,
+                "maximumFraction": 1,
+                "raw": None,
+            }
+        item_sizing_by_node_id = {}
+        for item_id, item_node in zip(item_ids, item_nodes):
+            item_rect = rect(item_node)
+            item_style = item_node.get("style") or {}
+            authored_width = authored_value(item_style, "width")
+            authored_height = authored_value(item_style, "height")
+            item_ratio = item_rect["width"] / item_rect["height"] if item_rect["width"] > 0 and item_rect["height"] > 0 else None
+            samples_for_item = item_sample_sets.get(item_id) or []
+            sample_widths = [number((entry.get("rect") or {}).get("width")) for entry in samples_for_item]
+            sample_heights = [number((entry.get("rect") or {}).get("height")) for entry in samples_for_item]
+            item_sizing_by_node_id[item_id] = {
+                "widthMode": "fixed" if px(authored_width) is not None or (horizontal and nearly_uniform(sample_widths or [item_rect["width"]])) else "fractional",
+                "widthPt": item_rect["width"] if px(authored_width) is not None or horizontal else None,
+                "widthFraction": None if horizontal else 1 / max(column_count, 1),
+                "heightMode": "fixed" if px(authored_height) is not None else "aspect-ratio" if section_kind == "grid" and item_ratio else "estimated",
+                "heightPt": item_rect["height"] if px(authored_height) is not None else None,
+                "estimatedHeightPt": median(sample_heights) or item_rect["height"] or 72,
+                "aspectRatio": item_ratio if section_kind == "grid" and px(authored_height) is None else None,
+                "columnSpan": int((node_plan_by_id.get(item_id) or {}).get("gridItem", {}).get("columnSpan") or 1),
+                "rowSpan": int((node_plan_by_id.get(item_id) or {}).get("gridItem", {}).get("rowSpan") or 1),
+                "lineCountsByWidth": [
+                    {"targetWidthPt": number(entry.get("widthPt")), "count": int(entry.get("lineCount") or 0)}
+                    for entry in samples_for_item if entry.get("lineCount") is not None
+                ],
+            }
         explicit_heights = [
             str((((item.get("style") or {}).get("authoredLayout") or {}).get("height") or {}).get("value") or "")
             for item in item_nodes
@@ -593,6 +718,8 @@ def build_screen(
             "headerHeightPt": rect(nodes.get(header_id) or {})["height"] if header_id else None,
             "footerHeightPt": rect(nodes.get(footer_id) or {})["height"] if footer_id else None,
             "columnCount": max(column_count, 1),
+            "adaptiveColumns": adaptive_track,
+            "responsiveBreakpoints": responsive_breakpoints,
             "contentInsetsPt": edges(source_style.get("padding")),
             "lineSpacingPt": max(number(container_plan.get("rowGapPt")), 0),
             "interItemSpacingPt": max(number(container_plan.get("columnGapPt")), 0),
@@ -608,6 +735,7 @@ def build_screen(
                 "aspectRatio": ratio_value if section_kind == "grid" and consistent_ratio and not fixed_height else None,
                 "preservesIntrinsicWidth": horizontal,
             },
+            "itemSizingByNodeId": item_sizing_by_node_id,
             "directionalLockEnabled": True,
             "allowsSameAxisNestedScroll": False,
         })
@@ -689,6 +817,7 @@ def main() -> int:
     parser.add_argument("--ir", action="append", required=True, type=Path)
     parser.add_argument("--architecture-plan", required=True, type=Path)
     parser.add_argument("--layout-graph", required=True, type=Path)
+    parser.add_argument("--responsive-analysis", action="append", type=Path)
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args()
     architecture = load_json(args.architecture_plan)
@@ -700,6 +829,8 @@ def main() -> int:
     architecture_screens = {str(item.get("screenId") or ""): item for item in architecture.get("screens") or []}
     graph_screens = {str(item.get("screenId") or ""): item for item in graph.get("screens") or []}
     screens = []
+    responsive_payloads = [load_json(path) for path in (args.responsive_analysis or [])]
+    responsive_cursor = 0
     inputs = []
     for path in args.ir:
         payload = load_json(path)
@@ -719,12 +850,18 @@ def main() -> int:
                 architecture_screens[screen_id],
                 graph_screens[screen_id],
                 screen_states,
+                responsive_payloads[responsive_cursor] if responsive_cursor < len(responsive_payloads) else None,
             ))
+            responsive_cursor += 1
     result = {
         "schemaVersion": SCHEMA_VERSION,
         "architecturePlanSha256": sha256(args.architecture_plan),
         "layoutRelationGraphSha256": sha256(args.layout_graph),
         "inputs": inputs,
+        "responsiveInputs": [
+            {"path": str(path.resolve()), "sha256": sha256(path)}
+            for path in (args.responsive_analysis or [])
+        ],
         "screens": screens,
         "summary": {
             "screenCount": len(screens),

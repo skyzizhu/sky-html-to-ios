@@ -11,6 +11,9 @@
 - 项目已经稳定使用 SnapKit 时可以沿用；否则使用原生 anchors。
 - 重复列表：`UITableView` 或 `UICollectionView`。
 - Grid、横向列表和复杂重复布局：`UICollectionViewCompositionalLayout` 或项目已有布局。
+- 响应式 Flow/Compositional Layout 按 `bounds.width` 或 `environment.container.effectiveContentSize.width` 选择列数；item 优先读取自身 sizing/span，不用 section 中位数覆盖异构项。
+- 非吸顶 Table header/footer 使用 `tableHeaderView`/`tableFooterView`，吸顶内容才使用 `.plain` section supplementary；不要用 `.grouped` 的系统留白模拟 HTML gap。
+- Table 行左/右滑操作使用 `leadingSwipeActionsConfigurationForRowAt` / `trailingSwipeActionsConfigurationForRowAt`，选择使用 delegate；只有非 Table 自由视图才保留自定义滑动容器。
 - 内容滚动：`UIScrollView`，确保 content/layout guides 约束完整。
 
 不要使用固定 screen frame 代替 Auto Layout。绝对位置只用于源页面确实脱离文档流的局部节点。
