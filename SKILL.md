@@ -26,6 +26,7 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 15. 截图之前必须完成确定性结构验收。浏览器来源覆盖、parent-child 归属、视觉顺序、布局关系、scroll owner、原生叶子组件和 screen region 所有权必须进入 `layout-relation-graph.json` 与 `structural-fidelity-report.json`；结构门禁失败时不得生成 Swift。
 16. Swift 生成后、Xcode target 接入前必须完成原生消费验收。生成器必须输出 `native-structure-manifest.json`，独立门禁必须输出通过的 `native-structure-validation.json`，证明实际 Swift/Payload 消费了关系图；禁止只验证计划而不验证生成结果。
 17. 六层架构到 Swift 之间必须只有一份可执行布局契约。总控生成并校验 `native-layout-plan.json`，SwiftUI 与 UIKit 必须共同消费其中的容器顺序、尺寸策略、盒模型和复合控件槽位，不得各自重新猜测。
+18. 布局契约必须区分 stack、wrapping stack、grid 与 positioned overlay，并保存 Grid 轨道、独立 row/column gap、Flex reverse/wrap、定位 containing block 和状态布局增量。百分比、`calc()`、viewport/font 相对单位必须保持可解析表达式；不得截取其中一个数字冒充固定尺寸。
 
 ## 支持范围
 
@@ -263,7 +264,7 @@ python3 "$SKILL_ROOT/scripts/build_ui_ir.py" render-tree.json \
 
 随后读取 `references/structural-fidelity.md`。总控必须生成 `layout-relation-graph.json`，固化 containment、视觉子节点顺序、相邻间距、对齐、等宽/等高、宽高比、overlap 与 scroll axis owner；再生成 `structural-fidelity-report.json`，验证这些关系能被六层原生架构完整表达。该生成前门禁不依赖截图或多模态能力，失败时必须回到提取、UI IR 或架构计划修复，不得直接补丁生成后的 Swift。
 
-随后读取 `references/native-layout-lowering.md`。总控必须运行 `build_native_layout_plan.py` 与 `validate_native_layout_plan.py`，把架构关系降级为容器 axis、视觉顺序、gap、尺寸策略、CSS border-box 约束和复合控件槽位。该门禁通过后生成器才能运行，并必须通过 `--native-layout-plan` 消费同一份计划。
+随后读取 `references/native-layout-lowering.md`。总控必须运行 `build_native_layout_plan.py` 与 `validate_native_layout_plan.py`，把架构关系降级为容器算法、视觉顺序、独立行列间距、尺寸表达式、CSS border-box、Flex/Grid item、定位参照系、状态布局增量和复合控件槽位。该门禁通过后生成器才能运行，并必须通过 `--native-layout-plan` 消费同一份计划。
 
 控件映射必须先判断语义，再选择原生控件，最后还原外观。不要仅按 HTML tag 映射，也不要为了视觉方便把 Button、输入框和选择控件退化成无语义的普通 View。
 

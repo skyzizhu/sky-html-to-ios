@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.38.0"
+GENERATOR_VERSION = "1.39.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SYSTEM_CHROME_TOKENS = (
     "statusbar",
@@ -148,8 +148,8 @@ def load_native_layout_plan(path: Path | None) -> tuple[dict[str, Any], dict[str
     if path is None:
         return {}, {}
     data = json.loads(path.read_text(encoding="utf-8"))
-    if data.get("schemaVersion") != "native-layout-plan-1.0":
-        raise ValueError(f"{path}: expected native-layout-plan-1.0")
+    if data.get("schemaVersion") != "native-layout-plan-1.1":
+        raise ValueError(f"{path}: expected native-layout-plan-1.1")
     screens = {
         str(screen.get("screenId") or ""): screen
         for screen in data.get("screens") or []
@@ -1197,6 +1197,13 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
                 child_margin[0] = 0
     layout_node = context.layout_nodes.get(node_id) or {}
     box_model = layout_node.get("boxModel") or {}
+    positioning = layout_node.get("positioning") or {}
+    grid_plan = layout_container.get("grid") or {}
+    grid_column_widths = []
+    for track in grid_plan.get("columnTracks") or []:
+        length = track.get("length") if isinstance(track, dict) and track.get("kind") == "length" else None
+        fixed_value = length.get("fixedValuePt") if isinstance(length, dict) else None
+        grid_column_widths.append(number(fixed_value) * context.design_scale if fixed_value is not None else None)
     padding = [number(item) * context.design_scale for item in box_model.get("paddingPt") or []]
     margin = [number(item) * context.design_scale for item in box_model.get("marginPt") or []]
     border_widths = [number(item) * context.design_scale for item in box_model.get("borderWidthsPt") or []]
@@ -1584,6 +1591,11 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
                 if layout_container.get("gapPt") is not None
                 else min(max(layout_spacing, 0), 40)
             ),
+            "rowSpacing": number(layout_container.get("rowGapPt"), layout_spacing) * context.design_scale,
+            "columnSpacing": number(layout_container.get("columnGapPt"), layout_spacing) * context.design_scale,
+            "layoutAlgorithm": str(layout_container.get("layoutAlgorithm") or "stack"),
+            "wraps": bool(layout_container.get("wraps")),
+            "reversesChildren": bool(layout_container.get("reverse")),
             "flexGrow": max(number(layout_sizing.get("flexGrow"), number(style.get("flexGrow"))), 0),
             "widthFraction": width_fraction,
             "minHeight": min_height,
@@ -1624,6 +1636,10 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "justifyContent": str(layout_container.get("distribution") or style.get("justifyContent") or "normal"),
             "alignItems": str(layout_container.get("alignment") or style.get("alignItems") or "normal"),
             "gridColumnCount": grid_column_count(style.get("gridTemplateColumns")) if axis == "grid" else None,
+            "gridColumnWidths": grid_column_widths if grid_column_widths else None,
+            "positioningScheme": str(positioning.get("scheme") or style.get("position") or "static"),
+            "positioningOwnerNodeID": positioning.get("containingBlockNodeId"),
+            "coordinateSpace": positioning.get("coordinateSpace"),
             "mediaContentMode": str(asset.get("renderMode") or style.get("objectFit") or "contain"),
             "mediaPosition": str(asset.get("position") or style.get("objectPosition") or "50% 50%"),
             "backgroundContentMode": str(asset.get("renderMode") or "cover") if asset_kind == "css-background" else None,
@@ -1633,6 +1649,18 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         "systemImage": system_image_name(node, context.nodes.get(str(node.get("parentId") or ""))),
         "assetName": asset.get("iosName") if is_foreground_asset else None,
         "backgroundAssetName": asset.get("iosName") if asset_kind == "css-background" else None,
+        "layoutContract": {
+            "nodeID": node_id,
+            "containerAlgorithm": str(layout_container.get("layoutAlgorithm") or "stack"),
+            "widthKind": str((box_model.get("widthContract") or {}).get("kind") or "automatic"),
+            "heightKind": str((box_model.get("heightContract") or {}).get("kind") or "automatic"),
+            "positioningScheme": str(positioning.get("scheme") or "static"),
+            "positioningOwnerNodeID": positioning.get("containingBlockNodeId"),
+            "gridColumnStart": ((layout_node.get("gridItem") or {}).get("columnStart") or {}).get("index"),
+            "gridColumnSpan": ((layout_node.get("gridItem") or {}).get("columnEnd") or {}).get("span"),
+            "gridRowStart": ((layout_node.get("gridItem") or {}).get("rowStart") or {}).get("index"),
+            "gridRowSpan": ((layout_node.get("gridItem") or {}).get("rowEnd") or {}).get("span"),
+        },
         "accessibilityLabel": compact_text(content.get("accessibilityLabel"), 120) or None,
         "contextualActions": context.contextual_actions.get(node_id) or [],
         "visibleWhenStateID": None,
@@ -2255,6 +2283,7 @@ def build_screen(
         "bottomBarPlacement": bottom_bar_placement,
         "presentations": presentations,
         "automaticActions": automatic_actions,
+        "stateLayouts": native_layout.get("stateLayouts") or [],
     }
 
 
@@ -2296,6 +2325,26 @@ struct HTMLToIOSScreenSpec: Codable, Identifiable {{
     let bottomBarPlacement: String
     let presentations: [HTMLToIOSPresentationSpec]
     let automaticActions: [HTMLToIOSActionSpec]
+    let stateLayouts: [HTMLToIOSStateLayoutSpec]
+}}
+
+struct HTMLToIOSStateLayoutSpec: Codable, Identifiable {{
+    var id: String {{ stateId }}
+    let stateId: String
+    let ownerScreenId: String
+    let nativeStrategy: String
+    let operations: [HTMLToIOSStateLayoutOperationSpec]
+    let affectedContainerNodeIds: [String]
+}}
+
+struct HTMLToIOSStateLayoutOperationSpec: Codable {{
+    let kind: String
+    let targetNodeId: String?
+    let generatedRootNodeId: String?
+    let targetParentNodeId: String?
+    let generatedLayoutNodeId: String?
+    let targetBaselineLayoutNodeId: String?
+    let changesLayout: Bool
 }}
 
 struct HTMLToIOSContentContainerSpec: Codable {{
@@ -2441,6 +2490,19 @@ struct HTMLToIOSDynamicContentItemSpec: Codable, Identifiable {{
     let textValues: [String]
 }}
 
+struct HTMLToIOSNodeLayoutContractSpec: Codable {{
+    let nodeID: String
+    let containerAlgorithm: String
+    let widthKind: String
+    let heightKind: String
+    let positioningScheme: String
+    let positioningOwnerNodeID: String?
+    let gridColumnStart: Int?
+    let gridColumnSpan: Int?
+    let gridRowStart: Int?
+    let gridRowSpan: Int?
+}}
+
 struct HTMLToIOSNodeSpec: Codable, Identifiable {{
     let id: String
     let semantic: String
@@ -2462,6 +2524,7 @@ struct HTMLToIOSNodeSpec: Codable, Identifiable {{
     let systemImage: String?
     let assetName: String?
     let backgroundAssetName: String?
+    let layoutContract: HTMLToIOSNodeLayoutContractSpec
     let accessibilityLabel: String?
     let contextualActions: [HTMLToIOSContextualActionSpec]
     let visibleWhenStateID: String?
@@ -2637,6 +2700,11 @@ struct HTMLToIOSStyleSpec: Codable {{
     let padding: [Double]?
     let margin: [Double]?
     let spacing: Double?
+    let rowSpacing: Double?
+    let columnSpacing: Double?
+    let layoutAlgorithm: String?
+    let wraps: Bool?
+    let reversesChildren: Bool?
     let flexGrow: Double?
     let widthFraction: Double?
     let minHeight: Double?
@@ -2665,6 +2733,10 @@ struct HTMLToIOSStyleSpec: Codable {{
     let justifyContent: String?
     let alignItems: String?
     let gridColumnCount: Int?
+    let gridColumnWidths: [Double?]?
+    let positioningScheme: String?
+    let positioningOwnerNodeID: String?
+    let coordinateSpace: String?
     let mediaContentMode: String?
     let mediaPosition: String?
     let backgroundContentMode: String?
@@ -3575,6 +3647,51 @@ private struct HTMLToIOSContextualActionsModifier: ViewModifier {
     }
 }
 
+private struct HTMLToIOSWrappingLayout: Layout {
+    let horizontalSpacing: CGFloat
+    let verticalSpacing: CGFloat
+
+    private func rows(proposal: ProposedViewSize, subviews: Subviews) -> [[(Int, CGSize)]] {
+        let availableWidth = proposal.width ?? .greatestFiniteMagnitude
+        var result: [[(Int, CGSize)]] = [[]]
+        var currentWidth: CGFloat = 0
+        for (index, subview) in subviews.enumerated() {
+            let size = subview.sizeThatFits(.unspecified)
+            let proposedWidth = currentWidth + (result.last?.isEmpty == false ? horizontalSpacing : 0) + size.width
+            if proposedWidth > availableWidth, result.last?.isEmpty == false {
+                result.append([])
+                currentWidth = 0
+            }
+            result[result.count - 1].append((index, size))
+            currentWidth += (result.last?.count ?? 0) > 1 ? horizontalSpacing + size.width : size.width
+        }
+        return result
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let measuredRows = rows(proposal: proposal, subviews: subviews)
+        let width = measuredRows.map { row in
+            row.reduce(0) { $0 + $1.1.width } + CGFloat(max(row.count - 1, 0)) * horizontalSpacing
+        }.max() ?? 0
+        let height = measuredRows.reduce(0) { $0 + ($1.map { $0.1.height }.max() ?? 0) }
+            + CGFloat(max(measuredRows.count - 1, 0)) * verticalSpacing
+        return CGSize(width: proposal.width ?? width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in rows(proposal: ProposedViewSize(width: bounds.width, height: proposal.height), subviews: subviews) {
+            var x = bounds.minX
+            let rowHeight = row.map { $0.1.height }.max() ?? 0
+            for (index, size) in row {
+                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+                x += size.width + horizontalSpacing
+            }
+            y += rowHeight + verticalSpacing
+        }
+    }
+}
+
 struct HTMLToIOSNativeNodeView: View {
     @ObservedObject var store: HTMLToIOSGeneratedStore
     let spec: HTMLToIOSNodeSpec
@@ -4058,7 +4175,7 @@ struct HTMLToIOSNativeNodeView: View {
 
     @ViewBuilder private var buttonContent: some View {
         if spec.axis == "grid" {
-            LazyVGrid(columns: gridColumns, spacing: spec.style.spacing ?? 0) { dynamicOrOrderedContent }
+            LazyVGrid(columns: gridColumns, spacing: spec.style.rowSpacing ?? spec.style.spacing ?? 0) { dynamicOrOrderedContent }
         } else if spec.axis == "vertical" {
             VStack(alignment: .center, spacing: contentSpacing) { dynamicOrOrderedContent }
         } else {
@@ -4094,14 +4211,21 @@ struct HTMLToIOSNativeNodeView: View {
                 }
             }
         } else if spec.nativeContainerKind == "collection-view" {
-            LazyVGrid(columns: gridColumns, spacing: spec.style.spacing ?? 0) {
+            LazyVGrid(columns: gridColumns, spacing: spec.style.rowSpacing ?? spec.style.spacing ?? 0) {
+                dynamicOrOrderedContent
+            }
+        } else if spec.style.layoutAlgorithm == "wrapping-stack" {
+            HTMLToIOSWrappingLayout(
+                horizontalSpacing: spec.style.columnSpacing ?? spec.style.spacing ?? 0,
+                verticalSpacing: spec.style.rowSpacing ?? spec.style.spacing ?? 0
+            ) {
                 dynamicOrOrderedContent
             }
         } else if spec.axis == "horizontal" {
             HStack(alignment: verticalAlignment, spacing: contentSpacing) { dynamicOrDistributedContent }
                 .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: horizontalFrameAlignment)
         } else if spec.axis == "grid" {
-            LazyVGrid(columns: gridColumns, spacing: spec.style.spacing ?? 0) { dynamicOrOrderedContent }
+            LazyVGrid(columns: gridColumns, spacing: spec.style.rowSpacing ?? spec.style.spacing ?? 0) { dynamicOrOrderedContent }
         } else if spec.axis == "overlay" {
             ZStack(alignment: .center) {
                 ForEach(spec.children) { child in
@@ -4151,8 +4275,15 @@ struct HTMLToIOSNativeNodeView: View {
 
     private var fillsAvailableWidth: Bool { (spec.style.widthFraction ?? 0) > 0.88 }
     private var gridColumns: [GridItem] {
-        Array(
-            repeating: GridItem(.flexible(), spacing: spec.style.spacing ?? 0),
+        let spacing = spec.style.columnSpacing ?? spec.style.spacing ?? 0
+        if let widths = spec.style.gridColumnWidths, !widths.isEmpty {
+            return widths.map { width in
+                width.map { GridItem(.fixed($0), spacing: spacing) }
+                    ?? GridItem(.flexible(), spacing: spacing)
+            }
+        }
+        return Array(
+            repeating: GridItem(.flexible(), spacing: spacing),
             count: max(spec.style.gridColumnCount ?? 2, 1)
         )
     }
@@ -4577,6 +4708,59 @@ struct HTMLToIOSGeneratedRootView: View {
 
 UIKIT_RUNTIME = r'''// Generated by sky-html-to-ios. Native UIKit rendering runtime.
 import UIKit
+
+private final class HTMLToIOSWrappingView: UIView {
+    let horizontalSpacing: CGFloat
+    let verticalSpacing: CGFloat
+
+    init(views: [UIView], horizontalSpacing: CGFloat, verticalSpacing: CGFloat) {
+        self.horizontalSpacing = horizontalSpacing
+        self.verticalSpacing = verticalSpacing
+        super.init(frame: .zero)
+        views.forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = true
+            addSubview($0)
+        }
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    private func measuredSize(for view: UIView) -> CGSize {
+        let intrinsic = view.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+        return CGSize(
+            width: max(intrinsic.width, view.intrinsicContentSize.width > 0 ? view.intrinsicContentSize.width : 0),
+            height: max(intrinsic.height, view.intrinsicContentSize.height > 0 ? view.intrinsicContentSize.height : 0)
+        )
+    }
+
+    private func arrange(width: CGFloat, applyFrames: Bool) -> CGSize {
+        let availableWidth = width > 0 ? width : .greatestFiniteMagnitude
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var measuredWidth: CGFloat = 0
+        for view in subviews {
+            let size = measuredSize(for: view)
+            if x > 0, x + size.width > availableWidth {
+                x = 0
+                y += rowHeight + verticalSpacing
+                rowHeight = 0
+            }
+            if applyFrames { view.frame = CGRect(origin: CGPoint(x: x, y: y), size: size) }
+            x += size.width + horizontalSpacing
+            measuredWidth = max(measuredWidth, max(x - horizontalSpacing, 0))
+            rowHeight = max(rowHeight, size.height)
+        }
+        return CGSize(width: min(measuredWidth, availableWidth), height: y + rowHeight)
+    }
+
+    override func sizeThatFits(_ size: CGSize) -> CGSize { arrange(width: size.width, applyFrames: false) }
+    override var intrinsicContentSize: CGSize { arrange(width: bounds.width, applyFrames: false) }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        _ = arrange(width: bounds.width, applyFrames: true)
+    }
+}
 
 private extension UIColor {
     convenience init?(htmlToIOS value: String?) {
@@ -5275,6 +5459,8 @@ final class HTMLToIOSNodeRenderer {
                 stack = makeGrid(spec)
             } else if spec.axis == "overlay" {
                 stack = makeOverlay(spec)
+            } else if spec.style.layoutAlgorithm == "wrapping-stack" {
+                stack = makeWrappingStack(spec)
             } else {
                 stack = makeStack(spec)
             }
@@ -5400,6 +5586,20 @@ final class HTMLToIOSNodeRenderer {
         return stack
     }
 
+    private func makeWrappingStack(_ spec: HTMLToIOSNodeSpec) -> HTMLToIOSWrappingView {
+        let views: [UIView]
+        if let dynamicItems = state.contentOverrides[spec.id], !dynamicItems.isEmpty {
+            views = dynamicItems.map { makeDynamicView($0, in: spec) }
+        } else {
+            views = spec.children.map { makeView($0) }
+        }
+        return HTMLToIOSWrappingView(
+            views: views,
+            horizontalSpacing: spec.style.columnSpacing ?? spec.style.spacing ?? 0,
+            verticalSpacing: spec.style.rowSpacing ?? spec.style.spacing ?? 0
+        )
+    }
+
     private func addContentGap(_ item: HTMLToIOSContentItemSpec, to stack: UIStackView, axis: String) {
         guard let gap = item.gapBefore, gap > 0 else { return }
         let spacer = UIView()
@@ -5437,8 +5637,9 @@ final class HTMLToIOSNodeRenderer {
         let grid = UIStackView()
         grid.axis = .vertical
         grid.alignment = .fill
-        grid.spacing = spec.style.spacing ?? 0
+        grid.spacing = spec.style.rowSpacing ?? spec.style.spacing ?? 0
         let columns = max(spec.style.gridColumnCount ?? 2, 1)
+        let trackWidths = spec.style.gridColumnWidths ?? []
         let dynamicItems = state.contentOverrides[spec.id] ?? []
         let itemCount = dynamicItems.isEmpty ? spec.children.count : dynamicItems.count
         for start in stride(from: 0, to: itemCount, by: columns) {
@@ -5446,13 +5647,24 @@ final class HTMLToIOSNodeRenderer {
             row.axis = .horizontal
             row.alignment = .fill
             row.distribution = .fillEqually
-            row.spacing = spec.style.spacing ?? 0
+            if trackWidths.contains(where: { $0 != nil }) { row.distribution = .fill }
+            row.spacing = spec.style.columnSpacing ?? spec.style.spacing ?? 0
             let end = min(start + columns, itemCount)
             for index in start..<end {
                 if dynamicItems.isEmpty {
-                    row.addArrangedSubview(makeView(spec.children[index]))
+                    let child = makeView(spec.children[index])
+                    row.addArrangedSubview(child)
+                    let column = index - start
+                    if trackWidths.indices.contains(column), let width = trackWidths[column], width > 0 {
+                        child.widthAnchor.constraint(equalToConstant: width).isActive = true
+                    }
                 } else {
-                    row.addArrangedSubview(makeDynamicView(dynamicItems[index], in: spec))
+                    let child = makeDynamicView(dynamicItems[index], in: spec)
+                    row.addArrangedSubview(child)
+                    let column = index - start
+                    if trackWidths.indices.contains(column), let width = trackWidths[column], width > 0 {
+                        child.widthAnchor.constraint(equalToConstant: width).isActive = true
+                    }
                 }
             }
             if end - start < columns {
@@ -6484,7 +6696,8 @@ final class HTMLToIOSGeneratedCoordinator: NSObject, UITabBarControllerDelegate 
                     bottomBar: nil,
                     bottomBarPlacement: "none",
                     presentations: [],
-                    automaticActions: []
+                    automaticActions: [],
+                    stateLayouts: []
                 ),
                 actionHandler: { [weak self] action in self?.perform(action) }
             )
@@ -7665,6 +7878,10 @@ def build_native_structure_manifest(
                 "axis": str(payload_container.get("axis") or "") == str(container_plan.get("axis") or ""),
                 "visualOrder": actual_expected_order == expected_children,
                 "gap": abs(number(style.get("spacing")) - number(container_plan.get("gapPt")) * design_scale) <= 0.01,
+                "rowGap": abs(number(style.get("rowSpacing")) - number(container_plan.get("rowGapPt")) * design_scale) <= 0.01,
+                "columnGap": abs(number(style.get("columnSpacing")) - number(container_plan.get("columnGapPt")) * design_scale) <= 0.01,
+                "algorithm": str(style.get("layoutAlgorithm") or "") == str(container_plan.get("layoutAlgorithm") or ""),
+                "wrap": bool(style.get("wraps")) == bool(container_plan.get("wraps")),
                 "alignment": str(style.get("alignItems") or "normal") == str(container_plan.get("alignment") or "normal"),
                 "distribution": str(style.get("justifyContent") or "normal") == str(container_plan.get("distribution") or "normal"),
             }
@@ -7698,6 +7915,58 @@ def build_native_structure_manifest(
                 "expectedSlotIds": expected_slots,
                 "actualSlotIds": content_slots,
             })
+        node_layout_consumption = []
+        for node_plan in native_layout.get("nodes") or []:
+            node_id = str(node_plan.get("nodeId") or "")
+            payload_node = payload_nodes.get(node_id) or {}
+            contract = payload_node.get("layoutContract") or {}
+            positioning = node_plan.get("positioning") or {}
+            box = node_plan.get("boxModel") or {}
+            checks = {
+                "node": str(contract.get("nodeID") or "") == node_id,
+                "widthKind": str(contract.get("widthKind") or "") == str((box.get("widthContract") or {}).get("kind") or ""),
+                "heightKind": str(contract.get("heightKind") or "") == str((box.get("heightContract") or {}).get("kind") or ""),
+                "positioning": str(contract.get("positioningScheme") or "") == str(positioning.get("scheme") or ""),
+                "owner": contract.get("positioningOwnerNodeID") == positioning.get("containingBlockNodeId"),
+            }
+            optimized_reason = (
+                native_optimization_reason(ir_nodes.get(node_id) or {}, payload_nodes)
+                or ("detached-native-owner" if node_id in detached_native_ids and node_id in represented_ids else None)
+            )
+            node_layout_consumption.append({
+                "nodeId": node_id,
+                "status": (
+                    "consumed" if payload_node and all(checks.values())
+                    else "optimized-equivalent" if optimized_reason
+                    else "not-consumed"
+                ),
+                "strategy": optimized_reason or "native-node-layout-contract",
+                "checks": checks,
+            })
+        state_layout_consumption = []
+        payload_state_layouts = {
+            str(item.get("stateId") or ""): item
+            for item in payload_screen.get("stateLayouts") or []
+        }
+        for state_plan in native_layout.get("stateLayouts") or []:
+            state_id = str(state_plan.get("stateId") or "")
+            payload_state = payload_state_layouts.get(state_id) or {}
+            expected_operations = state_plan.get("operations") or []
+            actual_operations = payload_state.get("operations") or []
+            checks = {
+                "strategy": payload_state.get("nativeStrategy") == state_plan.get("nativeStrategy"),
+                "operations": actual_operations == expected_operations,
+                "generatedNodes": all(
+                    not item.get("generatedLayoutNodeId")
+                    or str(item.get("generatedLayoutNodeId")) in represented_ids
+                    for item in expected_operations
+                ),
+            }
+            state_layout_consumption.append({
+                "stateId": state_id,
+                "status": "consumed" if payload_state and all(checks.values()) else "not-consumed",
+                "checks": checks,
+            })
         source_paths = [
             "Resources/Payload/HTMLToIOSGeneratedPayload.json",
             "Core/Runtime/HTMLToIOSGeneratedRuntime.swift",
@@ -7722,11 +7991,17 @@ def build_native_structure_manifest(
             "layoutPlanConsumption": {
                 "containers": container_consumption,
                 "compoundControls": compound_consumption,
+                "nodes": node_layout_consumption,
+                "stateLayouts": state_layout_consumption,
                 "summary": {
                     "containerCount": len(container_consumption),
                     "unconsumedContainerCount": sum(item["status"] == "not-consumed" for item in container_consumption),
                     "compoundControlCount": len(compound_consumption),
                     "unconsumedCompoundControlCount": sum(item["status"] == "not-consumed" for item in compound_consumption),
+                    "nodeLayoutCount": len(node_layout_consumption),
+                    "unconsumedNodeLayoutCount": sum(item["status"] not in {"consumed", "optimized-equivalent"} for item in node_layout_consumption),
+                    "stateLayoutCount": len(state_layout_consumption),
+                    "unconsumedStateLayoutCount": sum(item["status"] == "not-consumed" for item in state_layout_consumption),
                 },
             },
             "contentContainer": payload_screen.get("contentContainer"),

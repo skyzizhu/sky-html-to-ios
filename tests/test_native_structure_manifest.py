@@ -15,6 +15,7 @@ ARCHITECTURE_SCRIPT = ROOT / "scripts" / "build_native_architecture_plan.py"
 GENERATOR_SCRIPT = ROOT / "scripts" / "generate_ios_from_ir.py"
 VALIDATOR_SCRIPT = ROOT / "scripts" / "validate_native_structure_manifest.py"
 LAYOUT_PLAN_SCRIPT = ROOT / "scripts" / "build_native_layout_plan.py"
+LAYOUT_PLAN_VALIDATOR_SCRIPT = ROOT / "scripts" / "validate_native_layout_plan.py"
 
 
 def node(
@@ -143,6 +144,11 @@ class NativeStructureManifestTests(unittest.TestCase):
             "python3", str(LAYOUT_PLAN_SCRIPT), "--ir", str(ir_path),
             "--architecture-plan", str(architecture_path),
             "--layout-graph", str(graph_path), "--out", str(native_layout_path),
+        ])
+        self.run_command([
+            "python3", str(LAYOUT_PLAN_VALIDATOR_SCRIPT), "--plan", str(native_layout_path),
+            "--ir", str(ir_path), "--architecture-plan", str(architecture_path),
+            "--layout-graph", str(graph_path), "--out", str(root / "native-layout-plan-validation.json"),
         ])
         self.run_command([
             "python3", str(GENERATOR_SCRIPT), "--ir", str(ir_path),
@@ -287,6 +293,89 @@ class NativeStructureManifestTests(unittest.TestCase):
                 self.assertEqual(native_toolbar["style"]["minWidth"], 280)
                 self.assertEqual(native_toolbar["style"]["maxWidth"], 361)
                 self.assertEqual(indexed["home.count"]["style"]["minWidth"], 18)
+
+    def test_constraint_solver_lowers_wrap_grid_positioning_and_state_layouts(self) -> None:
+        for ui_stack in ("swiftui", "uikit"):
+            with self.subTest(ui_stack=ui_stack), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                payload = make_ir(ui_stack)
+                nodes = payload["screens"][0]["nodes"]
+                toolbar = next(item for item in nodes if item["id"] == "home.toolbar")
+                toolbar["style"].update({
+                    "position": "relative",
+                    "flexWrap": "wrap",
+                    "flexDirection": "row-reverse",
+                    "rowGap": "6px",
+                    "columnGap": "10px",
+                    "alignContent": "space-between",
+                })
+                toolbar["layout"]["position"] = "relative"
+                title = next(item for item in nodes if item["id"] == "home.title")
+                title["style"].update({"width": "calc(50% - 8px)", "flexBasis": "40%"})
+                count = next(item for item in nodes if item["id"] == "home.count")
+                count["style"].update({
+                    "position": "absolute", "top": "10px", "right": "8px",
+                    "bottom": "auto", "left": "auto",
+                })
+                count["layout"]["position"] = "absolute"
+
+                filters = next(item for item in nodes if item["id"] == "home.filters")
+                filters["semanticType"] = "grid"
+                filters["layout"]["mode"] = "grid"
+                filters["layout"]["scrollAxis"] = "none"
+                filters["style"].update({
+                    "display": "grid",
+                    "gridTemplateColumns": "88px 1fr 96px",
+                    "gridTemplateRows": "36px",
+                    "rowGap": "4px",
+                    "columnGap": "8px",
+                })
+                first_filter = next(item for item in nodes if item["id"] == "home.filter.1")
+                first_filter["style"].update({
+                    "gridColumnStart": "1", "gridColumnEnd": "span 2",
+                    "gridRowStart": "1", "gridRowEnd": "2",
+                })
+
+                state_container = node("home.state.container", "home.root", "container", 16, 150, 361, 60)
+                generated = node("state.home.expanded.home.detail", "home.state.container", "label", 16, 150, 361, 60)
+                generated["state"] = {"initiallyVisible": False}
+                nodes.extend([state_container, generated])
+                payload["states"] = [{
+                    "id": "home.expanded",
+                    "ownerScreenId": "home",
+                    "kind": "expansion",
+                    "targetNodeIds": ["home.state.container"],
+                    "stateDelta": {
+                        "nativeStrategy": "conditional-subtree",
+                        "operations": [{
+                            "kind": "insert-subtree",
+                            "generatedRootNodeId": "state.home.expanded.home.detail",
+                            "targetParentNodeId": "home.state.container",
+                        }],
+                    },
+                }]
+
+                outputs = self.build_chain(root, ui_stack, payload)
+                _, report = self.validate_chain(root, *outputs)
+                self.assertEqual(report["status"], "passed")
+                layout = json.loads(outputs[2].read_text(encoding="utf-8"))["screens"][0]
+                containers = {item["containerNodeId"]: item for item in layout["containers"]}
+                self.assertEqual(containers["home.toolbar"]["layoutAlgorithm"], "wrapping-stack")
+                self.assertTrue(containers["home.toolbar"]["reverse"])
+                self.assertEqual(containers["home.toolbar"]["rowGapPt"], 6)
+                self.assertEqual(containers["home.toolbar"]["columnGapPt"], 10)
+                self.assertEqual(containers["home.filters"]["layoutAlgorithm"], "grid")
+                self.assertEqual(len(containers["home.filters"]["grid"]["columnTracks"]), 3)
+                plans = {item["nodeId"]: item for item in layout["nodes"]}
+                self.assertEqual(plans["home.title"]["boxModel"]["widthContract"]["kind"], "calculation")
+                self.assertEqual(len(plans["home.title"]["boxModel"]["widthContract"]["terms"]), 2)
+                self.assertEqual(plans["home.count"]["positioning"]["containingBlockNodeId"], "home.toolbar")
+                self.assertEqual(plans["home.filter.1"]["gridItem"]["columnEnd"]["span"], 2)
+                self.assertEqual(layout["stateLayouts"][0]["stateId"], "home.expanded")
+
+                generated_payload = json.loads((outputs[4] / "Resources/Payload/HTMLToIOSGeneratedPayload.json").read_text(encoding="utf-8"))
+                screen = generated_payload["screens"][0]
+                self.assertEqual(screen["stateLayouts"][0]["stateId"], "home.expanded")
 
 
 if __name__ == "__main__":

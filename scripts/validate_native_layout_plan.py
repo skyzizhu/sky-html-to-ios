@@ -33,8 +33,8 @@ def main() -> int:
     plan = load_json(args.plan)
     architecture = load_json(args.architecture_plan)
     graph = load_json(args.layout_graph)
-    if plan.get("schemaVersion") != "native-layout-plan-1.0":
-        raise ValueError("--plan must use native-layout-plan-1.0")
+    if plan.get("schemaVersion") != "native-layout-plan-1.1":
+        raise ValueError("--plan must use native-layout-plan-1.1")
     issues: list[dict[str, Any]] = []
 
     def add(code: str, screen_id: str | None, message: str, reference_id: str | None = None) -> None:
@@ -50,9 +50,18 @@ def main() -> int:
         add("STALE_LAYOUT_UI_IR", None, "Native layout plan does not match the supplied UI IR files.")
 
     ir_screens: dict[str, dict[str, Any]] = {}
+    ir_states_by_screen: dict[str, dict[str, dict[str, Any]]] = {}
     for path in args.ir:
-        for screen in load_json(path).get("screens") or []:
+        payload = load_json(path)
+        payload_screens = payload.get("screens") or []
+        payload_screen_ids = [str(item.get("id") or "") for item in payload_screens]
+        for screen in payload_screens:
             ir_screens[str(screen.get("id") or "")] = screen
+        default_owner = payload_screen_ids[0] if len(payload_screen_ids) == 1 else ""
+        for state in payload.get("states") or []:
+            owner = str(state.get("ownerScreenId") or default_owner)
+            if owner:
+                ir_states_by_screen.setdefault(owner, {})[str(state.get("id") or "")] = state
     plan_screens = {str(item.get("screenId") or ""): item for item in plan.get("screens") or []}
     graph_screens = {str(item.get("screenId") or ""): item for item in graph.get("screens") or []}
     architecture_screens = {str(item.get("screenId") or ""): item for item in architecture.get("screens") or []}
@@ -83,6 +92,16 @@ def main() -> int:
                 add("LAYOUT_VISUAL_ORDER_MISMATCH", screen_id, "Container visual order changed during lowering.", container_id)
             if container_id in graph_container_ids and not container.get("relationIds"):
                 add("LAYOUT_RELATION_EVIDENCE_MISSING", screen_id, "Container has no relation-graph evidence.", container_id)
+            if container.get("layoutAlgorithm") not in {"stack", "wrapping-stack", "grid", "positioned-overlay"}:
+                add("INVALID_LAYOUT_ALGORITHM", screen_id, "Container has no executable layout algorithm.", container_id)
+            if container.get("wraps") is True and container.get("layoutAlgorithm") != "wrapping-stack":
+                add("WRAP_ALGORITHM_MISMATCH", screen_id, "A wrapping container must lower to wrapping-stack.", container_id)
+            if container.get("axis") == "grid":
+                grid = container.get("grid") or {}
+                if not grid.get("columnTracks"):
+                    add("GRID_TRACKS_MISSING", screen_id, "Grid containers require explicit column tracks.", container_id)
+            if float(container.get("rowGapPt") or 0) < 0 or float(container.get("columnGapPt") or 0) < 0:
+                add("NEGATIVE_CONTAINER_GAP", screen_id, "Container row/column gaps cannot be negative.", container_id)
         for node_id, node_plan in plan_nodes.items():
             box = node_plan.get("boxModel") or {}
             if box.get("boxSizing") not in {"border-box", "content-box"}:
@@ -90,16 +109,46 @@ def main() -> int:
             for key in ("borderBoxWidthPt", "borderBoxHeightPt", "contentWidthPt", "contentHeightPt"):
                 if float(box.get(key) or 0) < 0:
                     add("NEGATIVE_BOX_DIMENSION", screen_id, f"{key} cannot be negative.", node_id)
+            for key in (
+                "widthContract", "heightContract", "minWidthContract", "maxWidthContract",
+                "minHeightContract", "maxHeightContract",
+            ):
+                contract = box.get(key) or {}
+                if contract.get("referenceAxis") not in {"horizontal", "vertical"}:
+                    add("INVALID_LENGTH_REFERENCE", screen_id, f"{key} requires an explicit reference axis.", node_id)
+                if contract.get("kind") == "calculation" and not contract.get("terms"):
+                    add("UNRESOLVED_CALC_CONTRACT", screen_id, f"{key} calc() expression has no executable terms.", node_id)
+            positioning = node_plan.get("positioning") or {}
+            scheme = positioning.get("scheme")
+            if scheme not in {"static", "relative", "absolute", "fixed", "sticky"}:
+                add("INVALID_POSITIONING_SCHEME", screen_id, "Node positioning scheme is unsupported.", node_id)
+            if scheme in {"absolute", "sticky"} and not positioning.get("containingBlockNodeId"):
+                add("POSITIONING_OWNER_MISSING", screen_id, "Positioned node has no containing-block owner.", node_id)
+            if scheme == "fixed" and positioning.get("coordinateSpace") != "viewport":
+                add("FIXED_COORDINATE_SPACE_INVALID", screen_id, "Fixed nodes must use the viewport coordinate space.", node_id)
         for compound in screen_plan.get("compoundControls") or []:
             slot_ids = [str(item) for item in compound.get("orderedSlotIds") or []]
             slots = [str(item.get("slotId") or "") for item in compound.get("orderedSlots") or []]
             if len(slot_ids) < 2 or slot_ids != slots or len(slot_ids) != len(set(slot_ids)):
                 add("INVALID_COMPOUND_SLOT_ORDER", screen_id, "Compound-control slots must be unique and preserve visual order.", str(compound.get("nodeId") or ""))
+        ir_states = ir_states_by_screen.get(screen_id) or {}
+        planned_states = {str(item.get("stateId") or ""): item for item in screen_plan.get("stateLayouts") or []}
+        expected_state_ids = {
+            state_id for state_id, state in ir_states.items()
+            if (state.get("stateDelta") or {}).get("operations")
+        }
+        if set(planned_states) != expected_state_ids:
+            add("STATE_LAYOUT_SET_MISMATCH", screen_id, "State layout contracts differ from UI IR state deltas.")
+        for state_id, state_plan in planned_states.items():
+            for operation in state_plan.get("operations") or []:
+                generated_id = str(operation.get("generatedRootNodeId") or "")
+                if generated_id and generated_id not in plan_nodes:
+                    add("STATE_LAYOUT_NODE_MISSING", screen_id, "State operation references an unplanned generated node.", state_id)
         screen_errors = sum(item.get("screenId") == screen_id for item in issues)
         summaries.append({"screenId": screen_id, "status": "passed" if screen_errors == 0 else "failed", "errorCount": screen_errors})
 
     report = {
-        "schemaVersion": "native-layout-plan-validation-1.0",
+        "schemaVersion": "native-layout-plan-validation-1.1",
         "status": "passed" if not issues else "failed",
         "qualityGate": {"passed": not issues, "requiresScreenshots": False, "requiresMultimodalModel": False},
         "screens": summaries,

@@ -175,7 +175,7 @@ Small fixed groups remain static layouts. Long homogeneous rows use Table/Lazy c
 
 Each screen also receives a typed layout contract containing visual child order, axis, alignment, distribution, wrapping, spacing, sizing policy, aspect ratio, and compression evidence. Inputs, explicit/project components, specialized media, and stable business controls become typed leaf views. Ordinary text, SVG internals, decorative nodes, and auto-numbered DOM leaves stay in the shared runtime instead of creating one Swift file per node.
 
-Before Swift generation, `layout-relation-graph-1.0` promotes those per-node measurements into cross-node constraints. `structural-fidelity-report-1.0` checks that the six-layer architecture can express them, then `native-layout-plan-1.0` lowers the result into the single executable contract shared by SwiftUI and UIKit: container order, sizing, CSS box-model constraints, and compound-control slots. After generation, `native-structure-manifest-1.0` proves that Swift/Payload consumed the plan before Xcode target integration. These core gates require neither screenshots nor multimodal capability.
+Before Swift generation, `layout-relation-graph-1.0` promotes those per-node measurements into cross-node constraints. `structural-fidelity-report-1.0` checks that the six-layer architecture can express them, then `native-layout-plan-1.1` lowers the result into the single executable contract shared by SwiftUI and UIKit: stack/wrapping/grid/overlay algorithms, child order, CSS length and box-model constraints, Grid tracks, positioning ownership, state-layout deltas, and compound-control slots. After generation, `native-structure-manifest-1.0` proves that Swift/Payload consumed the plan before Xcode target integration. These core gates require neither screenshots nor multimodal capability.
 
 ## Supported Views and Controls
 
@@ -586,7 +586,7 @@ High-risk inputs include runtime-generated DOM, closed Shadow DOM, cross-origin 
 The first usable release has passed:
 
 - real SwiftUI and UIKit builds;
-- 126 automated tests in the current development audit;
+- 127 automated tests in the current development audit;
 - UI IR, decision, naming, generator, route, and interaction tests;
 - visual-difference and geometry tests;
 - real Simulator responsive matrices;

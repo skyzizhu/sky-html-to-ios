@@ -57,8 +57,8 @@ def main() -> int:
         raise ValueError("--layout-graph must use layout-relation-graph-1.0")
     if architecture.get("schemaVersion") != "native-architecture-plan-1.1":
         raise ValueError("--architecture-plan must use native-architecture-plan-1.1")
-    if native_layout.get("schemaVersion") != "native-layout-plan-1.0":
-        raise ValueError("--native-layout-plan must use native-layout-plan-1.0")
+    if native_layout.get("schemaVersion") != "native-layout-plan-1.1":
+        raise ValueError("--native-layout-plan must use native-layout-plan-1.1")
     if generation.get("schemaVersion") != "html-to-ios-generation-1.0":
         raise ValueError("--generation-manifest must use html-to-ios-generation-1.0")
 
@@ -152,6 +152,20 @@ def main() -> int:
                     "NATIVE_COMPOUND_LAYOUT_NOT_CONSUMED", screen_id,
                     "Generated compound control did not preserve planned slot order.",
                     str(record.get("nodeId") or "") or None,
+                ))
+        for record in layout_consumption.get("nodes") or []:
+            if record.get("status") not in {"consumed", "optimized-equivalent"}:
+                issues.append(issue(
+                    "NATIVE_NODE_LAYOUT_NOT_CONSUMED", screen_id,
+                    "Generated native node did not consume its sizing or positioning contract.",
+                    str(record.get("nodeId") or "") or None,
+                ))
+        for record in layout_consumption.get("stateLayouts") or []:
+            if record.get("status") != "consumed":
+                issues.append(issue(
+                    "NATIVE_STATE_LAYOUT_NOT_CONSUMED", screen_id,
+                    "Generated native state did not consume its layout delta contract.",
+                    str(record.get("stateId") or "") or None,
                 ))
 
         architecture_screen = architecture_screens.get(screen_id) or {}
