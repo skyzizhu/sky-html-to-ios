@@ -193,6 +193,8 @@ class Orchestrator:
                 "structuralFidelity": "pending",
                 "nativeLayoutPlan": "pending",
                 "nativeLayoutPlanValidation": "pending",
+                "nativeControlConfigurationPlan": "pending",
+                "nativeControlConfigurationValidation": "pending",
                 "nativeStructureManifest": "pending",
                 "nativeStructureValidation": "pending",
                 "projectGenerationDecision": "pending",
@@ -1133,6 +1135,32 @@ class Orchestrator:
         self.report["qualityGates"]["scrollAttachmentPlan"] = "passed"
         return plan
 
+    def build_and_validate_native_control_configuration_plan(self, ir_paths: list[Path]) -> Path:
+        plan = self.report_dir / "native-control-configuration-plan.json"
+        command: list[str | Path] = [
+            sys.executable,
+            self.scripts / "build_native_control_configuration_plan.py",
+        ]
+        for path in ir_paths:
+            command.extend(["--ir", path])
+        command.extend(["--out", plan])
+        self.run_command("build-native-control-configuration-plan", command)
+        validation = self.report_dir / "native-control-configuration-validation.json"
+        self.run_command(
+            "validate-native-control-configuration-plan",
+            [
+                sys.executable,
+                self.scripts / "validate_native_control_configuration_plan.py",
+                "--plan", plan,
+                "--out", validation,
+            ],
+        )
+        self.artifacts["nativeControlConfigurationPlan"] = str(plan)
+        self.artifacts["nativeControlConfigurationValidation"] = str(validation)
+        self.report["qualityGates"]["nativeControlConfigurationPlan"] = "generated"
+        self.report["qualityGates"]["nativeControlConfigurationValidation"] = "passed"
+        return plan
+
     def validate_supplied_irs(self) -> list[Path]:
         paths = [resolve_input(path, self.workspace) for path in self.args.ir or []]
         resolved = [path for path in paths if path is not None]
@@ -1204,6 +1232,7 @@ class Orchestrator:
         layout_relation_graph: Path,
         native_layout_plan: Path,
         scroll_attachment_plan: Path,
+        control_configuration_plan: Path,
         naming_plan: Path,
     ) -> Path:
         generated_dir = source_root / "Generated" / "HTMLToIOS"
@@ -1219,6 +1248,7 @@ class Orchestrator:
             "--layout-relation-graph", layout_relation_graph,
             "--native-layout-plan", native_layout_plan,
             "--scroll-attachment-plan", scroll_attachment_plan,
+            "--control-configuration-plan", control_configuration_plan,
             "--native-structure-manifest", native_structure_manifest,
             "--naming-plan", naming_plan,
         ])
@@ -1242,6 +1272,7 @@ class Orchestrator:
                 "--architecture-plan", architecture_plan,
                 "--native-layout-plan", native_layout_plan,
                 "--scroll-attachment-plan", scroll_attachment_plan,
+                "--control-configuration-plan", control_configuration_plan,
                 "--generated-dir", generated_dir,
                 "--generation-manifest", generation_manifest,
                 "--out", native_structure_report,
@@ -1606,13 +1637,15 @@ struct ContentView: View {
             raise OrchestrationError("prepare-ui-ir", "No UI IR inputs are available.")
         architecture_plan = self.build_native_architecture_plan(ir_paths, ui_stack, minimum_ios)
         scroll_attachment_plan = self.build_and_validate_scroll_attachment_plan(ir_paths, architecture_plan)
+        control_configuration_plan = self.build_and_validate_native_control_configuration_plan(ir_paths)
         layout_relation_graph, _ = self.build_and_validate_structural_fidelity(ir_paths, architecture_plan)
         native_layout_plan = self.build_and_validate_native_layout_plan(
             ir_paths, architecture_plan, layout_relation_graph,
         )
         self.generate_and_integrate(
             ir_paths, project, target, source_root, ui_stack, minimum_ios,
-            architecture_plan, layout_relation_graph, native_layout_plan, scroll_attachment_plan, naming_plan,
+            architecture_plan, layout_relation_graph, native_layout_plan, scroll_attachment_plan,
+            control_configuration_plan, naming_plan,
         )
         self.wire_managed_entry(source_root, ui_stack)
         symbol = "HTMLToIOSGeneratedRootView" if ui_stack == "swiftui" else "HTMLToIOSGeneratedRootViewController"
@@ -1678,6 +1711,7 @@ struct ContentView: View {
                     self.artifacts["uiIRs"] = [str(path) for path in ir_paths]
                     architecture_plan = self.build_native_architecture_plan(ir_paths, ui_stack, minimum_ios)
                     scroll_attachment_plan = self.build_and_validate_scroll_attachment_plan(ir_paths, architecture_plan)
+                    control_configuration_plan = self.build_and_validate_native_control_configuration_plan(ir_paths)
                     layout_relation_graph, _ = self.build_and_validate_structural_fidelity(ir_paths, architecture_plan)
                     native_layout_plan = self.build_and_validate_native_layout_plan(
                         ir_paths, architecture_plan, layout_relation_graph,
@@ -1693,6 +1727,7 @@ struct ContentView: View {
                         layout_relation_graph,
                         native_layout_plan,
                         scroll_attachment_plan,
+                        control_configuration_plan,
                         naming_plan,
                     )
                     self.build(project, scheme)

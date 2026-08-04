@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+"""Validate native system-control configuration coverage and geometry."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Any
+
+
+def load(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--plan", required=True, type=Path)
+    parser.add_argument("--out", required=True, type=Path)
+    args = parser.parse_args()
+    plan = load(args.plan)
+    issues: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    if plan.get("schemaVersion") != "native-control-configuration-plan-1.0":
+        issues.append({"code": "SCHEMA_VERSION_INVALID", "message": "Expected native-control-configuration-plan-1.0."})
+    for screen in plan.get("screens") or []:
+        screen_id = str(screen.get("screenId") or "")
+        if not screen_id:
+            issues.append({"code": "SCREEN_ID_MISSING", "message": "Every control plan screen requires an ID."})
+        for control in screen.get("controls") or []:
+            node_id = str(control.get("nodeId") or "")
+            key = (screen_id, node_id)
+            if not node_id or key in seen:
+                issues.append({"code": "CONTROL_ID_INVALID", "screenId": screen_id, "nodeId": node_id, "message": "Control IDs must be non-empty and unique."})
+            seen.add(key)
+            if control.get("strategy") not in {"system-control", "system-control-with-wrapper"}:
+                issues.append({"code": "CONTROL_STRATEGY_INVALID", "screenId": screen_id, "nodeId": node_id, "message": "Unsupported native control strategy."})
+            geometry = control.get("geometry") or {}
+            insets = geometry.get("contentInsetsPt") or []
+            if len(insets) != 4 or any(not isinstance(item, (int, float)) or item < 0 for item in insets):
+                issues.append({"code": "CONTROL_INSETS_INVALID", "screenId": screen_id, "nodeId": node_id, "message": "Control content insets must contain four non-negative values."})
+            if (control.get("behavior") or {}).get("usesNativeStateMachine") is not True:
+                issues.append({"code": "NATIVE_STATE_MACHINE_DISABLED", "screenId": screen_id, "nodeId": node_id, "message": "System controls must preserve their native state machine."})
+    report = {
+        "schemaVersion": "native-control-configuration-validation-1.0",
+        "status": "passed" if not issues else "failed",
+        "qualityGate": {"passed": not issues, "requiresScreenshots": False, "requiresMultimodalModel": False},
+        "issues": issues,
+        "summary": {"screenCount": len(plan.get("screens") or []), "controlCount": len(seen), "errorCount": len(issues)},
+    }
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0 if not issues else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

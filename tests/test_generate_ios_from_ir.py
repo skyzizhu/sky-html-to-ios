@@ -11,6 +11,7 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "generate_ios_from_ir.py"
+CONTROL_PLAN_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "build_native_control_configuration_plan.py"
 PAYLOAD = Path("Resources/Payload/HTMLToIOSGeneratedPayload.json")
 SWIFTUI_ROOT_FILE = Path("Application/HTMLToIOSGeneratedRoot.swift")
 MODELS_FILE = Path("Core/Models/HTMLToIOSGeneratedModels.swift")
@@ -89,6 +90,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
         ui_stack: str = "swiftui",
         naming_plan: Path | None = None,
         architecture_plan: Path | None = None,
+        control_configuration_plan: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         command = ["python3", str(SCRIPT)]
         for path in paths:
@@ -98,6 +100,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             command.extend(["--naming-plan", str(naming_plan)])
         if architecture_plan:
             command.extend(["--architecture-plan", str(architecture_plan)])
+        if control_configuration_plan:
+            command.extend(["--control-configuration-plan", str(control_configuration_plan)])
         if out_dir.parts[-2:] != ("Generated", "HTMLToIOS"):
             command.append("--allow-nonstandard-output")
         result = subprocess.run(command, text=True, capture_output=True, check=False)
@@ -518,9 +522,14 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             ])
             path = root / "controls.json"
             path.write_text(json.dumps(payload), encoding="utf-8")
+            control_plan = root / "native-control-configuration-plan.json"
+            result = subprocess.run([
+                "python3", str(CONTROL_PLAN_SCRIPT), "--ir", str(path), "--out", str(control_plan),
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
             swiftui_dir = root / "swiftui"
-            self.run_generator([path], swiftui_dir)
+            self.run_generator([path], swiftui_dir, control_configuration_plan=control_plan)
             generated = json.loads((swiftui_dir / PAYLOAD).read_text(encoding="utf-8"))
             generated_nodes = {
                 item["id"]: item
@@ -535,6 +544,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertEqual(generated_nodes[page_control["id"]]["controlConfig"]["pageCount"], 4)
             self.assertEqual(generated_nodes[page_control["id"]]["controlConfig"]["currentPage"], 1)
             self.assertEqual(generated_nodes[calendar["id"]]["controlConfig"]["calendarSelection"], "multi-date")
+            self.assertEqual(generated_nodes[slider["id"]]["controlConfig"]["contentInsets"], [0, 0, 0, 0])
+            self.assertEqual(generated_nodes[slider["id"]]["controlConfig"]["itemSpacing"], 8)
             for control in (
                 switch, search_input, search_bar, wheel_picker, activity,
                 page_control, paste_control, refresh_control, calendar,
@@ -558,11 +569,12 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "PasteButton(payloadType: String.self)",
                 "HTMLToIOSCalendarRepresentable(",
                 ".refreshable",
+                "HTMLToIOSOptionalTintModifier",
             ):
                 self.assertIn(expected, swiftui_runtime)
 
             uikit_dir = root / "uikit"
-            self.run_generator([path], uikit_dir, ui_stack="uikit")
+            self.run_generator([path], uikit_dir, ui_stack="uikit", control_configuration_plan=control_plan)
             uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             for expected in (
                 "UISlider()",
@@ -582,6 +594,9 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "UIPasteControl(configuration:",
                 "UIRefreshControl()",
                 "UICalendarView()",
+                "slider.minimumTrackTintColor",
+                "segmented.selectedSegmentTintColor",
+                "pageControl.currentPageIndicatorTintColor",
             ):
                 self.assertIn(expected, uikit_runtime)
 
@@ -1237,6 +1252,9 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("GeometryReader { proxy in", runtime)
             self.assertIn(".offset(y: proxy.safeAreaInsets.bottom)", runtime)
             self.assertIn("presentationDetents", root_source)
+            self.assertIn("HTMLToIOSScrollOffsetPreferenceKey", runtime)
+            self.assertIn('screen.topBarBehavior == "collapse"', runtime)
+            self.assertIn('screen.topBarBehavior == "hide-on-scroll"', runtime)
 
             uikit_dir = root / "uikit"
             self.run_generator([path], uikit_dir, ui_stack="uikit")
@@ -1245,6 +1263,9 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn('screen.bottomKeyboardAvoidance == "keyboard-layout-guide"', uikit_runtime)
             self.assertIn('? view.keyboardLayoutGuide.topAnchor', uikit_runtime)
             self.assertIn('screen.bottomBarPlacement == "viewport-overlay"', uikit_runtime)
+            self.assertIn("func scrollViewDidScroll(_ scrollView: UIScrollView)", uikit_runtime)
+            self.assertIn('case "appearance-change":', uikit_runtime)
+            self.assertIn("navigationController?.hidesBarsOnSwipe", uikit_runtime)
 
     def test_viewport_bar_releases_large_direct_children_without_relaxing_icons(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

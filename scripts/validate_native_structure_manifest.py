@@ -42,6 +42,7 @@ def main() -> int:
     parser.add_argument("--architecture-plan", required=True, type=Path)
     parser.add_argument("--native-layout-plan", required=True, type=Path)
     parser.add_argument("--scroll-attachment-plan", type=Path)
+    parser.add_argument("--control-configuration-plan", type=Path)
     parser.add_argument("--generated-dir", required=True, type=Path)
     parser.add_argument("--generation-manifest", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
@@ -52,6 +53,7 @@ def main() -> int:
     architecture = load_json(args.architecture_plan)
     native_layout = load_json(args.native_layout_plan)
     scroll_attachment = load_json(args.scroll_attachment_plan) if args.scroll_attachment_plan else {}
+    control_configuration = load_json(args.control_configuration_plan) if args.control_configuration_plan else {}
     generation = load_json(args.generation_manifest)
     if manifest.get("schemaVersion") != "native-structure-manifest-1.0":
         raise ValueError("--manifest must use native-structure-manifest-1.0")
@@ -63,6 +65,8 @@ def main() -> int:
         raise ValueError("--native-layout-plan must use native-layout-plan-1.1")
     if args.scroll_attachment_plan and scroll_attachment.get("schemaVersion") != "scroll-and-attachment-plan-1.0":
         raise ValueError("--scroll-attachment-plan must use scroll-and-attachment-plan-1.0")
+    if args.control_configuration_plan and control_configuration.get("schemaVersion") != "native-control-configuration-plan-1.0":
+        raise ValueError("--control-configuration-plan must use native-control-configuration-plan-1.0")
     if generation.get("schemaVersion") != "html-to-ios-generation-1.0":
         raise ValueError("--generation-manifest must use html-to-ios-generation-1.0")
 
@@ -94,6 +98,11 @@ def main() -> int:
             "STALE_SCROLL_ATTACHMENT_PLAN_PROVENANCE", None,
             "Native structure manifest was not generated from the current scroll and attachment plan.",
         ))
+    if args.control_configuration_plan and manifest.get("controlConfigurationPlanSha256") != sha256_file(args.control_configuration_plan):
+        issues.append(issue(
+            "STALE_CONTROL_CONFIGURATION_PLAN_PROVENANCE", None,
+            "Native structure manifest was not generated from the current control configuration plan.",
+        ))
     if manifest.get("generationManifestSha256") != sha256_file(args.generation_manifest):
         issues.append(issue(
             "STALE_GENERATION_MANIFEST_PROVENANCE", None,
@@ -104,6 +113,7 @@ def main() -> int:
     manifest_screens = {str(item.get("screenId") or ""): item for item in manifest.get("screens") or []}
     architecture_screens = {str(item.get("screenId") or ""): item for item in architecture.get("screens") or []}
     scroll_screens = {str(item.get("screenId") or ""): item for item in scroll_attachment.get("screens") or []}
+    control_screens = {str(item.get("screenId") or ""): item for item in control_configuration.get("screens") or []}
     if set(graph_screens) != set(manifest_screens):
         issues.append(issue(
             "NATIVE_SCREEN_SET_MISMATCH", None,
@@ -113,6 +123,11 @@ def main() -> int:
         issues.append(issue(
             "SCROLL_ATTACHMENT_SCREEN_SET_MISMATCH", None,
             f"Scroll-plan screens {sorted(scroll_screens)} do not match native manifest screens {sorted(manifest_screens)}.",
+        ))
+    if args.control_configuration_plan and set(control_screens) != set(manifest_screens):
+        issues.append(issue(
+            "CONTROL_CONFIGURATION_SCREEN_SET_MISMATCH", None,
+            f"Control-plan screens {sorted(control_screens)} do not match native manifest screens {sorted(manifest_screens)}.",
         ))
 
     generation_files = generation.get("files") or {}
@@ -282,6 +297,26 @@ def main() -> int:
                         "SCROLL_REGION_ATTACHMENT_NOT_CONSUMED", screen_id,
                         f"Generated {edge} region does not preserve attachment, behavior, and ownership.",
                         str(record.get("nodeId") or "") or None,
+                    ))
+        if args.control_configuration_plan:
+            planned_ids = {
+                str(item.get("nodeId") or "")
+                for item in (control_screens.get(screen_id) or {}).get("controls") or []
+            }
+            records = {
+                str(item.get("nodeId") or ""): item
+                for item in native_screen.get("controlConfigurationConsumption") or []
+            }
+            if planned_ids != set(records):
+                issues.append(issue(
+                    "CONTROL_CONFIGURATION_SET_MISMATCH", screen_id,
+                    "Generated native structure does not report every planned system control.",
+                ))
+            for node_id, record in records.items():
+                if record.get("status") != "consumed":
+                    issues.append(issue(
+                        "CONTROL_CONFIGURATION_NOT_CONSUMED", screen_id,
+                        "Generated payload does not consume the planned internal control configuration.", node_id,
                     ))
 
         for consumer in native_screen.get("consumerFiles") or []:

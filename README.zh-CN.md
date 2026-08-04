@@ -141,6 +141,7 @@ HTML 可以引用本地 CSS、JavaScript、图片、SVG 和字体。远程资源
 - 按本机 iPhoneOS SDK 审计控件目录，并验证识别、架构规划、SwiftUI 执行、UIKit 执行和最低系统版本编译可用性。
 - 覆盖当前审计 SDK 中全部公开 `UIControl` 子类，并覆盖 `UITextView`、`UISearchBar`、`UIPickerView`、`UIProgressView`、`UIActivityIndicatorView`、`UICalendarView` 等页面常用控件。
 - SwiftUI 没有直接等价控件时只使用局部 `UIViewRepresentable`，不允许把整页包装为 UIKit 或 `WKWebView`。
+- 生成并校验不依赖截图的原生控件配置计划，统一保存 content inset、内部间距、固有尺寸、轨道/填充/滑块/选中颜色、官方 style 和原生视觉状态；SwiftUI/UIKit 必须消费同一份计划。
 
 ### 3. 工程发现
 
@@ -818,6 +819,8 @@ Skill 可以处理普通 HTML，但结构和语义越清楚，自动还原越稳
 | `structural-fidelity-report.json` | 不依赖截图的来源到原生结构质量门禁 |
 | `native-layout-plan.json` | SwiftUI/UIKit 共用的可执行布局契约 |
 | `native-layout-plan-validation.json` | 代码生成前的布局降级门禁 |
+| `native-control-configuration-plan.json` | SwiftUI/UIKit 共用的系统控件内部几何、外观、style 与状态契约 |
+| `native-control-configuration-validation.json` | 不依赖截图的原生控件配置门禁 |
 | `native-structure-manifest.json` | 实际 Swift/Payload 对节点和关系的消费证据 |
 | `native-structure-validation.json` | Xcode target 接入前执行的生成后结构门禁 |
 | `screens/<id>/render-tree.json` | 浏览器渲染树 |

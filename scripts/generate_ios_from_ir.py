@@ -55,6 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--layout-relation-graph", type=Path)
     parser.add_argument("--native-layout-plan", type=Path)
     parser.add_argument("--scroll-attachment-plan", type=Path)
+    parser.add_argument("--control-configuration-plan", type=Path)
     parser.add_argument("--native-structure-manifest", type=Path)
     parser.add_argument("--naming-plan", type=Path)
     parser.add_argument("--conflict-dir", type=Path)
@@ -174,6 +175,22 @@ def load_scroll_attachment_plan(path: Path | None) -> tuple[dict[str, Any], dict
     }
     if not screens or "" in screens:
         raise ValueError(f"{path}: every scroll attachment screen needs a screenId")
+    return data, screens
+
+
+def load_control_configuration_plan(path: Path | None) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    if path is None:
+        return {}, {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("schemaVersion") != "native-control-configuration-plan-1.0":
+        raise ValueError(f"{path}: expected native-control-configuration-plan-1.0")
+    screens = {
+        str(screen.get("screenId") or ""): screen
+        for screen in data.get("screens") or []
+        if isinstance(screen, dict)
+    }
+    if not screens or "" in screens:
+        raise ValueError(f"{path}: every control configuration screen needs a screenId")
     return data, screens
 
 
@@ -627,6 +644,7 @@ class ScreenBuildContext:
     collection_layouts: dict[str, dict[str, Any]]
     compound_controls: dict[str, dict[str, Any]]
     positioned_children_by_owner: dict[str, list[str]]
+    control_configurations: dict[str, dict[str, Any]]
 
 
 def rich_text_runs(
@@ -1638,6 +1656,36 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "pasteDisplayMode": str(node_state.get("pasteDisplayMode") or "icon-and-label"),
             "calendarSelection": str(node_state.get("calendarSelection") or "single-date"),
         }
+    planned_control = context.control_configurations.get(node_id) or {}
+    if planned_control:
+        if control_config is None:
+            control_config = {
+                "minimum": 0, "maximum": 100, "step": 1, "value": "", "inputType": "",
+                "options": control_options, "allowsMultipleSelection": False,
+                "pageCount": 0, "currentPage": 0, "pickerStyle": "",
+                "pasteDisplayMode": "icon-and-label", "calendarSelection": "single-date",
+            }
+        geometry = planned_control.get("geometry") or {}
+        appearance = planned_control.get("appearance") or {}
+        behavior = planned_control.get("behavior") or {}
+        control_config.update({
+            "contentInsets": geometry.get("contentInsetsPt") or [0, 0, 0, 0],
+            "itemSpacing": number(geometry.get("itemSpacingPt")),
+            "sourceWidth": geometry.get("sourceWidthPt"),
+            "sourceHeight": geometry.get("sourceHeightPt"),
+            "preservesIntrinsicSize": bool(geometry.get("preservesIntrinsicSize")),
+            "tint": appearance.get("tint"),
+            "trackTint": appearance.get("trackTint"),
+            "fillTint": appearance.get("fillTint"),
+            "thumbTint": appearance.get("thumbTint"),
+            "selectedTint": appearance.get("selectedTint"),
+            "selectedForeground": appearance.get("selectedForeground"),
+            "disabledForeground": appearance.get("disabledForeground"),
+            "disabledOpacity": number(appearance.get("disabledOpacity"), 0.5),
+            "preferredStyle": str(behavior.get("preferredStyle") or "automatic"),
+            "nativeStateNames": [str(item) for item in behavior.get("stateNames") or []],
+            "requiresWrapper": bool(behavior.get("requiresWrapper")),
+        })
     layout_spacing = (
         number(layout_container.get("gapPt")) * context.design_scale
         if layout_container.get("gapPt") is not None
@@ -1903,6 +1951,7 @@ def build_screen(
     architecture: dict[str, Any] | None = None,
     native_layout: dict[str, Any] | None = None,
     scroll_attachment: dict[str, Any] | None = None,
+    control_configuration: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     screen = ir["screens"][0]
     screen_id = str(screen.get("id") or "screen")
@@ -1917,6 +1966,12 @@ def build_screen(
     }
     native_layout = native_layout or {}
     scroll_attachment = scroll_attachment or {}
+    control_configuration = control_configuration or {}
+    control_configurations = {
+        str(item.get("nodeId") or ""): item
+        for item in control_configuration.get("controls") or []
+        if isinstance(item, dict) and item.get("nodeId")
+    }
     layout_containers = {
         str(item.get("containerNodeId") or ""): item
         for item in native_layout.get("containers") or []
@@ -2412,6 +2467,7 @@ def build_screen(
         collection_layouts=collection_layouts,
         compound_controls=compound_controls,
         positioned_children_by_owner=positioned_children_by_owner,
+        control_configurations=control_configurations,
     )
     root = node_payload(context, root_id) or {
         "id": root_id,
@@ -2949,6 +3005,22 @@ struct HTMLToIOSControlConfigSpec: Codable {{
     let pickerStyle: String
     let pasteDisplayMode: String
     let calendarSelection: String
+    let contentInsets: [Double]?
+    let itemSpacing: Double?
+    let sourceWidth: Double?
+    let sourceHeight: Double?
+    let preservesIntrinsicSize: Bool?
+    let tint: String?
+    let trackTint: String?
+    let fillTint: String?
+    let thumbTint: String?
+    let selectedTint: String?
+    let selectedForeground: String?
+    let disabledForeground: String?
+    let disabledOpacity: Double?
+    let preferredStyle: String?
+    let nativeStateNames: [String]?
+    let requiresWrapper: Bool?
 }}
 
 struct HTMLToIOSControlOptionSpec: Codable, Identifiable {{
@@ -3120,10 +3192,19 @@ SWIFTUI_RUNTIME = r'''// Generated by sky-html-to-ios. Native SwiftUI rendering 
 import SwiftUI
 import UIKit
 
+private func htmlToIOSUIColor(_ value: String?) -> UIColor? {
+    guard let value, !value.isEmpty else { return nil }
+    return UIColor(Color(htmlToIOS: value))
+}
+
 private struct HTMLToIOSSearchBarRepresentable: UIViewRepresentable {
     @Binding var text: String
     let placeholder: String
     let isEnabled: Bool
+    let tint: String?
+    let foreground: String?
+    let background: String?
+    let contentInsets: [Double]
 
     final class Coordinator: NSObject, UISearchBarDelegate {
         var owner: HTMLToIOSSearchBarRepresentable
@@ -3142,6 +3223,15 @@ private struct HTMLToIOSSearchBarRepresentable: UIViewRepresentable {
         context.coordinator.owner = self
         view.text = text
         view.placeholder = placeholder
+        view.tintColor = htmlToIOSUIColor(tint)
+        view.searchTextField.textColor = htmlToIOSUIColor(foreground)
+        view.searchTextField.backgroundColor = htmlToIOSUIColor(background) ?? .clear
+        if contentInsets.count == 4 {
+            view.directionalLayoutMargins = NSDirectionalEdgeInsets(
+                top: contentInsets[0], leading: contentInsets[3],
+                bottom: contentInsets[2], trailing: contentInsets[1]
+            )
+        }
         if #available(iOS 16.4, *) {
             view.isEnabled = isEnabled
         } else {
@@ -3151,9 +3241,19 @@ private struct HTMLToIOSSearchBarRepresentable: UIViewRepresentable {
     }
 }
 
+private struct HTMLToIOSOptionalTintModifier: ViewModifier {
+    let value: String?
+    @ViewBuilder func body(content: Content) -> some View {
+        if let value, !value.isEmpty { content.tint(Color(htmlToIOS: value)) }
+        else { content }
+    }
+}
+
 private struct HTMLToIOSPageControlRepresentable: UIViewRepresentable {
     let numberOfPages: Int
     @Binding var currentPage: Double
+    let pageTint: String?
+    let currentPageTint: String?
 
     final class Coordinator: NSObject {
         var owner: HTMLToIOSPageControlRepresentable
@@ -3171,13 +3271,17 @@ private struct HTMLToIOSPageControlRepresentable: UIViewRepresentable {
         context.coordinator.owner = self
         view.numberOfPages = max(numberOfPages, 1)
         view.currentPage = min(max(Int(currentPage), 0), view.numberOfPages - 1)
+        view.pageIndicatorTintColor = htmlToIOSUIColor(pageTint)
+        view.currentPageIndicatorTintColor = htmlToIOSUIColor(currentPageTint)
     }
 }
 
 private struct HTMLToIOSCalendarRepresentable: UIViewRepresentable {
     let selectionMode: String
+    let tint: String?
     func makeUIView(context: Context) -> UICalendarView {
         let view = UICalendarView(frame: .zero)
+        view.tintColor = htmlToIOSUIColor(tint)
         if selectionMode == "multi-date" {
             view.selectionBehavior = UICalendarSelectionMultiDate(delegate: nil)
         } else {
@@ -4544,6 +4648,7 @@ struct HTMLToIOSNativeNodeView: View {
             }
         case "switch", "toggle":
             Toggle(spec.text, isOn: store.flagBinding(for: spec.id))
+                .modifier(HTMLToIOSOptionalTintModifier(value: spec.controlConfig?.fillTint ?? spec.controlConfig?.tint))
         case "checkbox":
             Toggle(spec.text, isOn: store.flagBinding(for: spec.id))
                 .toggleStyle(HTMLToIOSCheckboxToggleStyle())
@@ -4560,6 +4665,7 @@ struct HTMLToIOSNativeNodeView: View {
                 in: (config?.minimum ?? 0)...max(config?.maximum ?? 100, config?.minimum ?? 0),
                 step: config?.step ?? 1
             )
+            .modifier(HTMLToIOSOptionalTintModifier(value: config?.fillTint ?? config?.tint))
         case "stepper":
             let config = spec.controlConfig
             Stepper(
@@ -4571,6 +4677,7 @@ struct HTMLToIOSNativeNodeView: View {
                 in: (config?.minimum ?? 0)...max(config?.maximum ?? 100, config?.minimum ?? 0),
                 step: config?.step ?? 1
             )
+            .modifier(HTMLToIOSOptionalTintModifier(value: config?.tint))
         case "segmented-control":
             let options = spec.controlConfig?.options ?? []
             let initial = options.first(where: \.selected)?.id ?? options.first?.id ?? ""
@@ -4581,6 +4688,7 @@ struct HTMLToIOSNativeNodeView: View {
                 ForEach(options) { option in Text(option.title).tag(option.id) }
             }
             .pickerStyle(.segmented)
+            .modifier(HTMLToIOSOptionalTintModifier(value: spec.controlConfig?.selectedTint ?? spec.controlConfig?.tint))
         case "wheel-picker":
             let options = spec.controlConfig?.options ?? []
             let initial = options.first(where: \.selected)?.id ?? options.first?.id ?? ""
@@ -4588,6 +4696,7 @@ struct HTMLToIOSNativeNodeView: View {
                 ForEach(options) { option in Text(option.title).tag(option.id) }
             }
             .pickerStyle(.wheel)
+            .modifier(HTMLToIOSOptionalTintModifier(value: spec.controlConfig?.tint))
         case "select", "picker":
             let options = spec.controlConfig?.options ?? []
             let initial = options.first(where: \.selected)?.id ?? options.first?.id ?? ""
@@ -4625,6 +4734,7 @@ struct HTMLToIOSNativeNodeView: View {
                 displayedComponents: components
             )
             .labelsHidden()
+            .modifier(HTMLToIOSOptionalTintModifier(value: spec.controlConfig?.tint))
         case "color-picker":
             ColorPicker(
                 spec.text,
@@ -4639,18 +4749,25 @@ struct HTMLToIOSNativeNodeView: View {
             HTMLToIOSSearchBarRepresentable(
                 text: store.binding(for: spec.id, initialValue: spec.textBehavior?.initialValue ?? spec.text, maxLength: spec.textBehavior?.maxLength),
                 placeholder: spec.placeholder,
-                isEnabled: spec.isEnabled
+                isEnabled: spec.isEnabled,
+                tint: spec.controlConfig?.tint,
+                foreground: spec.controlConfig?.selectedForeground ?? spec.style.foreground,
+                background: spec.controlConfig?.trackTint,
+                contentInsets: spec.controlConfig?.contentInsets ?? [0, 0, 0, 0]
             )
         case "activity-indicator", "loading":
             ProgressView()
                 .controlSize((spec.style.preferredHeight ?? 20) >= 28 ? .large : .regular)
+                .modifier(HTMLToIOSOptionalTintModifier(value: spec.controlConfig?.tint ?? spec.style.foreground))
         case "page-control":
             HTMLToIOSPageControlRepresentable(
                 numberOfPages: max(spec.controlConfig?.pageCount ?? 0, 1),
                 currentPage: store.numericBinding(
                     for: spec.id,
                     initialValue: Double(spec.controlConfig?.currentPage ?? 0)
-                )
+                ),
+                pageTint: spec.controlConfig?.trackTint,
+                currentPageTint: spec.controlConfig?.fillTint ?? spec.controlConfig?.tint
             )
         case "paste-control":
             PasteButton(payloadType: String.self) { values in
@@ -4661,7 +4778,8 @@ struct HTMLToIOSNativeNodeView: View {
             }
         case "calendar-view":
             HTMLToIOSCalendarRepresentable(
-                selectionMode: spec.controlConfig?.calendarSelection ?? "single-date"
+                selectionMode: spec.controlConfig?.calendarSelection ?? "single-date",
+                tint: spec.controlConfig?.tint
             )
         case "refresh-control":
             EmptyView()
@@ -4680,6 +4798,7 @@ struct HTMLToIOSNativeNodeView: View {
                 value: max(value - minimum, 0),
                 total: max(maximum - minimum, 0.0001)
             )
+            .modifier(HTMLToIOSOptionalTintModifier(value: config?.fillTint ?? config?.tint))
         case "carousel":
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: verticalAlignment, spacing: contentSpacing) { dynamicOrOrderedContent }
@@ -5206,10 +5325,16 @@ struct HTMLToIOSGeneratedToolbarContent: ToolbarContent {
     }
 }
 
+private struct HTMLToIOSScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
 struct HTMLToIOSGeneratedScrollContent: View {
     @ObservedObject var store: HTMLToIOSGeneratedStore
     let screen: HTMLToIOSScreenSpec
     let typedRegistry: HTMLToIOSTypedViewRegistry?
+    let onScrollOffsetChange: (CGFloat) -> Void
 
     @ViewBuilder var body: some View {
         if ["static-view", "static-grid", "static-list"].contains(screen.contentContainer.kind) {
@@ -5223,10 +5348,19 @@ struct HTMLToIOSGeneratedScrollContent: View {
         } else {
             ScrollViewReader { proxy in
                 ScrollView(.vertical) {
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: HTMLToIOSScrollOffsetPreferenceKey.self,
+                            value: -proxy.frame(in: .named("html-to-ios-root-scroll")).minY
+                        )
+                    }
+                    .frame(height: 0)
                     HTMLToIOSNativeNodeView(store: store, spec: scrollRoot, typedRegistry: typedRegistry)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                         .id(screen.root.id)
                 }
+                .coordinateSpace(name: "html-to-ios-root-scroll")
+                .onPreferenceChange(HTMLToIOSScrollOffsetPreferenceKey.self) { onScrollOffsetChange(max($0, 0)) }
                 .clipped()
                 .accessibilityIdentifier(screen.root.id)
                 .background {
@@ -5260,6 +5394,7 @@ struct HTMLToIOSGeneratedScreenView: View {
     @ObservedObject var store: HTMLToIOSGeneratedStore
     let screen: HTMLToIOSScreenSpec
     let typedRegistry: HTMLToIOSTypedViewRegistry?
+    @State private var rootScrollOffset: CGFloat = 0
 
     var body: some View {
         insetContent
@@ -5267,7 +5402,12 @@ struct HTMLToIOSGeneratedScreenView: View {
     }
 
     private var scrollContent: some View {
-        HTMLToIOSGeneratedScrollContent(store: store, screen: screen, typedRegistry: typedRegistry)
+        HTMLToIOSGeneratedScrollContent(
+            store: store,
+            screen: screen,
+            typedRegistry: typedRegistry,
+            onScrollOffsetChange: { rootScrollOffset = $0 }
+        )
     }
 
     private var navigationContent: some View {
@@ -5330,7 +5470,37 @@ struct HTMLToIOSGeneratedScreenView: View {
         if let topBar = screen.topBar {
             HTMLToIOSNativeNodeView(store: store, spec: topBar, typedRegistry: typedRegistry)
                 .frame(maxWidth: .infinity)
+                .frame(height: topBarFrameHeight, alignment: .bottom)
+                .clipped()
+                .offset(y: topBarVerticalOffset)
+                .opacity(topBarOpacity)
+                .background {
+                    Color(htmlToIOS: topBar.style.background)
+                        .opacity(screen.topBarBehavior == "appearance-change" ? topBarScrollProgress : 1)
+                }
+                .shadow(
+                    color: .black.opacity(screen.topBarBehavior == "appearance-change" ? 0.12 * topBarScrollProgress : 0),
+                    radius: 6, y: 2
+                )
+                .animation(.easeOut(duration: 0.18), value: topBarVisibilityState)
         }
+    }
+
+    private var topBarSourceHeight: CGFloat { CGFloat(screen.topBar?.style.preferredHeight ?? 44) }
+    private var topBarScrollProgress: CGFloat {
+        min(max(rootScrollOffset / max(topBarSourceHeight, 1), 0), 1)
+    }
+    private var topBarVisibilityState: Bool { rootScrollOffset > max(topBarSourceHeight * 0.5, 20) }
+    private var topBarFrameHeight: CGFloat? {
+        screen.topBarBehavior == "collapse"
+            ? max(topBarSourceHeight * (1 - topBarScrollProgress), 0)
+            : nil
+    }
+    private var topBarVerticalOffset: CGFloat {
+        screen.topBarBehavior == "hide-on-scroll" ? -topBarSourceHeight * topBarScrollProgress : 0
+    }
+    private var topBarOpacity: Double {
+        screen.topBarBehavior == "hide-on-scroll" ? Double(1 - topBarScrollProgress) : 1
     }
 
     @ViewBuilder private var bottomBarContent: some View {
@@ -6603,11 +6773,14 @@ final class HTMLToIOSNodeRenderer {
             view = textView
         case "switch", "toggle":
             let row = UIStackView()
-            row.axis = .horizontal; row.spacing = 8
+            row.axis = .horizontal; row.spacing = spec.controlConfig?.itemSpacing ?? 8
             let label = makeLabel(spec.text, spec: spec)
             let toggle = UISwitch()
             toggle.isOn = spec.selectionStateID == nil ? (spec.isInitiallySelected ?? false) : state.isSelected(spec)
             toggle.isEnabled = spec.isEnabled
+            toggle.onTintColor = UIColor(htmlToIOS: spec.controlConfig?.fillTint ?? spec.controlConfig?.tint)
+            toggle.thumbTintColor = UIColor(htmlToIOS: spec.controlConfig?.thumbTint)
+            toggle.tintColor = UIColor(htmlToIOS: spec.controlConfig?.trackTint)
             if spec.action != nil {
                 toggle.addAction(UIAction { [actionHandler] _ in actionHandler(spec.action) }, for: .valueChanged)
             }
@@ -6637,13 +6810,16 @@ final class HTMLToIOSNodeRenderer {
             slider.maximumValue = Float(max(config?.maximum ?? 100, config?.minimum ?? 0))
             slider.value = Float(Double(config?.value ?? "") ?? config?.minimum ?? 0)
             slider.isEnabled = spec.isEnabled
+            slider.minimumTrackTintColor = UIColor(htmlToIOS: config?.fillTint ?? config?.tint)
+            slider.maximumTrackTintColor = UIColor(htmlToIOS: config?.trackTint)
+            slider.thumbTintColor = UIColor(htmlToIOS: config?.thumbTint)
             slider.addAction(UIAction { [state, weak slider] _ in
                 state.values[spec.id] = String(slider?.value ?? 0)
             }, for: .valueChanged)
             view = slider
         case "stepper":
             let row = UIStackView()
-            row.axis = .horizontal; row.spacing = 8
+            row.axis = .horizontal; row.spacing = spec.controlConfig?.itemSpacing ?? 8
             if !spec.text.isEmpty { row.addArrangedSubview(makeLabel(spec.text, spec: spec)) }
             let stepper = UIStepper()
             let config = spec.controlConfig
@@ -6652,6 +6828,7 @@ final class HTMLToIOSNodeRenderer {
             stepper.stepValue = config?.step ?? 1
             stepper.value = Double(config?.value ?? "") ?? config?.minimum ?? 0
             stepper.isEnabled = spec.isEnabled
+            stepper.tintColor = UIColor(htmlToIOS: config?.tint)
             stepper.addAction(UIAction { [state, weak stepper] _ in
                 state.values[spec.id] = String(stepper?.value ?? 0)
             }, for: .valueChanged)
@@ -6664,6 +6841,13 @@ final class HTMLToIOSNodeRenderer {
                 ? UISegmentedControl.noSegment
                 : (options.firstIndex(where: \.selected) ?? 0)
             segmented.isEnabled = spec.isEnabled
+            segmented.selectedSegmentTintColor = UIColor(htmlToIOS: spec.controlConfig?.selectedTint ?? spec.controlConfig?.fillTint)
+            if let color = UIColor(htmlToIOS: spec.controlConfig?.selectedForeground) {
+                segmented.setTitleTextAttributes([.foregroundColor: color], for: .selected)
+            }
+            if let color = UIColor(htmlToIOS: spec.style.foreground) {
+                segmented.setTitleTextAttributes([.foregroundColor: color], for: .normal)
+            }
             segmented.addAction(UIAction { [state, weak segmented] _ in
                 guard let segmented, segmented.selectedSegmentIndex >= 0,
                       segmented.selectedSegmentIndex < options.count else { return }
@@ -6673,6 +6857,7 @@ final class HTMLToIOSNodeRenderer {
         case "wheel-picker":
             let picker = HTMLToIOSGeneratedPickerView()
             picker.configure(options: spec.controlConfig?.options ?? [])
+            picker.tintColor = UIColor(htmlToIOS: spec.controlConfig?.tint)
             picker.onSelectionChanged = { [state] value in state.values[spec.id] = value }
             view = picker
         case "select", "picker", "multi-select":
@@ -6695,7 +6880,11 @@ final class HTMLToIOSNodeRenderer {
             view = button
         case "date-input":
             let picker = UIDatePicker()
-            picker.preferredDatePickerStyle = .compact
+            switch spec.controlConfig?.preferredStyle ?? spec.controlConfig?.pickerStyle {
+            case "wheel": picker.preferredDatePickerStyle = .wheels
+            case "inline": picker.preferredDatePickerStyle = .inline
+            default: picker.preferredDatePickerStyle = .compact
+            }
             switch spec.controlConfig?.inputType {
             case "time": picker.datePickerMode = .time
             case "datetime-local": picker.datePickerMode = .dateAndTime
@@ -6703,6 +6892,7 @@ final class HTMLToIOSNodeRenderer {
             }
             picker.date = HTMLToIOSUIKitDateParser.date(from: spec.controlConfig?.value ?? "")
             picker.isEnabled = spec.isEnabled
+            picker.tintColor = UIColor(htmlToIOS: spec.controlConfig?.tint)
             picker.addAction(UIAction { [state, weak picker] _ in
                 guard let picker else { return }
                 state.values[spec.id] = ISO8601DateFormatter().string(from: picker.date)
@@ -6712,12 +6902,16 @@ final class HTMLToIOSNodeRenderer {
             let colorWell = UIColorWell()
             colorWell.selectedColor = UIColor(htmlToIOS: spec.controlConfig?.value) ?? UIColor(htmlToIOS: spec.style.foreground)
             colorWell.isEnabled = spec.isEnabled
+            colorWell.tintColor = UIColor(htmlToIOS: spec.controlConfig?.tint)
             view = colorWell
         case "search-bar":
             let searchBar = UISearchBar(frame: .zero)
             searchBar.searchBarStyle = .minimal
             searchBar.text = state.values[spec.id] ?? spec.textBehavior?.initialValue ?? spec.text
             searchBar.placeholder = spec.placeholder
+            searchBar.tintColor = UIColor(htmlToIOS: spec.controlConfig?.tint)
+            searchBar.searchTextField.textColor = UIColor(htmlToIOS: spec.controlConfig?.selectedForeground ?? spec.style.foreground)
+            searchBar.searchTextField.backgroundColor = UIColor(htmlToIOS: spec.controlConfig?.trackTint) ?? .clear
             if #available(iOS 16.4, *) {
                 searchBar.isEnabled = spec.isEnabled
             } else {
@@ -6728,6 +6922,7 @@ final class HTMLToIOSNodeRenderer {
         case "activity-indicator", "loading":
             let indicator = UIActivityIndicatorView(style: (spec.style.preferredHeight ?? 20) >= 28 ? .large : .medium)
             indicator.hidesWhenStopped = false
+            indicator.color = UIColor(htmlToIOS: spec.controlConfig?.tint ?? spec.style.foreground)
             indicator.startAnimating()
             view = indicator
         case "page-control":
@@ -6735,6 +6930,8 @@ final class HTMLToIOSNodeRenderer {
             pageControl.numberOfPages = max(spec.controlConfig?.pageCount ?? 0, 1)
             pageControl.currentPage = min(max(spec.controlConfig?.currentPage ?? 0, 0), pageControl.numberOfPages - 1)
             pageControl.isEnabled = spec.isEnabled
+            pageControl.pageIndicatorTintColor = UIColor(htmlToIOS: spec.controlConfig?.trackTint)
+            pageControl.currentPageIndicatorTintColor = UIColor(htmlToIOS: spec.controlConfig?.fillTint ?? spec.controlConfig?.tint)
             pageControl.addAction(UIAction { [weak pageControl, state] _ in
                 guard let control = pageControl else { return }
                 state.values[spec.id] = String(control.currentPage)
@@ -6748,9 +6945,12 @@ final class HTMLToIOSNodeRenderer {
             case "arrow-and-label": configuration.displayMode = .arrowAndLabel
             default: configuration.displayMode = .iconAndLabel
             }
-            view = UIPasteControl(configuration: configuration)
+            let paste = UIPasteControl(configuration: configuration)
+            paste.tintColor = UIColor(htmlToIOS: spec.controlConfig?.tint)
+            view = paste
         case "calendar-view":
             let calendar = UICalendarView()
+            calendar.tintColor = UIColor(htmlToIOS: spec.controlConfig?.tint)
             if spec.controlConfig?.calendarSelection == "multi-date" {
                 calendar.selectionBehavior = UICalendarSelectionMultiDate(delegate: nil)
             } else {
@@ -6779,6 +6979,8 @@ final class HTMLToIOSNodeRenderer {
             let maximum = spec.controlConfig?.maximum ?? 1
             let value = Double(spec.controlConfig?.value ?? "") ?? minimum
             progress.progress = Float(min(max((value - minimum) / max(maximum - minimum, 0.0001), 0), 1))
+            progress.progressTintColor = UIColor(htmlToIOS: spec.controlConfig?.fillTint ?? spec.controlConfig?.tint)
+            progress.trackTintColor = UIColor(htmlToIOS: spec.controlConfig?.trackTint)
             view = progress
         case "carousel", "scroll":
             view = makeScrollContainer(spec)
@@ -6844,6 +7046,7 @@ final class HTMLToIOSNodeRenderer {
           }
         }
         applyStyle(spec, to: view)
+        applyNativeControlConfiguration(spec, to: view)
         installControlVisualStates(spec, on: view)
         attachOverlayChildren(spec, to: view)
         applyMotion(spec, to: view)
@@ -7530,6 +7733,34 @@ final class HTMLToIOSNodeRenderer {
         }
     }
 
+    private func applyNativeControlConfiguration(_ spec: HTMLToIOSNodeSpec, to view: UIView) {
+        guard let config = spec.controlConfig else { return }
+        if let color = UIColor(htmlToIOS: config.tint) { view.tintColor = color }
+        if !spec.isEnabled { view.alpha = config.disabledOpacity ?? 0.5 }
+        if let button = view as? UIButton, let insets = config.contentInsets, insets.count == 4 {
+            let directionalInsets = NSDirectionalEdgeInsets(
+                top: insets[0], leading: insets[3], bottom: insets[2], trailing: insets[1]
+            )
+            if var configuration = button.configuration {
+                configuration.contentInsets = directionalInsets
+                button.configuration = configuration
+            } else {
+                button.contentEdgeInsets = UIEdgeInsets(
+                    top: insets[0], left: insets[3], bottom: insets[2], right: insets[1]
+                )
+            }
+        }
+        if let stack = view as? UIStackView, let spacing = config.itemSpacing { stack.spacing = spacing }
+    }
+
+    private func firstNativeControl(in view: UIView) -> UIControl? {
+        if let control = view as? UIControl { return control }
+        for child in view.subviews {
+            if let control = firstNativeControl(in: child) { return control }
+        }
+        return nil
+    }
+
     private func installControlVisualStates(_ spec: HTMLToIOSNodeSpec, on view: UIView) {
         guard !spec.controlVisualStates.isEmpty else { return }
         let update: (String) -> Void = { [weak self, weak view] stateName in
@@ -7545,6 +7776,12 @@ final class HTMLToIOSNodeRenderer {
             field.addAction(UIAction { _ in update("normal") }, for: .editingDidEnd)
         } else if let textView = view as? HTMLToIOSManagedTextView {
             textView.visualStateDidChange = update
+        } else if let control = firstNativeControl(in: view) {
+            control.addAction(UIAction { _ in update("pressed") }, for: .touchDown)
+            control.addAction(UIAction { _ in update("normal") }, for: [.touchUpInside, .touchUpOutside, .touchCancel])
+            control.addAction(UIAction { [weak control] _ in
+                update(control?.isSelected == true ? "selected" : "normal")
+            }, for: .valueChanged)
         }
         update(spec.isEnabled ? (state.isSelected(spec) ? "selected" : "normal") : "disabled")
     }
@@ -7744,7 +7981,7 @@ private final class HTMLToIOSClosureSwipeGestureRecognizer: UISwipeGestureRecogn
     @objc func invoke() { action() }
 }
 
-class HTMLToIOSGeneratedScreenViewController: UIViewController {
+class HTMLToIOSGeneratedScreenViewController: UIViewController, UIScrollViewDelegate {
     let screen: HTMLToIOSScreenSpec
     let actionHandler: (HTMLToIOSActionSpec?) -> Void
     private let generatedState = HTMLToIOSUIKitState()
@@ -7752,6 +7989,7 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
     private weak var generatedScrollView: UIScrollView?
     private weak var generatedTopBar: UIView?
     private weak var generatedBottomBar: UIView?
+    private var generatedTopBarBaseColor: UIColor?
 
     init(screen: HTMLToIOSScreenSpec, actionHandler: @escaping (HTMLToIOSActionSpec?) -> Void) {
         self.screen = screen; self.actionHandler = actionHandler; super.init(nibName: nil, bundle: nil)
@@ -7829,6 +8067,7 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
             view.addSubview(scroll)
             scroll.addSubview(content)
             generatedScrollView = scroll
+            scroll.delegate = self
             constraints.append(contentsOf: [
                 scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
                 scroll.topAnchor.constraint(equalTo: view.topAnchor), scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -7843,6 +8082,7 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
             let top = renderer.makeView(topBar)
             view.addSubview(top)
             generatedTopBar = top
+            generatedTopBarBaseColor = top.backgroundColor
             constraints.append(contentsOf: [
                 top.leadingAnchor.constraint(equalTo: view.leadingAnchor),
                 top.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -7889,6 +8129,38 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
     func wrapGeneratedContent(_ content: UIView) -> UIView { content }
     func configureTypedComponents(_ renderer: HTMLToIOSNodeRenderer) {}
 
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === generatedScrollView else { return }
+        let offset = max(scrollView.contentOffset.y + scrollView.adjustedContentInset.top, 0)
+        updateTopBarForScroll(offset)
+    }
+
+    private func updateTopBarForScroll(_ offset: CGFloat) {
+        guard let top = generatedTopBar else { return }
+        let height = max(top.bounds.height, CGFloat(screen.topBar?.style.preferredHeight ?? 44), 1)
+        let progress = min(max(offset / height, 0), 1)
+        switch screen.topBarBehavior {
+        case "hide-on-scroll":
+            top.transform = CGAffineTransform(translationX: 0, y: -height * progress)
+            top.alpha = 1 - progress
+        case "collapse":
+            top.transform = CGAffineTransform(translationX: 0, y: -height * progress / 2)
+                .scaledBy(x: 1, y: max(1 - progress, 0.01))
+            top.alpha = 1
+        case "appearance-change":
+            top.transform = .identity
+            top.alpha = 1
+            top.backgroundColor = generatedTopBarBaseColor?.withAlphaComponent(progress)
+            top.layer.shadowColor = UIColor.black.cgColor
+            top.layer.shadowOpacity = Float(0.12 * progress)
+            top.layer.shadowRadius = 6
+            top.layer.shadowOffset = CGSize(width: 0, height: 2)
+        default:
+            top.transform = .identity
+            top.alpha = 1
+        }
+    }
+
     private func scheduleAutomaticActions() {
         guard !scheduledAutomaticActions else { return }
         scheduledAutomaticActions = true
@@ -7913,6 +8185,7 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setNavigationBarHidden(!screen.showsNavigationBar, animated: false)
+        navigationController?.hidesBarsOnSwipe = screen.topBar == nil && screen.topBarBehavior == "hide-on-scroll"
         navigationController?.navigationBar.prefersLargeTitles = screen.navigation.titleMode == "large"
         navigationItem.largeTitleDisplayMode = screen.navigation.titleMode == "large" ? .always : .never
         navigationItem.hidesBackButton = screen.navigation.backButton == "hidden"
@@ -9401,6 +9674,8 @@ def build_native_structure_manifest(
     native_layout_by_screen: dict[str, dict[str, Any]],
     scroll_attachment_plan: dict[str, Any],
     scroll_attachment_by_screen: dict[str, dict[str, Any]],
+    control_configuration_plan: dict[str, Any],
+    control_configuration_by_screen: dict[str, dict[str, Any]],
     screen_source_files: dict[str, list[str]],
     generation_manifest: dict[str, Any],
     out_dir: Path,
@@ -9408,6 +9683,7 @@ def build_native_structure_manifest(
     graph_path: Path,
     native_layout_path: Path | None,
     scroll_attachment_path: Path | None,
+    control_configuration_path: Path | None,
     ui_stack: str,
 ) -> dict[str, Any]:
     runtime_path = out_dir / "Core/Runtime/HTMLToIOSGeneratedRuntime.swift"
@@ -9785,6 +10061,32 @@ def build_native_structure_manifest(
             })
         regions = ir_screen.get("regions") or {}
         scroll_contract = scroll_attachment_by_screen.get(screen_id) or {}
+        planned_controls = (control_configuration_by_screen.get(screen_id) or {}).get("controls") or []
+        control_configuration_consumption = []
+        for planned in planned_controls:
+            node_id = str(planned.get("nodeId") or "")
+            generated = payload_nodes.get(node_id) or {}
+            config = generated.get("controlConfig") or {}
+            geometry = planned.get("geometry") or {}
+            appearance = planned.get("appearance") or {}
+            behavior = planned.get("behavior") or {}
+            checks = {
+                "payloadNode": bool(generated),
+                "controlConfig": bool(config),
+                "contentInsets": list(config.get("contentInsets") or []) == list(geometry.get("contentInsetsPt") or []),
+                "itemSpacing": number(config.get("itemSpacing")) == number(geometry.get("itemSpacingPt")),
+                "tint": config.get("tint") == appearance.get("tint"),
+                "fillTint": config.get("fillTint") == appearance.get("fillTint"),
+                "trackTint": config.get("trackTint") == appearance.get("trackTint"),
+                "preferredStyle": str(config.get("preferredStyle") or "automatic") == str(behavior.get("preferredStyle") or "automatic"),
+                "nativeStates": list(config.get("nativeStateNames") or []) == list(behavior.get("stateNames") or []),
+            }
+            control_configuration_consumption.append({
+                "nodeId": node_id,
+                "semantic": planned.get("semantic"),
+                "status": "consumed" if all(checks.values()) else "not-consumed",
+                "checks": checks,
+            })
         scroll_region_consumption = {}
         for edge, payload_key, placement_key, behavior_key in (
             ("top", "topBar", "topBarPlacement", "topBarBehavior"),
@@ -9857,6 +10159,7 @@ def build_native_structure_manifest(
                 },
                 "regions": scroll_region_consumption,
             },
+            "controlConfigurationConsumption": control_configuration_consumption,
             "regions": {
                 "top": {
                     "sourceNodeId": (regions.get("topBar") or {}).get("nodeId"),
@@ -9889,6 +10192,9 @@ def build_native_structure_manifest(
         "scrollAttachmentPlan": str(scroll_attachment_path.resolve()) if scroll_attachment_path else None,
         "scrollAttachmentPlanSha256": sha256_file(scroll_attachment_path) if scroll_attachment_path else None,
         "scrollAttachmentPlanSchemaVersion": scroll_attachment_plan.get("schemaVersion") if scroll_attachment_plan else None,
+        "controlConfigurationPlan": str(control_configuration_path.resolve()) if control_configuration_path else None,
+        "controlConfigurationPlanSha256": sha256_file(control_configuration_path) if control_configuration_path else None,
+        "controlConfigurationPlanSchemaVersion": control_configuration_plan.get("schemaVersion") if control_configuration_plan else None,
         "runtimeCapabilities": runtime_capabilities,
         "generationManifest": str((out_dir / MANIFEST_NAME).resolve()),
         "generationManifestSha256": sha256_file(out_dir / MANIFEST_NAME),
@@ -9927,6 +10233,7 @@ def main() -> int:
     layout_graph, graph_by_screen = load_layout_relation_graph(args.layout_relation_graph)
     native_layout_plan, native_layout_by_screen = load_native_layout_plan(args.native_layout_plan)
     scroll_attachment_plan, scroll_attachment_by_screen = load_scroll_attachment_plan(args.scroll_attachment_plan)
+    control_configuration_plan, control_configuration_by_screen = load_control_configuration_plan(args.control_configuration_plan)
     if args.native_structure_manifest and not args.layout_relation_graph:
         raise ValueError("--native-structure-manifest requires --layout-relation-graph")
     name_prefix, naming_source, existing_type_names = load_naming_prefix(args.naming_plan)
@@ -9946,12 +10253,17 @@ def main() -> int:
         missing = sorted(set(ir_screen_ids) - set(scroll_attachment_by_screen))
         extra = sorted(set(scroll_attachment_by_screen) - set(ir_screen_ids))
         raise ValueError(f"scroll attachment plan screen mismatch; missing={missing}, extra={extra}")
+    if control_configuration_by_screen and set(control_configuration_by_screen) != set(ir_screen_ids):
+        missing = sorted(set(ir_screen_ids) - set(control_configuration_by_screen))
+        extra = sorted(set(control_configuration_by_screen) - set(ir_screen_ids))
+        raise ValueError(f"control configuration plan screen mismatch; missing={missing}, extra={extra}")
     screens = [
         build_screen(
             ir,
             architecture_by_screen.get(screen_id),
             native_layout_by_screen.get(screen_id),
             scroll_attachment_by_screen.get(screen_id),
+            control_configuration_by_screen.get(screen_id),
         )
         for ir, screen_id in zip(irs, ir_screen_ids)
     ]
@@ -10050,6 +10362,8 @@ def main() -> int:
         "nativeLayoutPlanSha256": sha256_file(args.native_layout_plan) if args.native_layout_plan else None,
         "scrollAttachmentPlan": str(args.scroll_attachment_plan.resolve()) if args.scroll_attachment_plan else None,
         "scrollAttachmentPlanSha256": sha256_file(args.scroll_attachment_plan) if args.scroll_attachment_plan else None,
+        "controlConfigurationPlan": str(args.control_configuration_plan.resolve()) if args.control_configuration_plan else None,
+        "controlConfigurationPlanSha256": sha256_file(args.control_configuration_plan) if args.control_configuration_plan else None,
         "namingPlan": str(args.naming_plan.resolve()) if args.naming_plan else None,
         "namePrefix": name_prefix,
         "namingSource": naming_source,
@@ -10068,6 +10382,8 @@ def main() -> int:
             native_layout_by_screen,
             scroll_attachment_plan,
             scroll_attachment_by_screen,
+            control_configuration_plan,
+            control_configuration_by_screen,
             screen_source_files,
             manifest,
             args.out_dir,
@@ -10075,6 +10391,7 @@ def main() -> int:
             args.layout_relation_graph,
             args.native_layout_plan,
             args.scroll_attachment_plan,
+            args.control_configuration_plan,
             ui_stack,
         )
         native_structure_path.parent.mkdir(parents=True, exist_ok=True)

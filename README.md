@@ -136,6 +136,7 @@ The default deployment target is iOS 16 and can be configured. Newer APIs requir
 - Audits the installed iPhoneOS SDK and verifies recognition, architecture planning, SwiftUI execution, UIKit execution, and compile-time availability for the supported control catalog.
 - Covers every public `UIControl` subclass in the audited SDK set, plus common page controls such as `UITextView`, `UISearchBar`, `UIPickerView`, `UIProgressView`, `UIActivityIndicatorView`, and `UICalendarView`.
 - Uses narrow `UIViewRepresentable` adapters only when SwiftUI has no equivalent system control; it never wraps the page in UIKit or `WKWebView`.
+- Builds and validates one screenshot-free native control configuration plan for content insets, item spacing, intrinsic sizing, track/fill/thumb/selection colors, preferred styles, and native visual states; both generators must consume the same plan.
 
 ### Xcode project discovery
 
@@ -565,6 +566,8 @@ Reports are written under `<workspace>/.html-to-ios/`.
 | `structural-fidelity-report.json` | Screenshot-free source-to-native structural quality gate |
 | `native-layout-plan.json` | Executable layout contract shared by SwiftUI and UIKit |
 | `native-layout-plan-validation.json` | Pre-generation layout lowering gate |
+| `native-control-configuration-plan.json` | Shared internal geometry, appearance, style, and state contract for system controls |
+| `native-control-configuration-validation.json` | Screenshot-free native control configuration gate |
 | `native-structure-manifest.json` | Actual Swift/Payload node and relation consumption evidence |
 | `native-structure-validation.json` | Post-generation structural gate run before target integration |
 | `screens/<id>/render-tree.json` | Browser render tree |
