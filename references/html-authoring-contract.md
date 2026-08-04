@@ -57,7 +57,7 @@
 - `data-ios-system-chrome="native|custom|none"`：系统导航栏、状态栏和底部区域的所有权。
 - `data-ios-safe-area="top,bottom|all|none|background"`：内容与背景如何处理 safe area。
 - `data-ios-owner="screen|navigation|sheet|overlay|child-controller"`：不明显区域的生命周期所有者。
-- `data-ios-scroll-root`：页面主要滚动容器。
+- `data-ios-scroll-root="true|vertical|horizontal|both"`：页面主要滚动容器与明确轴向；普通移动页面不要使用 `both`，只为数据表、画布、地图等确实需要双轴滚动的根使用。
 - `data-ios-navigation-style="native|custom|hidden|immersive"`：顶部导航所有权。
 - `data-ios-title-mode="inline|large"`、`data-ios-scroll-edge="automatic|opaque|transparent"`。
 - `data-ios-back-button="system|custom|hidden"`；自定义返回仍须明确 `pop` 或 `dismiss`。
@@ -82,7 +82,7 @@
 优先使用标准 HTML 的 `name`、`autofocus`、`maxlength`、`enterkeyhint`、`autocapitalize`、`spellcheck`、`pattern`、`readonly` 和 `disabled`。这些字段只用于消除语义歧义，不能替代 `input`、`textarea` 或 ARIA。普通展示文字不需要标注。
 
 - `data-ios-node-id="screen.role.name"`：跨状态稳定的 accessibility/test ID。
-- `data-ios-component="..."`：原生语义提示，例如 `button`、`text-field`、`text-editor`、`switch`、`checkbox`、`segmented-control`、`picker`、`date-picker`、`slider`、`stepper`、`table`、`collection`、`navigation-bar`、`tab-bar`、`sheet`、`alert`。
+- `data-ios-component="..."`：原生语义提示，例如 `button`、`text-field`、`text-editor`、`search-field`、`search-bar`、`switch`、`checkbox`、`segmented-control`、`picker`、`wheel-picker`、`date-picker`、`color-picker`、`slider`、`stepper`、`page-control`、`progress`、`activity-indicator`、`paste-control`、`refresh-control`、`calendar-view`、`table`、`collection`、`navigation-bar`、`tab-bar`、`sheet`、`alert`。
 - `data-ios-project-component="Module.ComponentName"`：已确认应复用的现有 SwiftUI/UIKit 项目组件；只有组件发现报告中存在该类型时才直接采用。
 
 该值表示语义，不绑定具体 Swift 类。系统没有直接对应控件时，生成器按项目组件 > 原生组合 View/UIControl > 自定义 View > 自定义 ViewController 的顺序降级。

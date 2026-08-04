@@ -41,6 +41,7 @@ def main() -> int:
     parser.add_argument("--layout-graph", required=True, type=Path)
     parser.add_argument("--architecture-plan", required=True, type=Path)
     parser.add_argument("--native-layout-plan", required=True, type=Path)
+    parser.add_argument("--scroll-attachment-plan", type=Path)
     parser.add_argument("--generated-dir", required=True, type=Path)
     parser.add_argument("--generation-manifest", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
@@ -50,6 +51,7 @@ def main() -> int:
     graph = load_json(args.layout_graph)
     architecture = load_json(args.architecture_plan)
     native_layout = load_json(args.native_layout_plan)
+    scroll_attachment = load_json(args.scroll_attachment_plan) if args.scroll_attachment_plan else {}
     generation = load_json(args.generation_manifest)
     if manifest.get("schemaVersion") != "native-structure-manifest-1.0":
         raise ValueError("--manifest must use native-structure-manifest-1.0")
@@ -59,6 +61,8 @@ def main() -> int:
         raise ValueError("--architecture-plan must use native-architecture-plan-1.1")
     if native_layout.get("schemaVersion") != "native-layout-plan-1.1":
         raise ValueError("--native-layout-plan must use native-layout-plan-1.1")
+    if args.scroll_attachment_plan and scroll_attachment.get("schemaVersion") != "scroll-and-attachment-plan-1.0":
+        raise ValueError("--scroll-attachment-plan must use scroll-and-attachment-plan-1.0")
     if generation.get("schemaVersion") != "html-to-ios-generation-1.0":
         raise ValueError("--generation-manifest must use html-to-ios-generation-1.0")
 
@@ -85,6 +89,11 @@ def main() -> int:
             "STALE_NATIVE_LAYOUT_PLAN_PROVENANCE", None,
             "Native structure manifest was not generated from the current executable layout plan.",
         ))
+    if args.scroll_attachment_plan and manifest.get("scrollAttachmentPlanSha256") != sha256_file(args.scroll_attachment_plan):
+        issues.append(issue(
+            "STALE_SCROLL_ATTACHMENT_PLAN_PROVENANCE", None,
+            "Native structure manifest was not generated from the current scroll and attachment plan.",
+        ))
     if manifest.get("generationManifestSha256") != sha256_file(args.generation_manifest):
         issues.append(issue(
             "STALE_GENERATION_MANIFEST_PROVENANCE", None,
@@ -94,10 +103,16 @@ def main() -> int:
     graph_screens = {str(item.get("screenId") or ""): item for item in graph.get("screens") or []}
     manifest_screens = {str(item.get("screenId") or ""): item for item in manifest.get("screens") or []}
     architecture_screens = {str(item.get("screenId") or ""): item for item in architecture.get("screens") or []}
+    scroll_screens = {str(item.get("screenId") or ""): item for item in scroll_attachment.get("screens") or []}
     if set(graph_screens) != set(manifest_screens):
         issues.append(issue(
             "NATIVE_SCREEN_SET_MISMATCH", None,
             f"Graph screens {sorted(graph_screens)} do not match native manifest screens {sorted(manifest_screens)}.",
+        ))
+    if args.scroll_attachment_plan and set(scroll_screens) != set(manifest_screens):
+        issues.append(issue(
+            "SCROLL_ATTACHMENT_SCREEN_SET_MISMATCH", None,
+            f"Scroll-plan screens {sorted(scroll_screens)} do not match native manifest screens {sorted(manifest_screens)}.",
         ))
 
     generation_files = generation.get("files") or {}
@@ -234,11 +249,40 @@ def main() -> int:
         for edge in ("top", "bottom"):
             planned_node = (region_plan.get(edge) or {}).get("nodeId")
             generated_node = (native_regions.get(edge) or {}).get("generatedNodeId")
-            if planned_node and str(planned_node) != str(generated_node):
+            scroll_region = (((native_screen.get("scrollAttachmentConsumption") or {}).get("regions") or {}).get(edge) or {})
+            if planned_node and str(planned_node) != str(generated_node) and scroll_region.get("status") != "consumed":
                 issues.append(issue(
                     "SCREEN_REGION_NOT_CONSUMED", screen_id,
                     f"Generated {edge} region does not preserve planned native ownership.", str(planned_node),
                 ))
+
+        if args.scroll_attachment_plan:
+            planned_scroll = scroll_screens.get(screen_id) or {}
+            consumed_scroll = native_screen.get("scrollAttachmentConsumption") or {}
+            if str(consumed_scroll.get("rootScrollOwnerNodeId") or "") != str(planned_scroll.get("rootScrollOwnerNodeId") or ""):
+                issues.append(issue(
+                    "SCROLL_OWNER_NOT_CONSUMED", screen_id,
+                    "Generated native structure does not preserve the planned root scroll owner.",
+                ))
+            if str(consumed_scroll.get("generatedScrollAxis") or "none") != str(planned_scroll.get("rootScrollAxis") or "none"):
+                issues.append(issue(
+                    "SCROLL_AXIS_NOT_CONSUMED", screen_id,
+                    "Generated native structure does not preserve the planned root scroll axis.",
+                ))
+            planned_safe = planned_scroll.get("safeArea") or {}
+            generated_safe = (consumed_scroll.get("safeArea") or {}).get("generated") or {}
+            if str(generated_safe.get("owner") or "") != str(planned_safe.get("owner") or ""):
+                issues.append(issue(
+                    "SAFE_AREA_OWNER_NOT_CONSUMED", screen_id,
+                    "Generated native structure does not preserve the planned Safe Area owner.",
+                ))
+            for edge, record in ((consumed_scroll.get("regions") or {}).items()):
+                if record.get("status") != "consumed":
+                    issues.append(issue(
+                        "SCROLL_REGION_ATTACHMENT_NOT_CONSUMED", screen_id,
+                        f"Generated {edge} region does not preserve attachment, behavior, and ownership.",
+                        str(record.get("nodeId") or "") or None,
+                    ))
 
         for consumer in native_screen.get("consumerFiles") or []:
             relative = str(consumer.get("relativePath") or "")

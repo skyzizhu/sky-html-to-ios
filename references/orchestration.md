@@ -34,13 +34,14 @@ python3 "$SKILL_ROOT/scripts/run_html_to_ios.py" \
 9. 默认逐 screen 生成文本标定、多尺寸响应式分析和滚动区域行为探测；只有 verification 为 `visual` 时才生成视觉状态清单和 HTML 状态基准图。
 10. 生成 `native-naming-plan.json` 与 `native-architecture-plan.json`，验证命名冲突及 controller/navigation/presentation/Safe Area 单一所有权。
 11. 生成 `layout-relation-graph.json`，再运行不依赖截图的 `structural-fidelity-report.json` 门禁，校验来源覆盖、containment、视觉顺序、布局关系、scroll owner、叶子组件和页面区域所有权。
-12. 生成并校验 `native-layout-plan.json`，统一固化两套生成器必须消费的容器顺序、尺寸策略、盒模型和复合控件槽位。
-13. 生成带稳定项目前缀的原生页面代码和 Payload，同时输出 `native-structure-manifest.json`。
-14. 在接入 target 前运行 `validate_native_structure_manifest.py`，生成 `native-structure-validation.json`；实际 Swift/Payload 未完整消费布局关系或原生布局计划时停止，不修改 Xcode target。
-15. 结构消费门禁通过后接入指定 target。新建工程自动接入根 View/根 ViewController；现有工程只检测入口，不覆盖启动架构。
-16. 根据 verification mode 决定停止、构建或启动：已有项目 `auto` 停止并等待确认，新建托管项目 `auto` 只生成并构建；完整视觉验证必须显式选择 `visual`。
-17. 用户选择 `visual` 且入口已接通时，创建隔离的 generator-owned UI Test target，逐 screen 执行状态动作、导出 xcresult 截图并归一化到目标逻辑 viewport。
-18. 对 required states 执行节点分区视觉门禁，并执行转换后门禁；任一状态缺失、超阈值或存在交付阻断项时总控返回 `failed`，保留 review bundle 供 Agent 局部纠偏。
+12. 生成并校验 `scroll-and-attachment-plan.json`，固化根 scroll owner、轴向、Safe Area、顶部/底部区域归属和键盘避让。
+13. 生成并校验 `native-layout-plan.json`，统一固化两套生成器必须消费的容器顺序、尺寸策略、盒模型和复合控件槽位。
+14. 生成带稳定项目前缀的原生页面代码和 Payload，同时输出 `native-structure-manifest.json`。
+15. 在接入 target 前运行 `validate_native_structure_manifest.py`，生成 `native-structure-validation.json`；实际 Swift/Payload 未完整消费布局关系、滚动归属或原生布局计划时停止，不修改 Xcode target。
+16. 结构消费门禁通过后接入指定 target。新建工程自动接入根 View/根 ViewController；现有工程只检测入口，不覆盖启动架构。
+17. 根据 verification mode 决定停止、构建或启动：已有项目 `auto` 停止并等待确认，新建托管项目 `auto` 只生成并构建；完整视觉验证必须显式选择 `visual`。
+18. 用户选择 `visual` 且入口已接通时，创建隔离的 generator-owned UI Test target，逐 screen 执行状态动作、导出 xcresult 截图并归一化到目标逻辑 viewport。
+19. 对 required states 执行节点分区视觉门禁，并执行转换后门禁；任一状态缺失、超阈值或存在交付阻断项时总控返回 `failed`，保留 review bundle 供 Agent 局部纠偏。
 
 ## 工程决策
 
@@ -117,7 +118,9 @@ python3 "$SKILL_ROOT/scripts/run_html_to_ios.py" \
 
 随后固定生成 `<report-dir>/native-layout-plan.json` 与 `<report-dir>/native-layout-plan-validation.json`。布局计划是 SwiftUI/UIKit 共用的可执行契约，保存容器关系、盒模型和复合控件槽位；验证失败时不运行生成器。
 
-代码生成后固定生成 `<report-dir>/native-structure-manifest.json` 与 `<report-dir>/native-structure-validation.json`。前者记录实际 Swift/Payload 对节点、关系和页面区域的消费证据及文件哈希，后者在 Xcode target 接入前独立复核。两者同样属于所有 verification mode 都必须通过的核心门禁。
+同时固定生成 `<report-dir>/scroll-and-attachment-plan.json` 与 `<report-dir>/scroll-and-attachment-validation.json`。该契约保存滚动 owner、轴向、coordinate space、Safe Area、顶部/底部区域 attachment 和键盘避让；验证失败时不运行生成器。
+
+代码生成后固定生成 `<report-dir>/native-structure-manifest.json` 与 `<report-dir>/native-structure-validation.json`。前者记录实际 Swift/Payload 对节点、关系、滚动归属和页面区域的消费证据及文件哈希，后者在 Xcode target 接入前独立复核。两者同样属于所有 verification mode 都必须通过的核心门禁。
 
 `<report-dir>/project-generation-decision.json` 记录模块语言、UI 栈证据和 verification mode；`native-naming-plan.json` 记录页面文件/类型前缀、来源、置信度、上一轮继承和已有类型集合。生成器发现类型冲突时必须停止。
 

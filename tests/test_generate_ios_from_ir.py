@@ -470,9 +470,20 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             checkbox = node("controls.checkbox", root_node["id"], "checkbox", "Remember")
             radio = node("controls.radio", root_node["id"], "radio", "Primary")
             file_input = node("controls.file", root_node["id"], "file-input", "Choose file")
+            switch = node("controls.switch", root_node["id"], "switch", "Enabled")
+            search_input = node("controls.search-input", root_node["id"], "search-input")
+            search_bar = node("controls.search-bar", root_node["id"], "search-bar")
+            wheel_picker = node("controls.wheel", root_node["id"], "wheel-picker")
+            activity = node("controls.activity", root_node["id"], "activity-indicator")
+            page_control = node("controls.pages", root_node["id"], "page-control")
+            page_control["state"] = {"pageCount": "4", "currentPage": "1"}
+            paste_control = node("controls.paste", root_node["id"], "paste-control", "Paste")
+            refresh_control = node("controls.refresh", root_node["id"], "refresh-control")
+            calendar = node("controls.calendar", root_node["id"], "calendar-view")
+            calendar["state"] = {"calendarSelection": "multi-date"}
 
             option_nodes = []
-            for parent, prefix in ((segmented, "segment"), (select, "choice")):
+            for parent, prefix in ((segmented, "segment"), (select, "choice"), (wheel_picker, "wheel")):
                 for index, title in enumerate(("First", "Second")):
                     option = node(
                         f"controls.{prefix}-{index}",
@@ -494,6 +505,15 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 checkbox,
                 radio,
                 file_input,
+                switch,
+                search_input,
+                search_bar,
+                wheel_picker,
+                activity,
+                page_control,
+                paste_control,
+                refresh_control,
+                calendar,
                 *option_nodes,
             ])
             path = root / "controls.json"
@@ -512,6 +532,14 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 [item["title"] for item in generated_nodes[segmented["id"]]["controlConfig"]["options"]],
                 ["First", "Second"],
             )
+            self.assertEqual(generated_nodes[page_control["id"]]["controlConfig"]["pageCount"], 4)
+            self.assertEqual(generated_nodes[page_control["id"]]["controlConfig"]["currentPage"], 1)
+            self.assertEqual(generated_nodes[calendar["id"]]["controlConfig"]["calendarSelection"], "multi-date")
+            for control in (
+                switch, search_input, search_bar, wheel_picker, activity,
+                page_control, paste_control, refresh_control, calendar,
+            ):
+                self.assertEqual(generated_nodes[control["id"]]["semantic"], control["semanticType"])
             swiftui_runtime = (swiftui_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             for expected in (
                 "Slider(",
@@ -523,6 +551,13 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "ProgressView(",
                 "HTMLToIOSCheckboxToggleStyle",
                 "HTMLToIOSRadioToggleStyle",
+                "Toggle(",
+                "HTMLToIOSSearchBarRepresentable(",
+                ".pickerStyle(.wheel)",
+                "HTMLToIOSPageControlRepresentable(",
+                "PasteButton(payloadType: String.self)",
+                "HTMLToIOSCalendarRepresentable(",
+                ".refreshable",
             ):
                 self.assertIn(expected, swiftui_runtime)
 
@@ -538,6 +573,15 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "UIProgressView(progressViewStyle:",
                 "UIMenu(children:",
                 'spec.semantic == "radio" ? "circle" : "square"',
+                "UISwitch()",
+                "UISearchTextField()",
+                "UISearchBar(frame: .zero)",
+                "HTMLToIOSGeneratedPickerView()",
+                "UIActivityIndicatorView(style:",
+                "UIPageControl()",
+                "UIPasteControl(configuration:",
+                "UIRefreshControl()",
+                "UICalendarView()",
             ):
                 self.assertIn(expected, uikit_runtime)
 
@@ -579,7 +623,10 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             )
             self.assertNotIn(".frame(minWidth: minWidth, idealWidth: idealWidth)\n            .frame(maxWidth:", runtime_text)
             self.assertIn("hiddenNodeIDs = nextHiddenNodeIDs", runtime_text)
-            self.assertNotIn("UIViewRepresentable", runtime_text)
+            self.assertNotIn("WKWebView", runtime_text)
+            self.assertIn("HTMLToIOSSearchBarRepresentable: UIViewRepresentable", runtime_text)
+            self.assertIn("HTMLToIOSPageControlRepresentable: UIViewRepresentable", runtime_text)
+            self.assertIn("HTMLToIOSCalendarRepresentable: UIViewRepresentable", runtime_text)
             self.assertNotIn("sizeThatFits(_ proposal:", runtime_text)
             self.assertIn("vertical: (style.expectedTextLines ?? 1) > 1", runtime_text)
             self.assertIn("HTMLToIOSLaunchConfiguration.geometryCaptureEnabled", runtime_text)
@@ -1195,7 +1242,9 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.run_generator([path], uikit_dir, ui_stack="uikit")
             uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn('screen.bottomBarPlacement == "safe-area-inset" ? (generatedBottomBar?.bounds.height ?? 0) : 0', uikit_runtime)
-            self.assertIn('screen.bottomBarPlacement == "viewport-overlay"\n                        ? view.bottomAnchor', uikit_runtime)
+            self.assertIn('screen.bottomKeyboardAvoidance == "keyboard-layout-guide"', uikit_runtime)
+            self.assertIn('? view.keyboardLayoutGuide.topAnchor', uikit_runtime)
+            self.assertIn('screen.bottomBarPlacement == "viewport-overlay"', uikit_runtime)
 
     def test_viewport_bar_releases_large_direct_children_without_relaxing_icons(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

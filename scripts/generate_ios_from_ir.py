@@ -54,6 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--architecture-plan", type=Path)
     parser.add_argument("--layout-relation-graph", type=Path)
     parser.add_argument("--native-layout-plan", type=Path)
+    parser.add_argument("--scroll-attachment-plan", type=Path)
     parser.add_argument("--native-structure-manifest", type=Path)
     parser.add_argument("--naming-plan", type=Path)
     parser.add_argument("--conflict-dir", type=Path)
@@ -157,6 +158,22 @@ def load_native_layout_plan(path: Path | None) -> tuple[dict[str, Any], dict[str
     }
     if not screens or "" in screens:
         raise ValueError(f"{path}: every native layout plan screen needs a screenId")
+    return data, screens
+
+
+def load_scroll_attachment_plan(path: Path | None) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    if path is None:
+        return {}, {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("schemaVersion") != "scroll-and-attachment-plan-1.0":
+        raise ValueError(f"{path}: expected scroll-and-attachment-plan-1.0")
+    screens = {
+        str(screen.get("screenId") or ""): screen
+        for screen in data.get("screens") or []
+        if isinstance(screen, dict)
+    }
+    if not screens or "" in screens:
+        raise ValueError(f"{path}: every scroll attachment screen needs a screenId")
     return data, screens
 
 
@@ -1599,8 +1616,9 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     control_config = None
     if semantic in {
         "slider", "stepper", "select", "multi-select", "segmented-control",
-        "date-input", "radio", "checkbox", "switch", "color-picker", "file-input",
-        "progress", "progress-view", "meter",
+        "wheel-picker", "date-input", "radio", "checkbox", "switch", "color-picker", "file-input",
+        "progress", "progress-view", "meter", "activity-indicator", "page-control", "paste-control",
+        "refresh-control", "calendar-view", "search-bar",
     }:
         control_config = {
             "minimum": number(node_state.get("min"), 0),
@@ -1610,6 +1628,15 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "inputType": str(node_state.get("inputType") or ""),
             "options": control_options,
             "allowsMultipleSelection": semantic == "multi-select",
+            "pageCount": max(
+                int(number(node_state.get("pageCount"), number(node_state.get("max"), len(control_options)))),
+                len(control_options),
+                0,
+            ),
+            "currentPage": max(int(number(node_state.get("currentPage"), number(node_state.get("value"), 0))), 0),
+            "pickerStyle": str(node_state.get("pickerStyle") or ""),
+            "pasteDisplayMode": str(node_state.get("pasteDisplayMode") or "icon-and-label"),
+            "calendarSelection": str(node_state.get("calendarSelection") or "single-date"),
         }
     layout_spacing = (
         number(layout_container.get("gapPt")) * context.design_scale
@@ -1875,6 +1902,7 @@ def build_screen(
     ir: dict[str, Any],
     architecture: dict[str, Any] | None = None,
     native_layout: dict[str, Any] | None = None,
+    scroll_attachment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     screen = ir["screens"][0]
     screen_id = str(screen.get("id") or "screen")
@@ -1888,6 +1916,7 @@ def build_screen(
         if isinstance(item, dict) and item.get("nodeId") and item.get("kind")
     }
     native_layout = native_layout or {}
+    scroll_attachment = scroll_attachment or {}
     layout_containers = {
         str(item.get("containerNodeId") or ""): item
         for item in native_layout.get("containers") or []
@@ -2326,8 +2355,16 @@ def build_screen(
         top_bar_id = None
     if tab_container:
         bottom_bar_id = None
+    attachment_regions = scroll_attachment.get("regions") or {}
+    top_attachment = attachment_regions.get("top") or {}
+    bottom_attachment = attachment_regions.get("bottom") or {}
+    if top_bar_id and top_attachment.get("nodeId") == top_bar_id and not top_attachment.get("liftedFromContent"):
+        top_bar_id = None
+    if bottom_bar_id and bottom_attachment.get("nodeId") == bottom_bar_id and not bottom_attachment.get("liftedFromContent"):
+        bottom_bar_id = None
+    top_bar_placement = str(top_attachment.get("attachment") or ("safe-area-inset" if top_bar_id else "none"))
     bottom_bar_placement = (
-        str(((regions.get("bottomBar") or {}).get("placement")) or "safe-area-inset")
+        str(bottom_attachment.get("attachment") or ((regions.get("bottomBar") or {}).get("placement")) or "safe-area-inset")
         if bottom_bar_id
         else "none"
     )
@@ -2497,7 +2534,11 @@ def build_screen(
         "root": root,
         "topBar": top_bar,
         "bottomBar": bottom_bar,
+        "topBarPlacement": top_bar_placement,
         "bottomBarPlacement": bottom_bar_placement,
+        "topBarBehavior": str(top_attachment.get("behavior") or "none"),
+        "bottomBarBehavior": str(bottom_attachment.get("behavior") or "none"),
+        "bottomKeyboardAvoidance": str(bottom_attachment.get("keyboardAvoidance") or "none"),
         "presentations": presentations,
         "automaticActions": automatic_actions,
         "stateLayouts": native_layout.get("stateLayouts") or [],
@@ -2539,7 +2580,11 @@ struct HTMLToIOSScreenSpec: Codable, Identifiable {{
     let root: HTMLToIOSNodeSpec
     let topBar: HTMLToIOSNodeSpec?
     let bottomBar: HTMLToIOSNodeSpec?
+    let topBarPlacement: String
     let bottomBarPlacement: String
+    let topBarBehavior: String
+    let bottomBarBehavior: String
+    let bottomKeyboardAvoidance: String
     let presentations: [HTMLToIOSPresentationSpec]
     let automaticActions: [HTMLToIOSActionSpec]
     let stateLayouts: [HTMLToIOSStateLayoutSpec]
@@ -2899,6 +2944,11 @@ struct HTMLToIOSControlConfigSpec: Codable {{
     let inputType: String
     let options: [HTMLToIOSControlOptionSpec]
     let allowsMultipleSelection: Bool
+    let pageCount: Int
+    let currentPage: Int
+    let pickerStyle: String
+    let pasteDisplayMode: String
+    let calendarSelection: String
 }}
 
 struct HTMLToIOSControlOptionSpec: Codable, Identifiable {{
@@ -3069,6 +3119,74 @@ enum HTMLToIOSGeneratedData {{
 SWIFTUI_RUNTIME = r'''// Generated by sky-html-to-ios. Native SwiftUI rendering runtime.
 import SwiftUI
 import UIKit
+
+private struct HTMLToIOSSearchBarRepresentable: UIViewRepresentable {
+    @Binding var text: String
+    let placeholder: String
+    let isEnabled: Bool
+
+    final class Coordinator: NSObject, UISearchBarDelegate {
+        var owner: HTMLToIOSSearchBarRepresentable
+        init(_ owner: HTMLToIOSSearchBarRepresentable) { self.owner = owner }
+        func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) { owner.text = searchText }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeUIView(context: Context) -> UISearchBar {
+        let view = UISearchBar(frame: .zero)
+        view.searchBarStyle = .minimal
+        view.delegate = context.coordinator
+        return view
+    }
+    func updateUIView(_ view: UISearchBar, context: Context) {
+        context.coordinator.owner = self
+        view.text = text
+        view.placeholder = placeholder
+        if #available(iOS 16.4, *) {
+            view.isEnabled = isEnabled
+        } else {
+            view.isUserInteractionEnabled = isEnabled
+            view.alpha = isEnabled ? 1 : 0.5
+        }
+    }
+}
+
+private struct HTMLToIOSPageControlRepresentable: UIViewRepresentable {
+    let numberOfPages: Int
+    @Binding var currentPage: Double
+
+    final class Coordinator: NSObject {
+        var owner: HTMLToIOSPageControlRepresentable
+        init(_ owner: HTMLToIOSPageControlRepresentable) { self.owner = owner }
+        @objc func changed(_ sender: UIPageControl) { owner.currentPage = Double(sender.currentPage) }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeUIView(context: Context) -> UIPageControl {
+        let view = UIPageControl(frame: .zero)
+        view.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .valueChanged)
+        return view
+    }
+    func updateUIView(_ view: UIPageControl, context: Context) {
+        context.coordinator.owner = self
+        view.numberOfPages = max(numberOfPages, 1)
+        view.currentPage = min(max(Int(currentPage), 0), view.numberOfPages - 1)
+    }
+}
+
+private struct HTMLToIOSCalendarRepresentable: UIViewRepresentable {
+    let selectionMode: String
+    func makeUIView(context: Context) -> UICalendarView {
+        let view = UICalendarView(frame: .zero)
+        if selectionMode == "multi-date" {
+            view.selectionBehavior = UICalendarSelectionMultiDate(delegate: nil)
+        } else {
+            view.selectionBehavior = UICalendarSelectionSingleDate(delegate: nil)
+        }
+        return view
+    }
+    func updateUIView(_ view: UICalendarView, context: Context) {}
+}
 
 private func htmlToIOSKeyboardType(_ raw: String?) -> UIKeyboardType {
     switch raw {
@@ -4309,8 +4427,9 @@ struct HTMLToIOSNativeNodeView: View {
     private var isNativeControl: Bool {
         ["button", "link", "menu-item", "tab-item", "toggle", "switch", "checkbox",
          "radio", "slider", "stepper", "segmented-control", "select", "picker", "multi-select",
-         "date-input", "color-picker", "file-input", "progress", "progress-view", "meter",
-         "text-input", "search-input", "number-input", "secure-input", "text-area"].contains(spec.semantic)
+         "wheel-picker", "date-input", "color-picker", "file-input", "progress", "progress-view", "meter",
+         "activity-indicator", "loading", "page-control", "paste-control", "refresh-control", "calendar-view",
+         "search-bar", "text-input", "search-input", "number-input", "secure-input", "text-area"].contains(spec.semantic)
     }
     private var isMeasuredText: Bool {
         ["text", "label", "heading"].contains(spec.semantic) && spec.style.textMeasureWidth != nil
@@ -4462,6 +4581,13 @@ struct HTMLToIOSNativeNodeView: View {
                 ForEach(options) { option in Text(option.title).tag(option.id) }
             }
             .pickerStyle(.segmented)
+        case "wheel-picker":
+            let options = spec.controlConfig?.options ?? []
+            let initial = options.first(where: \.selected)?.id ?? options.first?.id ?? ""
+            Picker(spec.text, selection: store.selectionBinding(for: spec.id, initialValue: initial)) {
+                ForEach(options) { option in Text(option.title).tag(option.id) }
+            }
+            .pickerStyle(.wheel)
         case "select", "picker":
             let options = spec.controlConfig?.options ?? []
             let initial = options.first(where: \.selected)?.id ?? options.first?.id ?? ""
@@ -4509,6 +4635,36 @@ struct HTMLToIOSNativeNodeView: View {
                         : spec.style.foreground
                 )
             )
+        case "search-bar":
+            HTMLToIOSSearchBarRepresentable(
+                text: store.binding(for: spec.id, initialValue: spec.textBehavior?.initialValue ?? spec.text, maxLength: spec.textBehavior?.maxLength),
+                placeholder: spec.placeholder,
+                isEnabled: spec.isEnabled
+            )
+        case "activity-indicator", "loading":
+            ProgressView()
+                .controlSize((spec.style.preferredHeight ?? 20) >= 28 ? .large : .regular)
+        case "page-control":
+            HTMLToIOSPageControlRepresentable(
+                numberOfPages: max(spec.controlConfig?.pageCount ?? 0, 1),
+                currentPage: store.numericBinding(
+                    for: spec.id,
+                    initialValue: Double(spec.controlConfig?.currentPage ?? 0)
+                )
+            )
+        case "paste-control":
+            PasteButton(payloadType: String.self) { values in
+                if let value = values.first {
+                    store.values[spec.id] = value
+                    store.perform(spec.action)
+                }
+            }
+        case "calendar-view":
+            HTMLToIOSCalendarRepresentable(
+                selectionMode: spec.controlConfig?.calendarSelection ?? "single-date"
+            )
+        case "refresh-control":
+            EmptyView()
         case "file-input":
             Button(action: { store.perform(spec.action) }) {
                 buttonContent
@@ -4640,11 +4796,20 @@ struct HTMLToIOSNativeNodeView: View {
         case "none":
             childContent
         default:
-            ScrollView(.vertical, showsIndicators: true) {
-                childContent.frame(maxWidth: .infinity, alignment: .topLeading)
+            if let refresh = spec.children.first(where: { $0.semantic == "refresh-control" }) {
+                ScrollView(.vertical, showsIndicators: true) {
+                    childContent.frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                .refreshable { store.perform(refresh.action) }
+                .scrollDismissesKeyboard(.interactively)
+                .clipped()
+            } else {
+                ScrollView(.vertical, showsIndicators: true) {
+                    childContent.frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .clipped()
             }
-            .scrollDismissesKeyboard(.interactively)
-            .clipped()
         }
     }
 
@@ -5132,8 +5297,7 @@ struct HTMLToIOSGeneratedScreenView: View {
         if screen.safeArea.owner == "system" {
             if screen.bottomBarPlacement == "viewport-overlay" {
                 GeometryReader { proxy in
-                    chromeAlignedNavigationContent
-                        .safeAreaInset(edge: .top, spacing: 0) { topBarContent }
+                    topAdjustedNavigationContent
                         .frame(width: proxy.size.width, height: proxy.size.height)
                         .overlay(alignment: .bottom) {
                             bottomBarContent
@@ -5141,8 +5305,7 @@ struct HTMLToIOSGeneratedScreenView: View {
                         }
                 }
             } else {
-                chromeAlignedNavigationContent
-                    .safeAreaInset(edge: .top, spacing: 0) { topBarContent }
+                topAdjustedNavigationContent
                     .safeAreaInset(edge: .bottom, spacing: 0) { bottomBarContent }
             }
         } else {
@@ -5150,6 +5313,16 @@ struct HTMLToIOSGeneratedScreenView: View {
                 .ignoresSafeArea(.container)
                 .overlay(alignment: .top) { topBarContent }
                 .overlay(alignment: .bottom) { bottomBarContent }
+        }
+    }
+
+    @ViewBuilder private var topAdjustedNavigationContent: some View {
+        if screen.topBarPlacement == "viewport-overlay" {
+            chromeAlignedNavigationContent
+                .overlay(alignment: .top) { topBarContent }
+        } else {
+            chromeAlignedNavigationContent
+                .safeAreaInset(edge: .top, spacing: 0) { topBarContent }
         }
     }
 
@@ -5613,6 +5786,32 @@ final class HTMLToIOSInsetTextField: UITextField {
 
     override func placeholderRect(forBounds bounds: CGRect) -> CGRect {
         bounds.inset(by: contentInsets)
+    }
+}
+
+final class HTMLToIOSGeneratedPickerView: UIPickerView, UIPickerViewDataSource, UIPickerViewDelegate {
+    private var options: [HTMLToIOSControlOptionSpec] = []
+    var onSelectionChanged: ((String) -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        dataSource = self
+        delegate = self
+    }
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    func configure(options: [HTMLToIOSControlOptionSpec]) {
+        self.options = options
+        reloadAllComponents()
+        if let selected = options.firstIndex(where: \.selected) { selectRow(selected, inComponent: 0, animated: false) }
+    }
+    func numberOfComponents(in pickerView: UIPickerView) -> Int { 1 }
+    func pickerView(_ pickerView: UIPickerView, numberOfRowsInComponent component: Int) -> Int { options.count }
+    func pickerView(_ pickerView: UIPickerView, titleForRow row: Int, forComponent component: Int) -> String? {
+        options.indices.contains(row) ? options[row].title : nil
+    }
+    func pickerView(_ pickerView: UIPickerView, didSelectRow row: Int, inComponent component: Int) {
+        if options.indices.contains(row) { onSelectionChanged?(options[row].id) }
     }
 }
 
@@ -6330,7 +6529,26 @@ final class HTMLToIOSNodeRenderer {
                 control.addAction(UIAction { [actionHandler] _ in actionHandler(spec.action) }, for: .touchUpInside)
                 view = control
             }
-        case "text-field", "input", "search-field", "secure-field", "text-input", "search-input", "number-input", "secure-input":
+        case "search-field", "search-input":
+            let field = UISearchTextField()
+            field.borderStyle = .none
+            field.attributedPlaceholder = attributedPlaceholder(spec)
+            let initialValue = state.values[spec.id] ?? spec.textBehavior?.initialValue ?? spec.text
+            field.attributedText = attributedText(initialValue, spec: spec)
+            field.isEnabled = spec.isEnabled && spec.textBehavior?.enabled != false
+            field.isUserInteractionEnabled = spec.textBehavior?.editable != false
+            field.keyboardType = keyboardType(spec.textBehavior?.keyboardType)
+            field.textContentType = textContentType(spec.textBehavior?.contentType)
+            field.returnKeyType = returnKeyType(spec.textBehavior?.returnKey ?? spec.textBehavior?.submitLabel)
+            field.addAction(UIAction { [weak field, state] _ in
+                guard let field else { return }
+                state.values[spec.id] = field.text ?? ""
+            }, for: .editingChanged)
+            if spec.action != nil {
+                field.addAction(UIAction { [actionHandler] _ in actionHandler(spec.action) }, for: .primaryActionTriggered)
+            }
+            view = field
+        case "text-field", "input", "secure-field", "text-input", "number-input", "secure-input":
             let field = HTMLToIOSInsetTextField()
             field.borderStyle = .none
             field.attributedPlaceholder = attributedPlaceholder(spec)
@@ -6452,6 +6670,11 @@ final class HTMLToIOSNodeRenderer {
                 state.values[spec.id] = options[segmented.selectedSegmentIndex].id
             }, for: .valueChanged)
             view = segmented
+        case "wheel-picker":
+            let picker = HTMLToIOSGeneratedPickerView()
+            picker.configure(options: spec.controlConfig?.options ?? [])
+            picker.onSelectionChanged = { [state] value in state.values[spec.id] = value }
+            view = picker
         case "select", "picker", "multi-select":
             let options = spec.controlConfig?.options ?? []
             let selected = options.first(where: \.selected) ?? options.first
@@ -6490,6 +6713,57 @@ final class HTMLToIOSNodeRenderer {
             colorWell.selectedColor = UIColor(htmlToIOS: spec.controlConfig?.value) ?? UIColor(htmlToIOS: spec.style.foreground)
             colorWell.isEnabled = spec.isEnabled
             view = colorWell
+        case "search-bar":
+            let searchBar = UISearchBar(frame: .zero)
+            searchBar.searchBarStyle = .minimal
+            searchBar.text = state.values[spec.id] ?? spec.textBehavior?.initialValue ?? spec.text
+            searchBar.placeholder = spec.placeholder
+            if #available(iOS 16.4, *) {
+                searchBar.isEnabled = spec.isEnabled
+            } else {
+                searchBar.isUserInteractionEnabled = spec.isEnabled
+                searchBar.alpha = spec.isEnabled ? 1 : 0.5
+            }
+            view = searchBar
+        case "activity-indicator", "loading":
+            let indicator = UIActivityIndicatorView(style: (spec.style.preferredHeight ?? 20) >= 28 ? .large : .medium)
+            indicator.hidesWhenStopped = false
+            indicator.startAnimating()
+            view = indicator
+        case "page-control":
+            let pageControl = UIPageControl()
+            pageControl.numberOfPages = max(spec.controlConfig?.pageCount ?? 0, 1)
+            pageControl.currentPage = min(max(spec.controlConfig?.currentPage ?? 0, 0), pageControl.numberOfPages - 1)
+            pageControl.isEnabled = spec.isEnabled
+            pageControl.addAction(UIAction { [weak pageControl, state] _ in
+                guard let control = pageControl else { return }
+                state.values[spec.id] = String(control.currentPage)
+            }, for: .valueChanged)
+            view = pageControl
+        case "paste-control":
+            let configuration = UIPasteControl.Configuration()
+            switch spec.controlConfig?.pasteDisplayMode {
+            case "icon-only": configuration.displayMode = .iconOnly
+            case "label-only": configuration.displayMode = .labelOnly
+            case "arrow-and-label": configuration.displayMode = .arrowAndLabel
+            default: configuration.displayMode = .iconAndLabel
+            }
+            view = UIPasteControl(configuration: configuration)
+        case "calendar-view":
+            let calendar = UICalendarView()
+            if spec.controlConfig?.calendarSelection == "multi-date" {
+                calendar.selectionBehavior = UICalendarSelectionMultiDate(delegate: nil)
+            } else {
+                calendar.selectionBehavior = UICalendarSelectionSingleDate(delegate: nil)
+            }
+            view = calendar
+        case "refresh-control":
+            let refresh = UIRefreshControl()
+            refresh.addAction(UIAction { [weak refresh, actionHandler] _ in
+                actionHandler(spec.action)
+                refresh?.endRefreshing()
+            }, for: .valueChanged)
+            view = refresh
         case "file-input":
             let button = HTMLToIOSStatefulButton(type: .system)
             button.setTitle(displayText(spec), for: .normal)
@@ -6884,6 +7158,11 @@ final class HTMLToIOSNodeRenderer {
         if axis == "none" { return makeStack(spec) }
         let scroll = UIScrollView()
         let stack = spec.axis == "grid" ? makeGrid(spec) : makeStack(spec)
+        if let refresh = (stack as? UIStackView)?.arrangedSubviews.first(where: { $0 is UIRefreshControl }) as? UIRefreshControl {
+            (stack as? UIStackView)?.removeArrangedSubview(refresh)
+            refresh.removeFromSuperview()
+            scroll.refreshControl = refresh
+        }
         scroll.isDirectionalLockEnabled = axis != "both"
         scroll.alwaysBounceHorizontal = false
         scroll.alwaysBounceVertical = false
@@ -7488,7 +7767,7 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
     private func updateGeneratedScrollInsets() {
         guard let scroll = generatedScrollView else { return }
         let insets = UIEdgeInsets(
-            top: generatedTopBar?.bounds.height ?? 0,
+            top: screen.topBarPlacement == "safe-area-inset" ? (generatedTopBar?.bounds.height ?? 0) : 0,
             left: 0,
             bottom: screen.bottomBarPlacement == "safe-area-inset" ? (generatedBottomBar?.bounds.height ?? 0) : 0,
             right: 0
@@ -7581,9 +7860,11 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController {
                 bottom.leadingAnchor.constraint(equalTo: view.leadingAnchor),
                 bottom.trailingAnchor.constraint(equalTo: view.trailingAnchor),
                 bottom.bottomAnchor.constraint(
-                    equalTo: screen.bottomBarPlacement == "viewport-overlay"
-                        ? view.bottomAnchor
-                        : (screen.safeArea.owner == "system" ? view.safeAreaLayoutGuide.bottomAnchor : view.bottomAnchor)
+                    equalTo: screen.bottomKeyboardAvoidance == "keyboard-layout-guide"
+                        ? view.keyboardLayoutGuide.topAnchor
+                        : (screen.bottomBarPlacement == "viewport-overlay"
+                            ? view.bottomAnchor
+                            : (screen.safeArea.owner == "system" ? view.safeAreaLayoutGuide.bottomAnchor : view.bottomAnchor))
                 )
             ])
         }
@@ -7868,7 +8149,11 @@ final class HTMLToIOSGeneratedCoordinator: NSObject, UITabBarControllerDelegate 
                     root: presentation.node,
                     topBar: nil,
                     bottomBar: nil,
+                    topBarPlacement: "none",
                     bottomBarPlacement: "none",
+                    topBarBehavior: "none",
+                    bottomBarBehavior: "none",
+                    bottomKeyboardAvoidance: "none",
                     presentations: [],
                     automaticActions: [],
                     stateLayouts: []
@@ -9114,12 +9399,15 @@ def build_native_structure_manifest(
     layout_graph: dict[str, Any],
     graph_by_screen: dict[str, dict[str, Any]],
     native_layout_by_screen: dict[str, dict[str, Any]],
+    scroll_attachment_plan: dict[str, Any],
+    scroll_attachment_by_screen: dict[str, dict[str, Any]],
     screen_source_files: dict[str, list[str]],
     generation_manifest: dict[str, Any],
     out_dir: Path,
     architecture_path: Path | None,
     graph_path: Path,
     native_layout_path: Path | None,
+    scroll_attachment_path: Path | None,
     ui_stack: str,
 ) -> dict[str, Any]:
     runtime_path = out_dir / "Core/Runtime/HTMLToIOSGeneratedRuntime.swift"
@@ -9496,6 +9784,44 @@ def build_native_structure_manifest(
                 "exists": path.is_file(),
             })
         regions = ir_screen.get("regions") or {}
+        scroll_contract = scroll_attachment_by_screen.get(screen_id) or {}
+        scroll_region_consumption = {}
+        for edge, payload_key, placement_key, behavior_key in (
+            ("top", "topBar", "topBarPlacement", "topBarBehavior"),
+            ("bottom", "bottomBar", "bottomBarPlacement", "bottomBarBehavior"),
+        ):
+            planned_region = (scroll_contract.get("regions") or {}).get(edge) or {}
+            planned_node_id = str(planned_region.get("nodeId") or "") or None
+            generated_region = payload_screen.get(payload_key) or {}
+            generated_node_id = str(generated_region.get("id") or "") or None
+            lifted = planned_region.get("liftedFromContent") is True
+            node_consumed = (
+                generated_node_id == planned_node_id
+                if lifted and planned_node_id
+                else (not planned_node_id or (planned_node_id in represented_ids and generated_node_id is None))
+            )
+            placement = payload_screen.get(placement_key)
+            behavior = payload_screen.get(behavior_key)
+            placement_consumed = (
+                not planned_node_id
+                or str(placement or "") == str(planned_region.get("attachment") or "")
+            )
+            behavior_consumed = (
+                not planned_node_id
+                or str(behavior or "") == str(planned_region.get("behavior") or "")
+            )
+            scroll_region_consumption[edge] = {
+                "nodeId": planned_node_id,
+                "plannedAttachment": planned_region.get("attachment"),
+                "generatedPlacement": placement,
+                "plannedBehavior": planned_region.get("behavior"),
+                "generatedBehavior": behavior,
+                "liftedFromContent": lifted,
+                "nodeConsumed": node_consumed,
+                "placementConsumed": placement_consumed,
+                "behaviorConsumed": behavior_consumed,
+                "status": "consumed" if node_consumed and placement_consumed and behavior_consumed else "not-consumed",
+            }
         manifest_screens.append({
             "screenId": screen_id,
             "nodes": node_records,
@@ -9520,6 +9846,17 @@ def build_native_structure_manifest(
                 },
             },
             "contentContainer": payload_screen.get("contentContainer"),
+            "scrollAttachmentConsumption": {
+                "rootScrollOwnerNodeId": scroll_contract.get("rootScrollOwnerNodeId"),
+                "rootScrollAxis": scroll_contract.get("rootScrollAxis"),
+                "generatedScrollOwnerNodeId": (payload_screen.get("contentContainer") or {}).get("nodeId"),
+                "generatedScrollAxis": (payload_screen.get("contentContainer") or {}).get("scrollAxis"),
+                "safeArea": {
+                    "planned": scroll_contract.get("safeArea"),
+                    "generated": payload_screen.get("safeArea"),
+                },
+                "regions": scroll_region_consumption,
+            },
             "regions": {
                 "top": {
                     "sourceNodeId": (regions.get("topBar") or {}).get("nodeId"),
@@ -9549,6 +9886,9 @@ def build_native_structure_manifest(
         "layoutRelationGraphSchemaVersion": layout_graph.get("schemaVersion"),
         "nativeLayoutPlan": str(native_layout_path.resolve()) if native_layout_path else None,
         "nativeLayoutPlanSha256": sha256_file(native_layout_path) if native_layout_path else None,
+        "scrollAttachmentPlan": str(scroll_attachment_path.resolve()) if scroll_attachment_path else None,
+        "scrollAttachmentPlanSha256": sha256_file(scroll_attachment_path) if scroll_attachment_path else None,
+        "scrollAttachmentPlanSchemaVersion": scroll_attachment_plan.get("schemaVersion") if scroll_attachment_plan else None,
         "runtimeCapabilities": runtime_capabilities,
         "generationManifest": str((out_dir / MANIFEST_NAME).resolve()),
         "generationManifestSha256": sha256_file(out_dir / MANIFEST_NAME),
@@ -9586,6 +9926,7 @@ def main() -> int:
     architecture_by_screen = load_architecture_plan(args.architecture_plan)
     layout_graph, graph_by_screen = load_layout_relation_graph(args.layout_relation_graph)
     native_layout_plan, native_layout_by_screen = load_native_layout_plan(args.native_layout_plan)
+    scroll_attachment_plan, scroll_attachment_by_screen = load_scroll_attachment_plan(args.scroll_attachment_plan)
     if args.native_structure_manifest and not args.layout_relation_graph:
         raise ValueError("--native-structure-manifest requires --layout-relation-graph")
     name_prefix, naming_source, existing_type_names = load_naming_prefix(args.naming_plan)
@@ -9601,11 +9942,16 @@ def main() -> int:
         missing = sorted(set(ir_screen_ids) - set(native_layout_by_screen))
         extra = sorted(set(native_layout_by_screen) - set(ir_screen_ids))
         raise ValueError(f"native layout plan screen mismatch; missing={missing}, extra={extra}")
+    if scroll_attachment_by_screen and set(scroll_attachment_by_screen) != set(ir_screen_ids):
+        missing = sorted(set(ir_screen_ids) - set(scroll_attachment_by_screen))
+        extra = sorted(set(scroll_attachment_by_screen) - set(ir_screen_ids))
+        raise ValueError(f"scroll attachment plan screen mismatch; missing={missing}, extra={extra}")
     screens = [
         build_screen(
             ir,
             architecture_by_screen.get(screen_id),
             native_layout_by_screen.get(screen_id),
+            scroll_attachment_by_screen.get(screen_id),
         )
         for ir, screen_id in zip(irs, ir_screen_ids)
     ]
@@ -9702,6 +10048,8 @@ def main() -> int:
         "layoutRelationGraph": str(args.layout_relation_graph.resolve()) if args.layout_relation_graph else None,
         "nativeLayoutPlan": str(args.native_layout_plan.resolve()) if args.native_layout_plan else None,
         "nativeLayoutPlanSha256": sha256_file(args.native_layout_plan) if args.native_layout_plan else None,
+        "scrollAttachmentPlan": str(args.scroll_attachment_plan.resolve()) if args.scroll_attachment_plan else None,
+        "scrollAttachmentPlanSha256": sha256_file(args.scroll_attachment_plan) if args.scroll_attachment_plan else None,
         "namingPlan": str(args.naming_plan.resolve()) if args.naming_plan else None,
         "namePrefix": name_prefix,
         "namingSource": naming_source,
@@ -9718,12 +10066,15 @@ def main() -> int:
             layout_graph,
             graph_by_screen,
             native_layout_by_screen,
+            scroll_attachment_plan,
+            scroll_attachment_by_screen,
             screen_source_files,
             manifest,
             args.out_dir,
             args.architecture_plan,
             args.layout_relation_graph,
             args.native_layout_plan,
+            args.scroll_attachment_plan,
             ui_stack,
         )
         native_structure_path.parent.mkdir(parents=True, exist_ok=True)

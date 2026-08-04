@@ -13,7 +13,8 @@ from pathlib import Path
 DEFAULT_UIKIT_SYMBOLS = [
     "UIControl", "UIButton", "UITextField", "UITextView", "UISwitch", "UISlider",
     "UIStepper", "UIDatePicker", "UIPickerView", "UISegmentedControl", "UIColorWell",
-    "UIPageControl", "UIProgressView", "UIActivityIndicatorView", "UIRefreshControl",
+    "UIPageControl", "UIProgressView", "UIActivityIndicatorView", "UIRefreshControl", "UIPasteControl",
+    "UISearchTextField", "UISearchBar",
     "UIScrollView", "UIStackView", "UITableView", "UICollectionView", "UICalendarView",
     "UIContentUnavailableView", "UINavigationController", "UITabBarController",
     "UISplitViewController", "UIPageViewController", "UISearchController",

@@ -33,6 +33,8 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 22. SVG 内部节点、富文本子节点、系统选择标记等被原生 owner 合并时，必须在生成后清单中记录 strategy、owner node ID、source node IDs 和 native primitive。只捕获 SVG 当前 computed state 时必须标记交互降级，不能声称原 transition/keyframes 已实现。
 23. 浏览器绘制顺序必须成为显式契约。提取阶段记录 DOM source order、`::before`/`::after` phase、stacking context owner、paint group 与 z-level；普通 Stack/Grid 继续按视觉布局顺序测量，发生重叠的 Overlay/ZStack 必须按 `paintOrderNodeIds` 绘制，SwiftUI 与 UIKit 不得各自按 DOM 或 z-index 单字段重新猜测。
 24. 圆角与后代裁剪必须分离。`border-radius` 只决定背景、边框和自身内容的形状；只有 `overflow:hidden/clip`、clip-path、mask 或等价明确证据才能裁剪子树。`overflow:visible` 的伪元素、阴影和越界装饰必须允许绘制到圆角边界之外。
+25. 滚动与区域归属必须形成独立的 `scroll-and-attachment-plan.json`。每个 Scroll、固定/粘性/随内容滚动区域、Safe Area 和键盘避让只能有一个 owner；计划和生成后的消费清单都必须通过确定性门禁，不能依赖截图发现整页双轴滚动。
+26. 系统控件覆盖必须以当前本机 iPhoneOS SDK 审计，不使用永久硬编码的“最新控件”结论。公开 `UIControl` 子类及页面常用 UIKit 输入/选择/状态控件必须贯通识别、UI IR、架构、SwiftUI/UIKit 执行和编译测试；SwiftUI 对无直接等价物可使用局部 `UIViewRepresentable`，但禁止整页 UIKit/WebView 包装。
 
 ## 支持范围
 
@@ -319,6 +321,8 @@ python3 "$SKILL_ROOT/scripts/generate_ios_from_ir.py" \
 - 静态页面不强制创建 ViewModel。
 - 动态数据不是转换核心。HTML 当前可见内容只作为确定性视觉 fixture，用于还原列表、loading、empty、error 等画面；生成器不创建接口、请求层、分页器或业务 ViewModel，也不因重复列表猜测 endpoint。只有用户明确要求业务接入时，才把 `dataBinding` 交给项目数据层。
 - 输入控件必须保存编辑状态并遵循 maxlength、键盘类型、return key、自动大写、自动纠错和 autofocus。键盘与 Safe Area 只能有一个避让所有者；滚动容器保持父级完整 bounds，不得预减键盘或安全区高度。
+- 读取 `references/scroll-and-attachment.md`。架构完成后必须生成并验证滚动归属计划；原生生成后还要在 `native-structure-manifest.json` 中证明根轴向、区域 attachment、Safe Area owner 和 keyboard avoidance 已被消费。
+- 系统控件目录至少覆盖当前 SDK 的 `UIButton`、`UITextField`、`UISwitch`、`UISlider`、`UIStepper`、`UISegmentedControl`、`UIDatePicker`、`UIColorWell`、`UIPageControl`、`UIPasteControl`、`UIRefreshControl`，并覆盖页面常用的 `UITextView`、`UISearchTextField`、`UISearchBar`、`UIPickerView`、`UIProgressView`、`UIActivityIndicatorView`、`UICalendarView`。先运行 SDK 与覆盖审计，再按最低 iOS 版本选择直接 API 或 fallback。
 - Button、UIControl 和输入控件的 pressed、focused、disabled、selected 外观必须优先来自浏览器实测状态样式，并由原生控件状态驱动；不得用普通 View 手势或统一透明度假装所有状态。
 - 仅在具有独立职责、重复使用或明显降低复杂度时拆组件。
 - 每个可交互节点使用 UI IR 中的稳定 ID 作为 `accessibilityIdentifier`。

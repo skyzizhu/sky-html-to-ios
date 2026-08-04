@@ -133,6 +133,9 @@ The default deployment target is iOS 16 and can be configured. Newer APIs requir
 - Prefers Apple system controls and official configuration over custom controls.
 - Keeps the system control as the interaction and accessibility owner when a native wrapper is needed for shadows, gradients, clipping, or asymmetric decoration.
 - Creates a custom `UIControl` only when the UI IR records evidence that system behavior or visual capability is insufficient.
+- Audits the installed iPhoneOS SDK and verifies recognition, architecture planning, SwiftUI execution, UIKit execution, and compile-time availability for the supported control catalog.
+- Covers every public `UIControl` subclass in the audited SDK set, plus common page controls such as `UITextView`, `UISearchBar`, `UIPickerView`, `UIProgressView`, `UIActivityIndicatorView`, and `UICalendarView`.
+- Uses narrow `UIViewRepresentable` adapters only when SwiftUI has no equivalent system control; it never wraps the page in UIKit or `WKWebView`.
 
 ### Xcode project discovery
 
@@ -259,6 +262,10 @@ Passive text uses `Text`/`UILabel`. A read-only `TextEditor`/`UITextView` is sel
 | Disclosure | `DisclosureGroup`/custom | Custom `UIControl` | Mapped |
 | Page indicator | Page Tab/custom | `UIPageControl` | Mapped |
 | Pull to refresh | `.refreshable` | `UIRefreshControl` | Integration |
+| Search bar | Local system-control adapter | `UISearchBar` | Direct/local bridge |
+| Wheel picker | Wheel `Picker` | `UIPickerView` | Direct |
+| Paste control | `PasteButton` | `UIPasteControl` | Direct |
+| Calendar view | Local system-control adapter | `UICalendarView` | Direct/local bridge |
 
 ### System controllers and capabilities
 

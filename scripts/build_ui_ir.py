@@ -20,6 +20,7 @@ EXPLICIT_COMPONENTS = {
     "checkbox": ("checkbox", "Toggle with checkbox style", "Custom UIControl"),
     "collection": ("collection", "LazyVGrid/LazyHGrid", "UICollectionView"),
     "color-picker": ("color-picker", "ColorPicker", "UIColorWell"),
+    "calendar-view": ("calendar-view", "UICalendarView representable", "UICalendarView"),
     "context-menu": ("context-menu", "contextMenu", "UIContextMenuInteraction"),
     "date-picker": ("date-input", "DatePicker", "UIDatePicker"),
     "disclosure": ("disclosure", "DisclosureGroup", "Expandable UIControl"),
@@ -34,12 +35,16 @@ EXPLICIT_COMPONENTS = {
     "menu": ("menu", "Menu", "UIMenu"),
     "navigation-bar": ("navigation-bar", "toolbar/navigationTitle", "UINavigationBar"),
     "page-control": ("page-control", "custom page indicator", "UIPageControl"),
+    "paste-control": ("paste-control", "PasteButton", "UIPasteControl"),
     "picker": ("select", "Picker", "UIPickerView/UIMenu"),
+    "wheel-picker": ("wheel-picker", "Picker wheel style", "UIPickerView"),
+    "refresh-control": ("refresh-control", ".refreshable", "UIRefreshControl"),
     "popover": ("popover", "popover", "UIPopoverPresentationController"),
     "progress": ("progress", "ProgressView", "UIProgressView"),
     "radio": ("radio", "Custom radio option", "Custom UIControl"),
     "scroll-view": ("scroll-container", "ScrollView", "UIScrollView"),
     "search-field": ("search-input", "TextField/.searchable", "UISearchTextField"),
+    "search-bar": ("search-bar", "UISearchBar representable/.searchable", "UISearchBar"),
     "segmented-control": ("segmented-control", "Picker segmented style", "UISegmentedControl"),
     "sheet": ("sheet", "sheet", "Presented UIViewController"),
     "slider": ("slider", "Slider", "UISlider"),
@@ -118,7 +123,7 @@ def text_behavior(node: dict, semantic: str) -> dict | None:
     tag = str(node.get("tag") or "").lower()
     role = str(attrs.get("role") or "").lower()
     control_hint = str(attrs.get("data-ios-text-control") or "").strip().lower()
-    input_semantics = {"text-input", "secure-input", "search-input", "number-input", "text-area"}
+    input_semantics = {"text-input", "secure-input", "search-input", "search-bar", "number-input", "text-area"}
     is_input = semantic in input_semantics or tag in {"input", "textarea"} or role in {"textbox", "searchbox"}
     if not is_input and semantic not in {"text", "label", "heading"} and not control_hint:
         return None
@@ -266,7 +271,11 @@ def semantic_mapping(node: dict, has_interaction: bool) -> dict:
         "dialog": ("modal", "sheet/fullScreenCover", "Presented UIViewController"),
         "alertdialog": ("alert", "alert", "UIAlertController"),
         "status": ("toast", "Overlay/status View", "Overlay/status UIView"),
-        "progressbar": ("progress", "ProgressView", "UIProgressView"),
+        "progressbar": (
+            "activity-indicator" if attrs.get("aria-valuenow") is None else "progress",
+            "ProgressView",
+            "UIActivityIndicatorView" if attrs.get("aria-valuenow") is None else "UIProgressView",
+        ),
         "heading": ("heading", "Text", "UILabel"),
         "img": ("image", "Image", "UIImageView"),
     }
@@ -399,6 +408,12 @@ def semantic_mapping(node: dict, has_interaction: bool) -> dict:
     if re.search(r"toast|snackbar", name_blob):
         reasons.append("name-pattern:toast")
         return result("toast", "Overlay", "Overlay UIView", 0.62, "custom-native-view")
+    if re.search(r"activity.?indicator|loading|spinner", name_blob) and not node.get("text"):
+        reasons.append("name-pattern:activity-indicator")
+        return result("activity-indicator", "ProgressView", "UIActivityIndicatorView", 0.7)
+    if re.search(r"page.?control|page.?indicator|pagination.?dots", name_blob):
+        reasons.append("name-pattern:page-control")
+        return result("page-control", "UIPageControl representable", "UIPageControl", 0.68)
     if node.get("text"):
         reasons.append("direct-text-content")
         return result("text", "Text", "UILabel", 0.72, "native-default")
@@ -409,12 +424,13 @@ def semantic_mapping(node: dict, has_interaction: bool) -> dict:
 SYSTEM_CONTROL_SEMANTICS = {
     "button", "icon-button", "link", "text-input", "secure-input", "search-input",
     "number-input", "date-input", "text-area", "file-input", "switch",
-    "segmented-control", "select", "slider", "stepper", "color-picker", "progress",
+    "segmented-control", "select", "wheel-picker", "slider", "stepper", "color-picker", "progress",
+    "activity-indicator", "page-control", "paste-control", "refresh-control", "calendar-view", "search-bar",
     "disclosure", "disclosure-trigger", "menu-item", "tab-item", "alert", "sheet",
     "modal", "menu", "loading", "video", "map",
 }
 SYSTEM_VIEW_SEMANTICS = {
-    "text", "heading", "label", "image", "icon", "divider", "progress", "loading",
+    "text", "heading", "label", "image", "icon", "divider", "progress", "loading", "activity-indicator",
 }
 SYSTEM_CONTAINER_SEMANTICS = {
     "scroll", "list", "sectioned-list", "data-table", "grid", "carousel",
@@ -1864,6 +1880,11 @@ def build_ir(data: dict, args) -> dict:
                 "value": first_known(properties.get("value"), attrs.get("value")),
                 "groupName": attrs.get("name"),
                 "inputType": attrs.get("type"),
+                "pageCount": attrs.get("data-ios-page-count"),
+                "currentPage": attrs.get("data-ios-current-page"),
+                "pickerStyle": attrs.get("data-ios-picker-style"),
+                "pasteDisplayMode": attrs.get("data-ios-paste-display-mode"),
+                "calendarSelection": attrs.get("data-ios-calendar-selection"),
                 "keyboardType": keyboard_type,
                 "contentType": content_type,
                 "submitLabel": None,

@@ -70,6 +70,58 @@ def render_node(
 
 
 class BuildUIIRTests(unittest.TestCase):
+    def test_explicit_apple_system_controls_map_to_native_semantics(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            expected = {
+                "button": ("button", "UIButton"),
+                "color-picker": ("color-picker", "UIColorWell"),
+                "date-picker": ("date-input", "UIDatePicker"),
+                "page-control": ("page-control", "UIPageControl"),
+                "paste-control": ("paste-control", "UIPasteControl"),
+                "refresh-control": ("refresh-control", "UIRefreshControl"),
+                "segmented-control": ("segmented-control", "UISegmentedControl"),
+                "slider": ("slider", "UISlider"),
+                "stepper": ("stepper", "UIStepper"),
+                "switch": ("switch", "UISwitch"),
+                "text-field": ("text-input", "UITextField"),
+                "search-field": ("search-input", "UISearchTextField"),
+                "search-bar": ("search-bar", "UISearchBar"),
+                "activity-indicator": ("activity-indicator", "UIActivityIndicatorView"),
+                "progress": ("progress", "UIProgressView"),
+                "wheel-picker": ("wheel-picker", "UIPickerView"),
+                "calendar-view": ("calendar-view", "UICalendarView"),
+            }
+            nodes = [render_node("app", None, "main", {"x": 0, "y": 0, "width": 393, "height": 852})]
+            for index, component in enumerate(expected):
+                item = render_node(component, "app", "div", {"x": 20, "y": 20 + index * 32, "width": 200, "height": 28})
+                item["attributes"]["data-ios-component"] = component
+                nodes.append(item)
+            source = root / "render-tree.json"
+            output = root / "ui-ir.json"
+            source.write_text(json.dumps({
+                "schemaVersion": "render-tree-1.2",
+                "source": {"kind": "html-file", "entry": "/tmp/example.html"},
+                "document": {"viewport": {"width": 393, "height": 852}},
+                "nodes": nodes,
+                "interactions": [],
+                "phoneCandidates": [],
+            }), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), str(source), "--out", str(output),
+                "--root-runtime-id", "app", "--screen-id", "home",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            generated = json.loads(output.read_text(encoding="utf-8"))
+            by_runtime_id = {
+                item["source"]["runtimeId"]: item
+                for item in generated["screens"][0]["nodes"]
+            }
+            for component, (semantic, uikit) in expected.items():
+                self.assertEqual(by_runtime_id[component]["semanticType"], semantic)
+                self.assertIn(uikit, by_runtime_id[component]["nativeMapping"]["uiKit"])
+                self.assertTrue(by_runtime_id[component]["nativeMapping"]["nativeControlDecision"]["systemCandidate"])
+
     def test_visual_artboard_state_contract_survives_into_ui_ir(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

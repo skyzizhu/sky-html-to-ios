@@ -138,6 +138,9 @@ HTML 可以引用本地 CSS、JavaScript、图片、SVG 和字体。远程资源
 - 优先使用 Apple 系统控件与官方配置，不因默认皮肤不同就直接自定义；
 - 阴影、渐变、裁切或非对称装饰需要包装时，内部系统控件继续承担交互与无障碍；
 - 只有 UI IR 记录了系统行为或视觉能力不足的证据，才允许生成自定义 `UIControl`。
+- 按本机 iPhoneOS SDK 审计控件目录，并验证识别、架构规划、SwiftUI 执行、UIKit 执行和最低系统版本编译可用性。
+- 覆盖当前审计 SDK 中全部公开 `UIControl` 子类，并覆盖 `UITextView`、`UISearchBar`、`UIPickerView`、`UIProgressView`、`UIActivityIndicatorView`、`UICalendarView` 等页面常用控件。
+- SwiftUI 没有直接等价控件时只使用局部 `UIViewRepresentable`，不允许把整页包装为 UIKit 或 `WKWebView`。
 
 ### 3. 工程发现
 
@@ -293,6 +296,10 @@ UI IR 保存：
 | disclosure | `DisclosureGroup`/自定义 | 自定义 `UIControl` | 映射/组合 |
 | page indicator | page Tab/custom | `UIPageControl` | 映射/组合 |
 | refresh | `.refreshable` | `UIRefreshControl` | 映射/项目接线 |
+| search bar | 局部系统控件桥接 | `UISearchBar` | 直接/局部桥接 |
+| wheel picker | wheel `Picker` | `UIPickerView` | 直接生成 |
+| paste control | `PasteButton` | `UIPasteControl` | 直接生成 |
+| calendar view | 局部系统控件桥接 | `UICalendarView` | 直接/局部桥接 |
 
 ### 系统控制器与能力
 

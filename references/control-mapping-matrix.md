@@ -104,7 +104,14 @@
 | `input[type=range]` | `slider` | `Slider` | `UISlider` | 保留 min/max/step/value |
 | 数值加减组合 | `stepper` | `Stepper` 或自定义组合 | `UIStepper` 或自定义组合 | 视觉明显自定义时保留组合结构 |
 | `input[type=color]` | `color-picker` | `ColorPicker` | `UIColorWell` | 受最低 iOS 版本约束 |
+| 明确滚轮选择器 | `wheel-picker` | `Picker(.wheel)` | `UIPickerView` | 选项顺序和值来自 DOM/显式契约 |
+| 搜索栏容器 | `search-bar` | 局部 `UISearchBar` representable | `UISearchBar` | 与普通 search text field 分开 |
+| 页码圆点 | `page-control` | 局部 `UIPageControl` representable | `UIPageControl` | 保存 pageCount/currentPage |
 | `progress` | `progress` | `ProgressView` | `UIProgressView` | 线性/不确定态分开 |
+| 不确定加载态 | `activity-indicator` | `ProgressView` | `UIActivityIndicatorView` | 无 determinate value 时使用 |
+| 系统粘贴按钮 | `paste-control` | `PasteButton` | `UIPasteControl` | 必须有显式语义，不凭“粘贴”文字猜测 |
+| 下拉刷新 | `refresh-control` | `.refreshable` | `UIRefreshControl` | 集成到所属滚动容器，不作为普通可见行 |
+| 日历视图 | `calendar-view` | 局部 `UICalendarView` representable | `UICalendarView` | 保存单日/多日选择模式 |
 | `meter` | `meter` | 自定义 Gauge/ProgressView | 自定义 View | 保留 low/high/optimum 语义 |
 | `details/summary` | `disclosure` | `DisclosureGroup` 或自定义 | 展开折叠 UIControl | 保留 open 初始状态和动画 |
 

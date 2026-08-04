@@ -895,6 +895,8 @@ async function main() {
           "data-ios-text-control", "data-ios-editable", "data-ios-selectable", "data-ios-multiline",
           "data-ios-field-id", "data-ios-validation", "data-ios-data-source", "data-ios-item-id",
           "data-ios-state-role", "data-ios-pagination",
+          "data-ios-page-count", "data-ios-current-page", "data-ios-picker-style", "data-ios-refresh-action",
+          "data-ios-paste-display-mode", "data-ios-calendar-selection",
         ]) {
           if (element.hasAttribute(name)) attributes[name] = element.getAttribute(name);
         }

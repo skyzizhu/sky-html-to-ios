@@ -15,12 +15,12 @@ from urllib.parse import urlparse
 SCHEMA_VERSION = "html-to-ios-authoring-contract-report-1.0"
 
 COMPONENTS = {
-    "activity-indicator", "alert", "button", "checkbox", "collection", "color-picker",
+    "activity-indicator", "alert", "button", "calendar-view", "checkbox", "collection", "color-picker",
     "context-menu", "date-picker", "disclosure", "file-picker", "form", "gauge", "image",
     "label", "link", "list", "map", "menu", "navigation-bar", "page-control", "picker",
-    "popover", "progress", "radio", "scroll-view", "search-field", "segmented-control",
+    "paste-control", "popover", "progress", "radio", "refresh-control", "scroll-view", "search-bar", "search-field", "segmented-control",
     "sheet", "slider", "split-view", "stepper", "switch", "tab-bar", "table", "text",
-    "text-editor", "text-field", "toolbar", "video", "web-content",
+    "text-editor", "text-field", "toolbar", "video", "web-content", "wheel-picker",
 }
 ACTIONS = {
     "add-child", "dismiss", "open-url", "pop", "pop-to-root", "present-fullscreen",
@@ -52,9 +52,10 @@ STATE_KINDS = {
     "revealed-content",
 }
 PAGINATION_MODES = {"none", "page", "cursor", "infinite"}
+SCROLL_ROOTS = {"", "true", "vertical", "horizontal", "both", "bidirectional"}
 BOOLEAN_ATTRIBUTES = {
     "data-ios-app-root", "data-ios-backdrop-dismiss", "data-ios-ignore", "data-ios-interactive-dismiss",
-    "data-ios-required-state", "data-ios-screen-initial", "data-ios-scroll-root", "data-ios-shell",
+    "data-ios-required-state", "data-ios-screen-initial", "data-ios-shell",
     "data-ios-editable", "data-ios-selectable", "data-ios-multiline",
 }
 INTERACTIVE_TAGS = {"a", "button", "input", "select", "summary", "textarea"}
@@ -167,6 +168,7 @@ def validate(path: Path) -> dict:
         enum_check(issues, attrs, line, "data-ios-navigation-style", NAVIGATION_STYLES)
         enum_check(issues, attrs, line, "data-ios-title-mode", TITLE_MODES)
         enum_check(issues, attrs, line, "data-ios-scroll-edge", SCROLL_EDGES)
+        enum_check(issues, attrs, line, "data-ios-scroll-root", SCROLL_ROOTS)
         enum_check(issues, attrs, line, "data-ios-toolbar-placement", TOOLBAR_PLACEMENTS)
         enum_check(issues, attrs, line, "data-ios-back-button", BACK_BUTTONS)
         enum_check(issues, attrs, line, "data-ios-tab-role", TAB_ROLES)
