@@ -12,18 +12,31 @@ import tempfile
 from pathlib import Path
 
 
-CASE_PATTERN = re.compile(r"^(?P<width>\d+)x(?P<height>\d+):(?P<device>.+)$")
+CASE_PATTERN = re.compile(
+    r"^(?:(?P<profile>[A-Za-z0-9._-]+)=)?"
+    r"(?P<width>\d+)x(?P<height>\d+)"
+    r"(?:@(?P<orientation>portrait|landscape))?:(?P<device>.+)$"
+)
 
 
 def parse_case(value: str) -> dict:
     match = CASE_PATTERN.fullmatch(value.strip())
     if not match:
-        raise argparse.ArgumentTypeError("case must use WIDTHxHEIGHT:SIMULATOR_NAME")
+        raise argparse.ArgumentTypeError(
+            "case must use [PROFILE=]WIDTHxHEIGHT[@portrait|landscape]:SIMULATOR_NAME"
+        )
     width = int(match.group("width"))
     height = int(match.group("height"))
-    if width < 240 or height < 400:
+    if min(width, height) < 240 or max(width, height) < 400:
         raise argparse.ArgumentTypeError("case viewport is implausibly small")
-    return {"width": width, "height": height, "device": match.group("device").strip()}
+    orientation = match.group("orientation") or ("landscape" if width > height else "portrait")
+    return {
+        "id": match.group("profile") or f"{width}x{height}-{orientation}",
+        "width": width,
+        "height": height,
+        "orientation": orientation,
+        "device": match.group("device").strip(),
+    }
 
 
 def available_device_names() -> set[str]:
@@ -51,7 +64,7 @@ def initial_manifest(manifest: dict, width: int, height: int) -> dict:
     return result
 
 
-def validate_device_viewport(capture: dict | None, width: int, height: int) -> dict:
+def validate_device_viewport(capture: dict | None, width: int, height: int, orientation: str = "portrait") -> dict:
     original = (capture or {}).get("originalSize") or {}
     original_width = float(original.get("width") or 0)
     original_height = float(original.get("height") or 0)
@@ -61,8 +74,11 @@ def validate_device_viewport(capture: dict | None, width: int, height: int) -> d
             "reason": "missing-original-screenshot-size",
             "declaredViewport": {"width": width, "height": height},
         }
-    scale_x = original_width / width
-    scale_y = original_height / height
+    rotated_native_capture = orientation == "landscape" and original_height > original_width
+    source_width = original_height if rotated_native_capture else original_width
+    source_height = original_width if rotated_native_capture else original_height
+    scale_x = source_width / width
+    scale_y = source_height / height
     native_scale = min((1, 2, 3), key=lambda candidate: abs(scale_x - candidate) + abs(scale_y - candidate))
     matches = abs(scale_x - native_scale) <= 0.03 and abs(scale_y - native_scale) <= 0.03
     return {
@@ -73,6 +89,39 @@ def validate_device_viewport(capture: dict | None, width: int, height: int) -> d
         "inferredScaleX": round(scale_x, 4),
         "inferredScaleY": round(scale_y, 4),
         "expectedNativeScale": native_scale,
+        "rotatedNativeCapture": rotated_native_capture,
+    }
+
+
+def validate_app_viewport(geometry: dict | None, width: int, height: int, orientation: str) -> dict:
+    frame = (geometry or {}).get("appFrame") or {}
+    actual_width = float(frame.get("width") or 0)
+    actual_height = float(frame.get("height") or 0)
+    if actual_width <= 0 or actual_height <= 0:
+        return {
+            "status": "unavailable",
+            "reason": "missing-app-window-frame",
+            "declaredViewport": {"width": width, "height": height},
+            "orientation": orientation,
+        }
+    matches = abs(actual_width - width) <= 1 and abs(actual_height - height) <= 1
+    orientation_matches = (actual_width > actual_height) == (orientation == "landscape")
+    return {
+        "status": "passed" if matches and orientation_matches else "failed",
+        "reason": None if matches and orientation_matches else "app-window-does-not-match-declared-viewport",
+        "declaredViewport": {"width": width, "height": height},
+        "actualAppFrame": frame,
+        "orientation": orientation,
+        "orientationMatches": orientation_matches,
+    }
+
+
+def inferred_size_classes(width: int, height: int, device: str = "") -> dict:
+    is_phone = device.lower().startswith("iphone")
+    return {
+        "horizontal": "compact" if is_phone else "regular" if width >= 600 else "compact",
+        "vertical": "compact" if is_phone and width > height else "regular" if height >= 600 else "compact",
+        "evidence": "device-family-and-app-window-inference",
     }
 
 
@@ -144,15 +193,25 @@ def main() -> int:
     parser.add_argument("--target", required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--case", action="append", type=parse_case, required=True)
+    parser.add_argument("--compatibility-matrix", type=Path)
     parser.add_argument("--minimum-ios", default="16.0")
     parser.add_argument("--allow-missing-devices", action="store_true")
     parser.add_argument("--reuse-captures", action="store_true")
     args = parser.parse_args()
 
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
-    case_ids = [f"{case['width']}x{case['height']}" for case in args.case]
+    case_ids = [case["id"] for case in args.case]
     if len(case_ids) != len(set(case_ids)):
-        parser.error("each WIDTHxHEIGHT viewport may only appear once")
+        parser.error("each runtime profile id may only appear once")
+    compatibility = (
+        json.loads(args.compatibility_matrix.read_text(encoding="utf-8"))
+        if args.compatibility_matrix else None
+    )
+    planned_profiles = {
+        str(item.get("id")): item
+        for item in (compatibility or {}).get("profiles") or []
+        if item.get("id")
+    }
     devices = available_device_names()
     capture_script = Path(__file__).with_name("capture_ios_states.py")
     results = []
@@ -160,8 +219,12 @@ def main() -> int:
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     for case in args.case:
-        case_id = f"{case['width']}x{case['height']}"
+        case_id = case["id"]
         case_dir = args.out_dir / case_id
+        planned = planned_profiles.get(case_id)
+        if compatibility and not planned:
+            results.append({**case, "status": "failed", "reason": "profile-not-declared-in-compatibility-matrix"})
+            continue
         if case["device"] not in devices:
             missing_devices.append(case["device"])
             results.append({**case, "id": case_id, "status": "missing-device"})
@@ -189,21 +252,39 @@ def main() -> int:
                     str(case["width"]),
                     "--viewport-height",
                     str(case["height"]),
+                    "--orientation",
+                    case["orientation"],
                 ]
                 if args.workspace:
                     command.extend(["--workspace", str(args.workspace)])
                 subprocess.run(command, text=True, check=True)
         captures = json.loads((case_dir / "captures.json").read_text(encoding="utf-8"))
         initial = next((item for item in captures.get("captures") or [] if item.get("id") == "initial"), None)
-        viewport_validation = validate_device_viewport(initial, case["width"], case["height"])
+        viewport_validation = validate_device_viewport(initial, case["width"], case["height"], case["orientation"])
         geometry_path = Path(initial["geometry"]) if initial and initial.get("geometry") else None
+        geometry = json.loads(geometry_path.read_text(encoding="utf-8")) if geometry_path and geometry_path.is_file() else None
         diagnostics = (
-            analyze_geometry(manifest, json.loads(geometry_path.read_text(encoding="utf-8")), case["width"])
-            if geometry_path and geometry_path.is_file()
+            analyze_geometry(manifest, geometry, case["width"])
+            if geometry
             else {"status": "review-required", "reason": "missing-geometry"}
         )
         diagnostics["deviceViewportValidation"] = viewport_validation
-        if viewport_validation["status"] == "failed":
+        diagnostics["appViewportValidation"] = validate_app_viewport(
+            geometry, case["width"], case["height"], case["orientation"]
+        )
+        diagnostics["sizeClasses"] = inferred_size_classes(case["width"], case["height"], case["device"])
+        if planned:
+            diagnostics["plannedSizeClasses"] = {
+                "horizontal": planned.get("horizontalSizeClass"),
+                "vertical": planned.get("verticalSizeClass"),
+            }
+            if (
+                planned.get("horizontalSizeClass") != diagnostics["sizeClasses"]["horizontal"]
+                or planned.get("verticalSizeClass") != diagnostics["sizeClasses"]["vertical"]
+            ):
+                diagnostics["status"] = "failed"
+                diagnostics["reason"] = "runtime-size-class-does-not-match-plan"
+        if diagnostics["appViewportValidation"]["status"] == "failed" or viewport_validation["status"] == "failed":
             diagnostics["status"] = "failed"
         results.append({**case, "id": case_id, "capture": initial, "diagnostics": diagnostics, "status": diagnostics["status"]})
 
@@ -222,6 +303,7 @@ def main() -> int:
     report = {
         "schemaVersion": "responsive-ios-matrix-1.0",
         "manifest": str(args.manifest.resolve()),
+        "compatibilityMatrix": str(args.compatibility_matrix.resolve()) if args.compatibility_matrix else None,
         "project": str(args.project.resolve()),
         "target": args.target,
         "cases": results,

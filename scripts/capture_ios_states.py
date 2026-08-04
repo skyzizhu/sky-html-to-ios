@@ -75,18 +75,24 @@ def find_exported_attachment(
     return None
 
 
-def normalize(source: Path, destination: Path, width: int, height: int) -> dict:
+def normalize(source: Path, destination: Path, width: int, height: int, orientation: str = "portrait") -> dict:
     with Image.open(source) as opened:
         image = opened.convert("RGBA")
         original = image.size
+        rotated = orientation == "landscape" and image.height > image.width
+        if rotated:
+            image = image.transpose(Image.Transpose.ROTATE_90)
+        normalized_source = image.size
         if original != (width, height):
             image = image.resize((width, height), Image.Resampling.LANCZOS)
         destination.parent.mkdir(parents=True, exist_ok=True)
         image.save(destination)
     return {
         "originalSize": {"width": original[0], "height": original[1]},
+        "orientedSourceSize": {"width": normalized_source[0], "height": normalized_source[1]},
         "outputSize": {"width": width, "height": height},
-        "normalized": original != (width, height),
+        "normalized": rotated or normalized_source != (width, height),
+        "rotatedForOrientation": rotated,
         "normalization": "logical-viewport-lanczos" if original != (width, height) else None,
     }
 
@@ -102,6 +108,7 @@ def main() -> int:
     parser.add_argument("--minimum-ios", default="16.0")
     parser.add_argument("--viewport-width", type=int, help="Logical output width for this simulator case")
     parser.add_argument("--viewport-height", type=int, help="Logical output height for this simulator case")
+    parser.add_argument("--orientation", choices=("portrait", "landscape"), default="portrait")
     parser.add_argument("--derived-data", type=Path)
     parser.add_argument("--test-timeout-seconds", type=int, default=240)
     args = parser.parse_args()
@@ -126,6 +133,7 @@ def main() -> int:
     prepared = run([
         "ruby", str(preparer), "--project", str(args.project), "--target", args.target,
         "--manifest", str(args.manifest), "--source-dir", str(source_dir), "--minimum-ios", args.minimum_ios,
+        "--orientation", args.orientation,
     ], capture=True)
     prepared_report = json.loads(prepared.stdout)
     simulator_id = choose_simulator(args.device)
@@ -169,7 +177,7 @@ def main() -> int:
             "screenshot": str(destination.resolve()),
             "actions": state.get("iosActions") or [],
             "geometry": geometry_path,
-            **normalize(exported, destination, width, height),
+            **normalize(exported, destination, width, height, args.orientation),
         })
     report = {
         "schemaVersion": "ios-state-captures-1.0",
@@ -179,6 +187,7 @@ def main() -> int:
         "scheme": prepared_report["scheme"],
         "simulatorId": simulator_id,
         "device": args.device,
+        "orientation": args.orientation,
         "viewport": {"width": width, "height": height},
         "captures": captures,
         "missing": missing,

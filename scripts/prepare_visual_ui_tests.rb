@@ -11,16 +11,18 @@ rescue LoadError
   abort "The xcodeproj Ruby gem is required. Install it with: gem install xcodeproj"
 end
 
-options = { minimum_ios: nil }
+options = { minimum_ios: nil, orientation: "portrait" }
 OptionParser.new do |parser|
   parser.on("--project PATH") { |value| options[:project] = value }
   parser.on("--target NAME") { |value| options[:target] = value }
   parser.on("--manifest PATH") { |value| options[:manifest] = value }
   parser.on("--source-dir PATH") { |value| options[:source_dir] = value }
   parser.on("--minimum-ios VERSION") { |value| options[:minimum_ios] = value }
+  parser.on("--orientation ORIENTATION") { |value| options[:orientation] = value }
 end.parse!
 
 abort "--project, --target, --manifest and --source-dir are required" unless %i[project target manifest source_dir].all? { |key| options[key] }
+abort "--orientation must be portrait or landscape" unless %w[portrait landscape].include?(options[:orientation])
 
 project_path = File.expand_path(options[:project])
 manifest_path = File.expand_path(options[:manifest])
@@ -116,6 +118,7 @@ end
 screen_id = manifest["screenId"].to_s.strip
 arguments += ["-HTMLToIOSInitialRoute", screen_id] unless screen_id.empty?
 launch_arguments = "[#{arguments.map { |item| swift_string(item) }.join(", ")}]"
+device_orientation = options[:orientation] == "landscape" ? ".landscapeLeft" : ".portrait"
 
 swift = <<~SWIFT
   import XCTest
@@ -126,6 +129,7 @@ swift = <<~SWIFT
       }
 
       private func launchApp(motionProgress: Double? = nil) -> XCUIApplication {
+          XCUIDevice.shared.orientation = #{device_orientation}
           let app = XCUIApplication()
           app.launchArguments += #{launch_arguments}
           if let motionProgress {
@@ -238,7 +242,17 @@ swift = <<~SWIFT
                   "elementType": candidate.elementType.rawValue,
               ])
           }
-          let payload: [String: Any] = ["nodes": nodes]
+          let appFrame = app.frame
+          let payload: [String: Any] = [
+              "nodes": nodes,
+              "appFrame": [
+                  "x": appFrame.origin.x,
+                  "y": appFrame.origin.y,
+                  "width": appFrame.width,
+                  "height": appFrame.height,
+              ],
+              "orientation": #{swift_string(options[:orientation])},
+          ]
           guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else { return }
           let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
           attachment.name = name

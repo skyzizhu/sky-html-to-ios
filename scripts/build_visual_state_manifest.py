@@ -251,7 +251,11 @@ def main() -> int:
         scroll = state.get("scroll")
         if scroll in {"top", "middle", "bottom"}:
             html_actions.append({"type": "scroll", "selector": screen.get("sourceSelector"), "position": scroll})
-            ios_actions.append({"type": "scroll", "accessibilityIdentifier": screen.get("rootNodeId"), "position": scroll})
+            # Every state launches a fresh app at the initial offset. Requiring a
+            # root accessibility element for "top" can skip an otherwise valid
+            # initial capture when the native root is intentionally grouped.
+            if scroll != "top":
+                ios_actions.append({"type": "scroll", "accessibilityIdentifier": screen.get("rootNodeId"), "position": scroll})
         sequence = state.get("interactionSequence") or ([state.get("triggerInteractionId")] if state.get("triggerInteractionId") else [])
         active_state = None
         html_root_selector = None

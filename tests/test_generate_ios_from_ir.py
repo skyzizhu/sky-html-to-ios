@@ -867,6 +867,10 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             swiftui_runtime = (swiftui_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn("ScrollView(.vertical)", swiftui_runtime)
             self.assertIn("private var scrollContainer: some View", swiftui_runtime)
+            self.assertIn(
+                "let preservesIntrinsicWidth: Bool?",
+                (swiftui_dir / MODELS_FILE).read_text(encoding="utf-8"),
+            )
             self.assertIn(".lineLimit(style.textLineLimit)", swiftui_runtime)
             self.assertIn("HTMLToIOSAspectRatioModifier", swiftui_runtime)
             self.assertIn("style.fixedWidth.map { CGFloat($0) }", swiftui_runtime)

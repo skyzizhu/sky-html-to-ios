@@ -37,6 +37,7 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 26. 系统控件覆盖必须以当前本机 iPhoneOS SDK 审计，不使用永久硬编码的“最新控件”结论。公开 `UIControl` 子类及页面常用 UIKit 输入/选择/状态控件必须贯通识别、UI IR、架构、SwiftUI/UIKit 执行和编译测试；SwiftUI 对无直接等价物可使用局部 `UIViewRepresentable`，但禁止整页 UIKit/WebView 包装。
 27. 系统控件内部视觉必须形成独立的 `native-control-configuration-plan.json`。浏览器实测的 `accent-color`、`appearance`、normal、highlighted/pressed、editing/focused、checked/selected、disabled/loading，以及 Switch 轨道/滑块、Slider/Progress 轨道与填充、Segmented 选中项、PageControl 当前页、content inset、item spacing、preferred style 和固有尺寸都要由 SwiftUI/UIKit 共同消费，并在生成后清单中证明；不得由两套生成器各自猜测。
 28. 版本与设备兼容性必须形成 `native-api-fallback-plan.json` 和 `compatibility-matrix.json`。计划同时绑定本机 SDK、target deployment、SwiftUI/UIKit、来源实测宽度、Size Class 与 iPad 待验证项；低于运行时基线、必需能力无降级实现或生成器不认识降级策略时必须在代码生成前停止。`source-analyzed`、`pending-runtime-validation` 和视觉验收通过不得混为同一状态。
+29. 多设备运行验收必须使用真实 Simulator App 窗口形成 `ios-runtime-compatibility-report.json`。手机 320/375/393/430pt、横屏、iPad Split View 和 regular width 分别作为 profile；截图像素尺寸、`XCUIApplication.frame`、方向、Size Class 推断和无主横向溢出共同作为证据。不得把一台设备截图缩放成其他尺寸，也不得把全屏 iPad 截图声明为 Split View 已通过。
 
 ## 支持范围
 
@@ -377,6 +378,7 @@ python3 "$SKILL_ROOT/scripts/generate_ios_from_ir.py" \
 11. 视觉失败后先运行 `build_visual_correction_plan.py`。只有计划包含高置信度、状态归属明确且幅度未越界的 `proposedMutation` 时，才运行 `apply_visual_correction_plan.py` 生成新的 corrected UI IR；随后重新生成、构建并回归全部 required states。原始 IR 必须保留，默认最多 3 轮，单轮提升低于 0.25% 或没有安全修正时停止。
 12. 至少复核首屏、有意义的长页末端、弹层和切换状态。动画 0/50/100 帧只有具备原生确定性采样钩子时才设为 required，否则作为 advisory，不能用三张相同静态图冒充动画验证。
 13. 在项目支持的 320/375/393/430pt 或实际设备宽度上验证 Auto Layout、文字换行、边距和横向溢出；使用 `scripts/validate_responsive_ios_matrix.py` 为每个宽度指定真实可用 Simulator，使用 `scripts/compare_text_calibration.py` 核对 iOS 文字测量结果。禁止把一台设备截图缩放后冒充多设备验证；本机缺少某尺寸 runtime 时必须如实报告。
+    总控可重复传入 `--runtime-case 'PROFILE=WIDTHxHEIGHT@ORIENTATION:SIMULATOR_NAME'`。每个显式 profile 都是必测项，结果由 `build_ios_runtime_compatibility_report.py` 汇总；未提供运行 case 时保持 `optional-not-requested`，不能继承来源分析状态并声称运行通过。
 14. 执行轴向隔离走查：纵向页面的横向拖动不得移动根内容；横向 carousel 的纵向拖动不得带动其自身产生纵向偏移。逐项核对横向 item 宽度、文字行数、图标容器宽高比和末项可达性。
 15. 几何采集仅在 `-HTMLToIOSGeometryCapture 1` 测试启动参数下扩展 accessibility tree，正常 App 不改变辅助功能分组。报告必须同时给出全部可见节点和 `validationRegions` 节点的采集率；容器合并 frame、装饰节点和横向滚动拥有的越界不能误判为根页面溢出。
 16. 同一生成器版本至少执行一次 SwiftUI 与 UIKit 的真实 `xcodebuild` 回归。对 sheet、modal、popover、overlay、push 和 tab 切换，XCUITest 必须验证目标页面或 presentation 根节点实际出现后再截图。

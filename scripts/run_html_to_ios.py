@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = "html-to-ios-orchestration-1.7"
+SCHEMA_VERSION = "html-to-ios-orchestration-1.8"
 PROJECT_MARKER_NAME = ".html-to-ios-created-project.json"
 SKIP_PARTS = {".git", ".build", "build", "DerivedData", "Pods", "Carthage", "node_modules", "xcuserdata"}
 MAX_VISUAL_CORRECTION_ITERATIONS = 3
@@ -63,6 +63,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=393)
     parser.add_argument("--height", type=int, default=852)
     parser.add_argument("--device", default="iPhone 15 Pro")
+    parser.add_argument(
+        "--runtime-case",
+        action="append",
+        default=[],
+        help="Visual runtime profile: [PROFILE=]WIDTHxHEIGHT[@portrait|landscape]:SIMULATOR_NAME; repeat as needed",
+    )
     parser.add_argument("--appearance", choices=("light", "dark"), default="light")
     parser.add_argument(
         "--responsive-widths",
@@ -200,6 +206,7 @@ class Orchestrator:
                 "nativeAPIFallbackPlan": "pending",
                 "iosCompatibilityMatrix": "pending",
                 "iosCompatibilityValidation": "pending",
+                "iosRuntimeCompatibility": "pending" if getattr(args, "verification_mode", "auto") == "visual" else "optional-not-requested",
                 "nativeStructureManifest": "pending",
                 "nativeStructureValidation": "pending",
                 "projectGenerationDecision": "pending",
@@ -1567,6 +1574,69 @@ struct ContentView: View {
             self.report.pop("visualQualityGateFailures", None)
         return {"passed": not failed_states, "failedStates": failed_states, "screens": screen_results}
 
+    def validate_runtime_compatibility(
+        self,
+        project: Path,
+        target: str,
+        minimum_ios: str,
+        compatibility_matrix: Path,
+    ) -> None:
+        runtime_cases = getattr(self.args, "runtime_case", [])
+        if not runtime_cases:
+            self.report["qualityGates"]["iosRuntimeCompatibility"] = "optional-not-requested"
+            return
+        plans = self.artifacts.get("visualReviewPlans") or []
+        if not plans:
+            raise OrchestrationError(
+                "validate-ios-runtime-compatibility",
+                "Runtime compatibility cases require visual state manifests from HTML input.",
+            )
+        kind, container = self.choose_build_container(project)
+        runtime_reports: list[Path] = []
+        for plan in plans:
+            screen_id = str(plan["screenId"])
+            out_dir = self.report_dir / "runtime-compatibility" / screen_id
+            command: list[str | Path] = [
+                sys.executable,
+                self.scripts / "validate_responsive_ios_matrix.py",
+                Path(plan["manifest"]),
+                "--project", project,
+                "--target", target,
+                "--out-dir", out_dir,
+                "--minimum-ios", minimum_ios,
+                "--compatibility-matrix", compatibility_matrix,
+            ]
+            for case in runtime_cases:
+                command.extend(["--case", case])
+            if kind == "workspace":
+                command.extend(["--workspace", container])
+            self.run_command(f"validate-responsive-ios-matrix-{screen_id}", command)
+            runtime_reports.append(out_dir / "responsive-matrix.json")
+
+        final_report = self.report_dir / "ios-runtime-compatibility-report.json"
+        command = [
+            sys.executable,
+            self.scripts / "build_ios_runtime_compatibility_report.py",
+            "--compatibility-matrix", compatibility_matrix,
+            "--out", final_report,
+        ]
+        for runtime_report in runtime_reports:
+            command.extend(["--runtime-matrix", runtime_report])
+        for case in runtime_cases:
+            case_head = case.split(":", 1)[0]
+            profile_id = case_head.split("=", 1)[0] if "=" in case_head else None
+            if not profile_id:
+                raise OrchestrationError(
+                    "validate-ios-runtime-compatibility",
+                    "Total-control runtime cases must include a compatibility profile id before '='.",
+                )
+            command.extend(["--require-profile", profile_id])
+        result = self.run_command("build-ios-runtime-compatibility-report", command)
+        self.artifacts["iosRuntimeMatrices"] = [str(path) for path in runtime_reports]
+        self.artifacts["iosRuntimeCompatibilityReport"] = str(final_report)
+        status = str(result.get("status") or "passed") if isinstance(result, dict) else "passed"
+        self.report["qualityGates"]["iosRuntimeCompatibility"] = status
+
     def apply_visual_corrections(self, result: dict[str, Any], iteration: int) -> list[Path] | None:
         applications: list[str] = []
         corrected_by_screen: dict[str, Path] = {}
@@ -1842,6 +1912,13 @@ struct ContentView: View {
                 self.warnings.append(
                     "HTML visual baselines and node-aligned regions are ready; required simulator states must pass the visual quality gate before claiming completion."
                 )
+        if verification_mode == "visual" and self.entry_wired:
+            self.validate_runtime_compatibility(
+                project,
+                target,
+                minimum_ios,
+                compatibility_matrix,
+            )
         if not self.entry_wired:
             self.report["status"] = "generated-needs-entry-integration"
         elif verification_mode == "ask":

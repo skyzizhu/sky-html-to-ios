@@ -47,6 +47,7 @@
 
 - `native-api-fallback-plan.json` 记录每项能力在 SwiftUI/UIKit 下的 SDK 状态、introduced version、当前技术栈决策和降级实现名。
 - `compatibility-matrix.json` 记录 runtime baseline、来源已探测宽度、compact/regular Size Class，以及仍需模拟器或真机验证的 iPad profile。
+- `ios-runtime-compatibility-report.json` 引用兼容矩阵哈希并合并真实 Simulator profile 证据；它是生成后验收结果，不得回写或替换生成器已消费的兼容矩阵。
 - 生成器只接受自己明确实现的 fallback 名称；未知名称、技术栈不匹配、低于 runtime baseline 或 required capability 被 blocked 时直接停止。
 - 生成清单和 `native-structure-manifest.json` 必须保存两份契约的 SHA-256，并证明每项 required decision 已消费。
 

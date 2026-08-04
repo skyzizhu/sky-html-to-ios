@@ -87,6 +87,8 @@ class IOSCompatibilityContractTests(unittest.TestCase):
             matrix_payload = json.loads(matrix.read_text(encoding="utf-8"))
             profiles = {item["id"]: item for item in matrix_payload["profiles"]}
             self.assertEqual(profiles["baseline-phone"]["validation"], "source-analyzed")
+            self.assertEqual(profiles["phone-375"]["validation"], "source-analyzed")
+            self.assertEqual(profiles["landscape-phone"]["orientation"], "landscape")
             self.assertEqual(profiles["ipad-regular"]["validation"], "pending-runtime-validation")
             self.assertFalse(matrix_payload["layoutPolicy"]["wholePageScalingAllowed"])
             self.assertEqual(json.loads(validation.read_text(encoding="utf-8"))["status"], "passed")

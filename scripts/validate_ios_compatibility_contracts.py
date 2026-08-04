@@ -38,8 +38,12 @@ def main() -> int:
         issues.append("auto-layout-policy-missing")
     if (matrix.get("layoutPolicy") or {}).get("wholePageScalingAllowed") is not False:
         issues.append("whole-page-scaling-not-forbidden")
-    if not any(item.get("id") == "ipad-regular" for item in matrix.get("profiles") or []):
-        issues.append("ipad-regular-profile-missing")
+    profiles = {str(item.get("id")): item for item in matrix.get("profiles") or [] if item.get("id")}
+    for profile_id in ("compact-phone", "phone-375", "baseline-phone", "large-phone", "landscape-phone", "ipad-split-compact", "ipad-regular"):
+        if profile_id not in profiles:
+            issues.append(f"required-profile-missing:{profile_id}")
+    if (profiles.get("landscape-phone") or {}).get("orientation") != "landscape":
+        issues.append("landscape-profile-orientation-invalid")
     blocked = (fallback.get("summary") or {}).get("blockedCapabilityIDs") or []
     if blocked:
         issues.extend(f"blocked-required-capability:{item}" for item in blocked)

@@ -132,11 +132,23 @@ iOS 基准使用约 22.25pt 的 leading/trailing constraint。到 320、375、43
 ```bash
 python3 "$SKILL_ROOT/scripts/validate_responsive_ios_matrix.py" visual-state-manifest.json \
   --project App.xcodeproj --target App --out-dir responsive-matrix \
-  --case '375x667:iPhone SE (3rd generation)' \
-  --case '393x852:iPhone 16' \
-  --case '430x932:iPhone 16 Plus'
+  --compatibility-matrix compatibility-matrix.json \
+  --case 'phone-375=375x667@portrait:iPhone SE (3rd generation)' \
+  --case 'baseline-phone=393x852@portrait:iPhone 16' \
+  --case 'large-phone=430x932@portrait:iPhone 16 Plus' \
+  --case 'landscape-phone=852x393@landscape:iPhone 16'
 ```
 
-宽高用于报告中的逻辑 viewport，设备名必须对应本机真实 runtime。工具必须用原始截图尺寸反推 1×/2×/3× Retina scale，并校验它与声明 viewport 一致；不一致直接失败。同一矩阵不得重复声明相同宽高。若没有 320pt 设备，不得把 375pt 截图缩成 320pt；记录缺失并使用项目现有最窄设备完成门槛。
+宽高用于报告中的逻辑 viewport，设备名必须对应本机真实 runtime。工具同时校验原始截图 Retina 尺寸和 XCUITest 记录的真实 App window frame；方向或窗口尺寸不一致直接失败。同一矩阵的 profile ID 必须唯一。若没有 320pt 设备，不得把 375pt 截图缩成 320pt；记录缺失并使用项目现有最窄设备完成门槛。iPad Split View 只有 App window frame 真实进入目标紧凑宽度时才能通过，全屏截图裁切或缩放不能作为证据。
+
+运行后不要改写生成前的兼容矩阵。使用独立汇总契约：
+
+```bash
+python3 "$SKILL_ROOT/scripts/build_ios_runtime_compatibility_report.py" \
+  --compatibility-matrix compatibility-matrix.json \
+  --runtime-matrix responsive-matrix/responsive-matrix.json \
+  --require-profile baseline-phone \
+  --out ios-runtime-compatibility-report.json
+```
 
 多尺寸目标是保持设计语义和可用性，不要求每个尺寸都与单一 HTML 截图拥有相同换行。

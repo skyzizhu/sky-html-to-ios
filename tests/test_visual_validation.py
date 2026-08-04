@@ -396,6 +396,7 @@ class VisualValidationTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             manifest = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(manifest["screenId"], "home")
+            self.assertEqual(manifest["states"][0]["iosActions"], [])
             regions = {item["id"]: item for item in manifest["validationRegions"]}
             self.assertEqual(regions["screen.navigation"]["criticality"], "critical")
             self.assertEqual(regions["node.home.title"]["toleranceProfile"], "text")

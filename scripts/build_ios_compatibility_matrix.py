@@ -66,34 +66,39 @@ def main() -> int:
     runtime_baseline = str((fallback.get("runtimeBaseline") or {}).get("minimumIOS") or "16.0")
     baseline_supported = version(args.minimum_ios) >= version(runtime_baseline)
 
-    profiles = [
-        {
-            "id": "compact-phone",
-            "viewport": {"width": min(widths), "height": 568},
+    phone_heights = {320: 568, 375: 667, 393: 852, 430: 932}
+    phone_profiles = []
+    for profile_id, phone_width in (
+        ("compact-phone", 320),
+        ("phone-375", 375),
+        ("baseline-phone", baseline_width),
+        ("large-phone", 430),
+    ):
+        source_evidence = phone_width in widths
+        phone_profiles.append({
+            "id": profile_id,
+            "viewport": {"width": phone_width, "height": phone_heights.get(phone_width, baseline_height)},
+            "orientation": "portrait",
             "horizontalSizeClass": "compact",
             "verticalSizeClass": "regular",
-            "sourceEvidence": min(widths) in widths,
-            "validation": "source-analyzed" if min(widths) in widths else "pending-source-analysis",
-        },
+            "sourceEvidence": source_evidence,
+            "validation": "source-analyzed" if source_evidence else "pending-source-analysis",
+        })
+
+    profiles = phone_profiles + [
         {
-            "id": "baseline-phone",
-            "viewport": {"width": baseline_width, "height": baseline_height},
+            "id": "landscape-phone",
+            "viewport": {"width": baseline_height, "height": baseline_width},
+            "orientation": "landscape",
             "horizontalSizeClass": "compact",
-            "verticalSizeClass": "regular",
-            "sourceEvidence": baseline_width in widths,
-            "validation": "source-analyzed" if baseline_width in widths else "pending-source-analysis",
-        },
-        {
-            "id": "large-phone",
-            "viewport": {"width": max(widths), "height": 932},
-            "horizontalSizeClass": "compact",
-            "verticalSizeClass": "regular",
-            "sourceEvidence": max(widths) in widths,
-            "validation": "source-analyzed",
+            "verticalSizeClass": "compact",
+            "sourceEvidence": False,
+            "validation": "pending-runtime-validation",
         },
         {
             "id": "ipad-split-compact",
             "viewport": {"width": 507, "height": 1024},
+            "orientation": "portrait",
             "horizontalSizeClass": "compact",
             "verticalSizeClass": "regular",
             "sourceEvidence": any(width >= 507 for width in widths),
@@ -101,7 +106,8 @@ def main() -> int:
         },
         {
             "id": "ipad-regular",
-            "viewport": {"width": 768, "height": 1024},
+            "viewport": {"width": 834, "height": 1210},
+            "orientation": "portrait",
             "horizontalSizeClass": "regular",
             "verticalSizeClass": "regular",
             "sourceEvidence": any(width >= 768 for width in widths),

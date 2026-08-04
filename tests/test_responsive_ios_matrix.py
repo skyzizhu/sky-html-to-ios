@@ -17,7 +17,16 @@ SPEC.loader.exec_module(MODULE)
 class ResponsiveIOSMatrixTests(unittest.TestCase):
     def test_case_parser_and_initial_manifest(self) -> None:
         case = MODULE.parse_case("393x852:iPhone 16")
-        self.assertEqual(case, {"width": 393, "height": 852, "device": "iPhone 16"})
+        self.assertEqual(case, {
+            "id": "393x852-portrait",
+            "width": 393,
+            "height": 852,
+            "orientation": "portrait",
+            "device": "iPhone 16",
+        })
+        profiled = MODULE.parse_case("landscape-phone=852x393@landscape:iPhone 16")
+        self.assertEqual(profiled["id"], "landscape-phone")
+        self.assertEqual(profiled["orientation"], "landscape")
         manifest = {"states": [{"id": "initial"}, {"id": "selected"}], "targetViewport": {"width": 430, "height": 932}}
         result = MODULE.initial_manifest(manifest, 375, 667)
         self.assertEqual(result["states"], [{"id": "initial"}])
@@ -42,6 +51,34 @@ class ResponsiveIOSMatrixTests(unittest.TestCase):
             mismatched["reason"],
             "simulator-screenshot-does-not-match-declared-viewport",
         )
+        landscape = MODULE.validate_device_viewport(
+            {"originalSize": {"width": 1179, "height": 2556}},
+            852,
+            393,
+            "landscape",
+        )
+        self.assertEqual(landscape["status"], "passed")
+        self.assertTrue(landscape["rotatedNativeCapture"])
+
+    def test_app_viewport_and_size_class_evidence(self) -> None:
+        matching = MODULE.validate_app_viewport(
+            {"appFrame": {"x": 0, "y": 0, "width": 507, "height": 1024}},
+            507,
+            1024,
+            "portrait",
+        )
+        self.assertEqual(matching["status"], "passed")
+        self.assertEqual(MODULE.inferred_size_classes(507, 1024, "iPad Pro")["horizontal"], "compact")
+        self.assertEqual(MODULE.inferred_size_classes(834, 1210, "iPad Pro")["horizontal"], "regular")
+        self.assertEqual(MODULE.inferred_size_classes(852, 393, "iPhone 16")["horizontal"], "compact")
+
+        wrong_orientation = MODULE.validate_app_viewport(
+            {"appFrame": {"x": 0, "y": 0, "width": 852, "height": 393}},
+            393,
+            852,
+            "portrait",
+        )
+        self.assertEqual(wrong_orientation["status"], "failed")
 
     def test_geometry_analysis_exempts_nested_horizontal_scroller(self) -> None:
         manifest = {

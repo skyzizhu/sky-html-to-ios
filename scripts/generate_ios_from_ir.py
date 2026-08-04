@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.44.0"
+GENERATOR_VERSION = "1.45.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SUPPORTED_API_FALLBACKS = {
     "custom-overlay-container", "over-full-screen-container",
@@ -2977,7 +2977,7 @@ struct HTMLToIOSCollectionItemSizingSpec: Codable {{
     let heightPt: Double?
     let estimatedHeightPt: Double
     let aspectRatio: Double?
-    let preservesIntrinsicWidth: Bool
+    let preservesIntrinsicWidth: Bool?
     let columnSpan: Int?
     let rowSpan: Int?
     let lineCountsByWidth: [HTMLToIOSCollectionLineCountSpec]?
