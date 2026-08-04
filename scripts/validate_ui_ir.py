@@ -18,11 +18,12 @@ ALLOWED_SEMANTIC_TYPES = {
     "scroll", "grid", "divider", "spacer", "text", "heading", "label", "image", "icon",
     "decoration",
     "video", "audio", "canvas-artwork", "map", "embedded-content", "unsupported-web-content",
-    "button", "icon-button", "link", "form", "text-input", "secure-input", "search-input",
+    "button", "icon-button", "link", "form", "text-input", "secure-input", "search-input", "search-bar",
     "number-input", "date-input", "text-area", "file-input", "checkbox", "switch", "radio", "radio-group",
-    "segmented-control", "select", "multi-select", "option", "option-group", "slider", "stepper", "color-picker",
+    "segmented-control", "select", "multi-select", "wheel-picker", "option", "option-group", "slider", "stepper", "color-picker",
     "list", "list-item", "sectioned-list", "data-table", "table-row", "table-header", "table-cell", "carousel",
-    "progress", "meter", "disclosure", "disclosure-trigger", "form-group", "tab-item", "menu-item",
+    "progress", "meter", "activity-indicator", "page-control", "paste-control", "refresh-control", "calendar-view",
+    "disclosure", "disclosure-trigger", "form-group", "tab-item", "menu-item",
     "modal", "sheet", "alert", "toast", "menu", "loading", "overlay", "custom",
 }
 ALLOWED_STYLE_STRATEGIES = {
@@ -279,7 +280,7 @@ def validate(data):
                     errors.append(f"{nwhere}.controlVisualStates must be an object")
                 else:
                     for key, value in control_states.items():
-                        if key not in {"pressed", "focused", "disabled", "selected"}:
+                        if key not in {"normal", "pressed", "highlighted", "focused", "editing", "disabled", "selected", "checked", "loading"}:
                             errors.append(f"{nwhere}.controlVisualStates has invalid state: {key}")
                         if not isinstance(value, dict):
                             errors.append(f"{nwhere}.controlVisualStates.{key} must be an object")

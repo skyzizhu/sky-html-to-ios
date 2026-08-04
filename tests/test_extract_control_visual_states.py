@@ -126,6 +126,33 @@ class ExtractControlVisualStatesTests(unittest.TestCase):
             self.assertEqual(states["disabled"]["backgroundColor"], "rgb(230, 230, 235)")
             self.assertEqual(states["disabled"]["opacity"], "0.55")
 
+    def test_checked_state_accent_color_and_appearance_are_measured(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.html"
+            output = root / "render-tree.json"
+            source.write_text("""
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <style>
+                  main{width:393px;height:852px}
+                  input{accent-color:rgb(20,120,240);appearance:auto}
+                  input:checked{background:rgb(20,120,240);border-color:rgb(10,80,180)}
+                </style>
+                <main id="app"><input id="choice" type="checkbox" aria-label="Choice"></main>
+            """, encoding="utf-8")
+            environment = dict(os.environ)
+            environment["NODE_PATH"] = str(NODE_MODULES)
+            result = subprocess.run([
+                str(NODE), str(SCRIPT), "--html", str(source), "--out", str(output),
+                "--selector", "#app", "--width", "393", "--height", "852",
+            ], text=True, capture_output=True, check=False, env=environment)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            checkbox = next(item for item in payload["nodes"] if item.get("domId") == "choice")
+            self.assertEqual(checkbox["style"]["accentColor"], "rgb(20, 120, 240)")
+            self.assertEqual(checkbox["style"]["appearance"], "auto")
+            self.assertEqual(checkbox["controlStateStyles"]["checked"]["backgroundColor"], "rgb(20, 120, 240)")
+
 
 if __name__ == "__main__":
     unittest.main()

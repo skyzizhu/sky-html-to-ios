@@ -612,6 +612,8 @@ async function main() {
         willChange: style.willChange,
         float: style.cssFloat,
         pointerEvents: style.pointerEvents,
+        accentColor: style.accentColor,
+        appearance: style.appearance || style.webkitAppearance || "auto",
       });
       const stackingContextReasons = (style, isRoot = false) => {
         const reasons = [];
@@ -1170,6 +1172,8 @@ async function main() {
         boxShadow: style.boxShadow,
         opacity: style.opacity,
         transform: style.transform,
+        accentColor: style.accentColor,
+        appearance: style.appearance || style.webkitAppearance || "auto",
       };
     });
     const stateDiffers = (left, right) => JSON.stringify(left) !== JSON.stringify(right);
@@ -1253,6 +1257,8 @@ async function main() {
                 boxShadow: style.boxShadow,
                 opacity: style.opacity,
                 transform: style.transform,
+                accentColor: style.accentColor,
+                appearance: style.appearance || style.webkitAppearance || "auto",
               };
             } finally {
               clone.remove();
@@ -1260,8 +1266,51 @@ async function main() {
           });
           if (stateDiffers(disabled, normal)) states.disabled = disabled;
         }
-        if (node.properties?.checked || node.properties?.selected || node.attributes?.["aria-selected"] === "true") {
-          states.selected = normal;
+        const isCheckable = node.attributes?.type === "checkbox" || node.attributes?.type === "radio"
+          || node.attributes?.role === "checkbox" || node.attributes?.role === "switch" || node.attributes?.role === "radio";
+        const isSelectable = isCheckable || node.attributes?.["aria-selected"] != null;
+        const isInitiallySelected = Boolean(node.properties?.checked || node.properties?.selected
+          || node.attributes?.["aria-checked"] === "true" || node.attributes?.["aria-selected"] === "true");
+        if (isInitiallySelected) {
+          states[isCheckable ? "checked" : "selected"] = normal;
+        } else if (isSelectable) {
+          const selected = await locator.evaluate((element) => {
+            const clone = element.cloneNode(true);
+            if ("checked" in clone) clone.checked = true;
+            if ("selected" in clone) clone.selected = true;
+            clone.setAttribute("aria-checked", "true");
+            clone.setAttribute("aria-selected", "true");
+            clone.style.position = "fixed";
+            clone.style.left = "-10000px";
+            clone.style.top = "-10000px";
+            clone.style.pointerEvents = "none";
+            element.parentElement.appendChild(clone);
+            try {
+              const style = getComputedStyle(clone);
+              return {
+                color: style.color,
+                backgroundColor: style.backgroundColor,
+                backgroundImage: style.backgroundImage,
+                borderTopColor: style.borderTopColor,
+                borderRightColor: style.borderRightColor,
+                borderBottomColor: style.borderBottomColor,
+                borderLeftColor: style.borderLeftColor,
+                borderTopWidth: style.borderTopWidth,
+                borderRightWidth: style.borderRightWidth,
+                borderBottomWidth: style.borderBottomWidth,
+                borderLeftWidth: style.borderLeftWidth,
+                borderRadius: style.borderRadius,
+                boxShadow: style.boxShadow,
+                opacity: style.opacity,
+                transform: style.transform,
+                accentColor: style.accentColor,
+                appearance: style.appearance || style.webkitAppearance || "auto",
+              };
+            } finally {
+              clone.remove();
+            }
+          });
+          if (stateDiffers(selected, normal)) states[isCheckable ? "checked" : "selected"] = selected;
         }
         if (Object.keys(states).length) node.controlStateStyles = states;
       } catch (error) {

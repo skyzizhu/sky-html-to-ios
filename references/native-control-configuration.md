@@ -6,6 +6,7 @@
 
 - `semanticType`、HTML/ARIA 表单语义和 `nativeControlDecision`；
 - 浏览器计算后的 padding、gap、宽高、前景色、背景色和边框色；
+- 浏览器计算后的 `accent-color` 与 `appearance`；
 - `controlVisualStates` 中的 normal、pressed/highlighted、focused/editing、selected/checked、disabled、loading；
 - 本机 SDK 审计结果和最低 iOS 版本。
 
@@ -22,6 +23,10 @@
 ## 状态规则
 
 系统控件必须保留原生状态机。`UIControl.Event`、editing lifecycle、Binding 或 selection 驱动视觉状态；禁止用普通 View 的点击手势伪造 pressed、selected、focused 或 disabled。缺少某个来源状态时保留系统行为或继承 normal，不猜测截图专用颜色。
+
+状态优先级为 disabled > editing/focused > highlighted/pressed > checked/selected > normal。浏览器 `pressed` 可降级为 UIKit `highlighted`，`focused` 可降级为输入控件 `editing`，`checked` 与 `selected` 只在控件语义允许时互为回退。每个控件都必须保存 normal 基线，状态别名必须进入计划并由验证器核对。
+
+SwiftUI 使用 `ButtonStyle`、`FocusState`、Binding/selection 和系统控件 tint 执行状态；UIKit 使用 `UIControl.State`、editing events、`valueChanged` 以及具体控件的 `isOn`/selected index。Switch、Slider、SegmentedControl、PageControl、ProgressView 与 ActivityIndicator 必须更新系统控件内部槽位，不能只改变 wrapper 背景。
 
 ## 执行与门禁
 

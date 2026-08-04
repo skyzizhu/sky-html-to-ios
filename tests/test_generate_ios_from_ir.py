@@ -546,6 +546,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertEqual(generated_nodes[calendar["id"]]["controlConfig"]["calendarSelection"], "multi-date")
             self.assertEqual(generated_nodes[slider["id"]]["controlConfig"]["contentInsets"], [0, 0, 0, 0])
             self.assertEqual(generated_nodes[slider["id"]]["controlConfig"]["itemSpacing"], 8)
+            self.assertIn("normal", generated_nodes[slider["id"]]["controlConfig"]["stateAppearances"])
             for control in (
                 switch, search_input, search_bar, wheel_picker, activity,
                 page_control, paste_control, refresh_control, calendar,
@@ -570,6 +571,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "HTMLToIOSCalendarRepresentable(",
                 ".refreshable",
                 "HTMLToIOSOptionalTintModifier",
+                "HTMLToIOSNativeIntrinsicSizeModifier",
+                "nativeControlAppearance",
             ):
                 self.assertIn(expected, swiftui_runtime)
 
@@ -597,6 +600,9 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "slider.minimumTrackTintColor",
                 "segmented.selectedSegmentTintColor",
                 "pageControl.currentPageIndicatorTintColor",
+                "applyNativeControlStateAppearance",
+                "nativeControlStateName",
+                "setContentCompressionResistancePriority(.required",
             ):
                 self.assertIn(expected, uikit_runtime)
 

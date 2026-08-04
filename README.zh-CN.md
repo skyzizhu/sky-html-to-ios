@@ -141,7 +141,7 @@ HTML 可以引用本地 CSS、JavaScript、图片、SVG 和字体。远程资源
 - 按本机 iPhoneOS SDK 审计控件目录，并验证识别、架构规划、SwiftUI 执行、UIKit 执行和最低系统版本编译可用性。
 - 覆盖当前审计 SDK 中全部公开 `UIControl` 子类，并覆盖 `UITextView`、`UISearchBar`、`UIPickerView`、`UIProgressView`、`UIActivityIndicatorView`、`UICalendarView` 等页面常用控件。
 - SwiftUI 没有直接等价控件时只使用局部 `UIViewRepresentable`，不允许把整页包装为 UIKit 或 `WKWebView`。
-- 生成并校验不依赖截图的原生控件配置计划，统一保存 content inset、内部间距、固有尺寸、轨道/填充/滑块/选中颜色、官方 style 和原生视觉状态；SwiftUI/UIKit 必须消费同一份计划。
+- 生成并校验不依赖截图的原生控件配置计划，统一保存 content inset、内部间距、固有尺寸、CSS accent/appearance 证据、轨道/填充/滑块/选中颜色、官方 style，以及 normal/highlighted/focused/editing/checked/selected/disabled/loading 状态；SwiftUI/UIKit 必须消费同一份矩阵。
 
 ### 3. 工程发现
 

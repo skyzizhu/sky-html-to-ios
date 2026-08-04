@@ -41,6 +41,16 @@ def main() -> int:
                 issues.append({"code": "CONTROL_INSETS_INVALID", "screenId": screen_id, "nodeId": node_id, "message": "Control content insets must contain four non-negative values."})
             if (control.get("behavior") or {}).get("usesNativeStateMachine") is not True:
                 issues.append({"code": "NATIVE_STATE_MACHINE_DISABLED", "screenId": screen_id, "nodeId": node_id, "message": "System controls must preserve their native state machine."})
+            state_appearances = control.get("stateAppearances") or {}
+            if "normal" not in state_appearances:
+                issues.append({"code": "CONTROL_NORMAL_STATE_MISSING", "screenId": screen_id, "nodeId": node_id, "message": "Every system control requires a normal appearance baseline."})
+            declared_states = set((control.get("behavior") or {}).get("stateNames") or [])
+            if declared_states != set(state_appearances):
+                issues.append({"code": "CONTROL_STATE_SET_MISMATCH", "screenId": screen_id, "nodeId": node_id, "message": "Declared native states must match the state appearance matrix."})
+            for state_name, appearance in state_appearances.items():
+                opacity = (appearance or {}).get("disabledOpacity")
+                if state_name == "disabled" and (not isinstance(opacity, (int, float)) or not 0 <= opacity <= 1):
+                    issues.append({"code": "CONTROL_DISABLED_OPACITY_INVALID", "screenId": screen_id, "nodeId": node_id, "message": "Disabled opacity must be between zero and one."})
     report = {
         "schemaVersion": "native-control-configuration-validation-1.0",
         "status": "passed" if not issues else "failed",

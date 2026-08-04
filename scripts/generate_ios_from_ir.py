@@ -1685,6 +1685,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "preferredStyle": str(behavior.get("preferredStyle") or "automatic"),
             "nativeStateNames": [str(item) for item in behavior.get("stateNames") or []],
             "requiresWrapper": bool(behavior.get("requiresWrapper")),
+            "stateAppearances": planned_control.get("stateAppearances") or {},
         })
     layout_spacing = (
         number(layout_container.get("gapPt")) * context.design_scale
@@ -3021,6 +3022,20 @@ struct HTMLToIOSControlConfigSpec: Codable {{
     let preferredStyle: String?
     let nativeStateNames: [String]?
     let requiresWrapper: Bool?
+    let stateAppearances: [String: HTMLToIOSNativeControlStateAppearanceSpec]?
+}}
+
+struct HTMLToIOSNativeControlStateAppearanceSpec: Codable {{
+    let tint: String?
+    let foreground: String?
+    let background: String?
+    let trackTint: String?
+    let fillTint: String?
+    let thumbTint: String?
+    let selectedTint: String?
+    let selectedForeground: String?
+    let disabledForeground: String?
+    let disabledOpacity: Double?
 }}
 
 struct HTMLToIOSControlOptionSpec: Codable, Identifiable {{
@@ -3245,6 +3260,15 @@ private struct HTMLToIOSOptionalTintModifier: ViewModifier {
     let value: String?
     @ViewBuilder func body(content: Content) -> some View {
         if let value, !value.isEmpty { content.tint(Color(htmlToIOS: value)) }
+        else { content }
+    }
+}
+
+private struct HTMLToIOSNativeIntrinsicSizeModifier: ViewModifier {
+    let preservesIntrinsicSize: Bool
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if preservesIntrinsicSize { content.fixedSize(horizontal: true, vertical: true) }
         else { content }
     }
 }
@@ -4445,7 +4469,11 @@ struct HTMLToIOSNativeNodeView: View {
     }
 
     private var constrainedContent: some View {
-        content.modifier(HTMLToIOSStyleModifier(
+        content
+        .modifier(HTMLToIOSNativeIntrinsicSizeModifier(
+            preservesIntrinsicSize: isNativeControl && spec.controlConfig?.preservesIntrinsicSize == true
+        ))
+        .modifier(HTMLToIOSStyleModifier(
             style: spec.style,
             sizeOverride: store.sizeOverrides[spec.id],
             assetName: spec.backgroundAssetName,
@@ -4514,19 +4542,29 @@ struct HTMLToIOSNativeNodeView: View {
         return store.isSelected(spec) ? spec.selectedGradientColors : spec.unselectedGradientColors
     }
     private var activeControlVisualStyle: HTMLToIOSControlVisualStateSpec? {
-        let stateName: String
+        spec.controlVisualStates[nativeControlStateName]
+            ?? (nativeControlStateName == "highlighted" ? spec.controlVisualStates["pressed"] : nil)
+            ?? (nativeControlStateName == "editing" ? spec.controlVisualStates["focused"] : nil)
+            ?? (nativeControlStateName == "checked" ? spec.controlVisualStates["selected"] : nil)
+    }
+    private var nativeControlStateName: String {
         if !spec.isEnabled {
-            stateName = "disabled"
+            return "disabled"
         } else if isInputFocused {
-            stateName = "focused"
+            return "focused"
         } else if inheritedControlVisualState != "normal" {
-            stateName = inheritedControlVisualState
+            return inheritedControlVisualState
+        } else if ["switch", "toggle", "checkbox", "radio"].contains(spec.semantic), store.flags.contains(spec.id) {
+            return "checked"
         } else if spec.selectionStateID != nil && store.isSelected(spec) {
-            stateName = "selected"
-        } else {
-            return nil
+            return "selected"
         }
-        return spec.controlVisualStates[stateName]
+        return "normal"
+    }
+    private var nativeControlAppearance: HTMLToIOSNativeControlStateAppearanceSpec? {
+        spec.controlConfig?.stateAppearances?[nativeControlStateName]
+            ?? spec.controlConfig?.stateAppearances?[nativeControlStateName == "pressed" ? "highlighted" : nativeControlStateName]
+            ?? spec.controlConfig?.stateAppearances?["normal"]
     }
     private var isNativeControl: Bool {
         ["button", "link", "menu-item", "tab-item", "toggle", "switch", "checkbox",
@@ -4648,7 +4686,7 @@ struct HTMLToIOSNativeNodeView: View {
             }
         case "switch", "toggle":
             Toggle(spec.text, isOn: store.flagBinding(for: spec.id))
-                .modifier(HTMLToIOSOptionalTintModifier(value: spec.controlConfig?.fillTint ?? spec.controlConfig?.tint))
+                .modifier(HTMLToIOSOptionalTintModifier(value: nativeControlAppearance?.fillTint ?? spec.controlConfig?.fillTint ?? spec.controlConfig?.tint))
         case "checkbox":
             Toggle(spec.text, isOn: store.flagBinding(for: spec.id))
                 .toggleStyle(HTMLToIOSCheckboxToggleStyle())
@@ -4665,7 +4703,7 @@ struct HTMLToIOSNativeNodeView: View {
                 in: (config?.minimum ?? 0)...max(config?.maximum ?? 100, config?.minimum ?? 0),
                 step: config?.step ?? 1
             )
-            .modifier(HTMLToIOSOptionalTintModifier(value: config?.fillTint ?? config?.tint))
+            .modifier(HTMLToIOSOptionalTintModifier(value: nativeControlAppearance?.fillTint ?? config?.fillTint ?? config?.tint))
         case "stepper":
             let config = spec.controlConfig
             Stepper(
@@ -4677,7 +4715,7 @@ struct HTMLToIOSNativeNodeView: View {
                 in: (config?.minimum ?? 0)...max(config?.maximum ?? 100, config?.minimum ?? 0),
                 step: config?.step ?? 1
             )
-            .modifier(HTMLToIOSOptionalTintModifier(value: config?.tint))
+            .modifier(HTMLToIOSOptionalTintModifier(value: nativeControlAppearance?.tint ?? config?.tint))
         case "segmented-control":
             let options = spec.controlConfig?.options ?? []
             let initial = options.first(where: \.selected)?.id ?? options.first?.id ?? ""
@@ -4688,7 +4726,7 @@ struct HTMLToIOSNativeNodeView: View {
                 ForEach(options) { option in Text(option.title).tag(option.id) }
             }
             .pickerStyle(.segmented)
-            .modifier(HTMLToIOSOptionalTintModifier(value: spec.controlConfig?.selectedTint ?? spec.controlConfig?.tint))
+            .modifier(HTMLToIOSOptionalTintModifier(value: nativeControlAppearance?.selectedTint ?? spec.controlConfig?.selectedTint ?? spec.controlConfig?.tint))
         case "wheel-picker":
             let options = spec.controlConfig?.options ?? []
             let initial = options.first(where: \.selected)?.id ?? options.first?.id ?? ""
@@ -4696,7 +4734,7 @@ struct HTMLToIOSNativeNodeView: View {
                 ForEach(options) { option in Text(option.title).tag(option.id) }
             }
             .pickerStyle(.wheel)
-            .modifier(HTMLToIOSOptionalTintModifier(value: spec.controlConfig?.tint))
+            .modifier(HTMLToIOSOptionalTintModifier(value: nativeControlAppearance?.tint ?? spec.controlConfig?.tint))
         case "select", "picker":
             let options = spec.controlConfig?.options ?? []
             let initial = options.first(where: \.selected)?.id ?? options.first?.id ?? ""
@@ -4734,7 +4772,7 @@ struct HTMLToIOSNativeNodeView: View {
                 displayedComponents: components
             )
             .labelsHidden()
-            .modifier(HTMLToIOSOptionalTintModifier(value: spec.controlConfig?.tint))
+            .modifier(HTMLToIOSOptionalTintModifier(value: nativeControlAppearance?.tint ?? spec.controlConfig?.tint))
         case "color-picker":
             ColorPicker(
                 spec.text,
@@ -4750,15 +4788,15 @@ struct HTMLToIOSNativeNodeView: View {
                 text: store.binding(for: spec.id, initialValue: spec.textBehavior?.initialValue ?? spec.text, maxLength: spec.textBehavior?.maxLength),
                 placeholder: spec.placeholder,
                 isEnabled: spec.isEnabled,
-                tint: spec.controlConfig?.tint,
-                foreground: spec.controlConfig?.selectedForeground ?? spec.style.foreground,
-                background: spec.controlConfig?.trackTint,
+                tint: nativeControlAppearance?.tint ?? spec.controlConfig?.tint,
+                foreground: nativeControlAppearance?.foreground ?? spec.controlConfig?.selectedForeground ?? spec.style.foreground,
+                background: nativeControlAppearance?.trackTint ?? spec.controlConfig?.trackTint,
                 contentInsets: spec.controlConfig?.contentInsets ?? [0, 0, 0, 0]
             )
         case "activity-indicator", "loading":
             ProgressView()
                 .controlSize((spec.style.preferredHeight ?? 20) >= 28 ? .large : .regular)
-                .modifier(HTMLToIOSOptionalTintModifier(value: spec.controlConfig?.tint ?? spec.style.foreground))
+                .modifier(HTMLToIOSOptionalTintModifier(value: nativeControlAppearance?.tint ?? spec.controlConfig?.tint ?? spec.style.foreground))
         case "page-control":
             HTMLToIOSPageControlRepresentable(
                 numberOfPages: max(spec.controlConfig?.pageCount ?? 0, 1),
@@ -4766,8 +4804,8 @@ struct HTMLToIOSNativeNodeView: View {
                     for: spec.id,
                     initialValue: Double(spec.controlConfig?.currentPage ?? 0)
                 ),
-                pageTint: spec.controlConfig?.trackTint,
-                currentPageTint: spec.controlConfig?.fillTint ?? spec.controlConfig?.tint
+                pageTint: nativeControlAppearance?.trackTint ?? spec.controlConfig?.trackTint,
+                currentPageTint: nativeControlAppearance?.fillTint ?? spec.controlConfig?.fillTint ?? spec.controlConfig?.tint
             )
         case "paste-control":
             PasteButton(payloadType: String.self) { values in
@@ -4779,7 +4817,7 @@ struct HTMLToIOSNativeNodeView: View {
         case "calendar-view":
             HTMLToIOSCalendarRepresentable(
                 selectionMode: spec.controlConfig?.calendarSelection ?? "single-date",
-                tint: spec.controlConfig?.tint
+                tint: nativeControlAppearance?.tint ?? spec.controlConfig?.tint
             )
         case "refresh-control":
             EmptyView()
@@ -4798,7 +4836,7 @@ struct HTMLToIOSNativeNodeView: View {
                 value: max(value - minimum, 0),
                 total: max(maximum - minimum, 0.0001)
             )
-            .modifier(HTMLToIOSOptionalTintModifier(value: config?.fillTint ?? config?.tint))
+            .modifier(HTMLToIOSOptionalTintModifier(value: nativeControlAppearance?.fillTint ?? config?.fillTint ?? config?.tint))
         case "carousel":
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: verticalAlignment, spacing: contentSpacing) { dynamicOrOrderedContent }
@@ -7737,6 +7775,12 @@ final class HTMLToIOSNodeRenderer {
         guard let config = spec.controlConfig else { return }
         if let color = UIColor(htmlToIOS: config.tint) { view.tintColor = color }
         if !spec.isEnabled { view.alpha = config.disabledOpacity ?? 0.5 }
+        if config.preservesIntrinsicSize == true, let control = firstNativeControl(in: view) {
+            control.setContentHuggingPriority(.required, for: .horizontal)
+            control.setContentHuggingPriority(.required, for: .vertical)
+            control.setContentCompressionResistancePriority(.required, for: .horizontal)
+            control.setContentCompressionResistancePriority(.required, for: .vertical)
+        }
         if let button = view as? UIButton, let insets = config.contentInsets, insets.count == 4 {
             let directionalInsets = NSDirectionalEdgeInsets(
                 top: insets[0], leading: insets[3], bottom: insets[2], trailing: insets[1]
@@ -7761,10 +7805,79 @@ final class HTMLToIOSNodeRenderer {
         return nil
     }
 
+    private func firstSubview<T: UIView>(of type: T.Type, in view: UIView) -> T? {
+        if let match = view as? T { return match }
+        for child in view.subviews {
+            if let match = firstSubview(of: type, in: child) { return match }
+        }
+        return nil
+    }
+
+    private func nativeControlStateName(_ control: UIControl?, spec: HTMLToIOSNodeSpec) -> String {
+        guard spec.isEnabled, control?.isEnabled != false else { return "disabled" }
+        if let field = control as? UITextField, field.isFirstResponder { return "editing" }
+        if control?.isHighlighted == true { return "highlighted" }
+        if let toggle = control as? UISwitch, toggle.isOn { return "checked" }
+        if let segmented = control as? UISegmentedControl, segmented.selectedSegmentIndex != UISegmentedControl.noSegment {
+            return "selected"
+        }
+        if control?.isSelected == true || state.isSelected(spec) { return "selected" }
+        return "normal"
+    }
+
+    private func applyNativeControlStateAppearance(_ stateName: String, spec: HTMLToIOSNodeSpec, to view: UIView) {
+        guard let states = spec.controlConfig?.stateAppearances else { return }
+        let appearance = states[stateName]
+            ?? (stateName == "pressed" ? states["highlighted"] : nil)
+            ?? (stateName == "editing" ? states["focused"] : nil)
+            ?? (stateName == "checked" ? states["selected"] : nil)
+            ?? states["normal"]
+        guard let appearance else { return }
+        let control = firstNativeControl(in: view)
+        if let tint = UIColor(htmlToIOS: appearance.tint) { control?.tintColor = tint; view.tintColor = tint }
+        if stateName == "disabled" { view.alpha = appearance.disabledOpacity ?? spec.controlConfig?.disabledOpacity ?? 0.5 }
+        else { view.alpha = spec.style.opacity ?? 1 }
+
+        if let toggle = firstSubview(of: UISwitch.self, in: view) {
+            toggle.onTintColor = UIColor(htmlToIOS: appearance.fillTint)
+            toggle.thumbTintColor = UIColor(htmlToIOS: appearance.thumbTint)
+            toggle.tintColor = UIColor(htmlToIOS: appearance.trackTint)
+        }
+        if let slider = firstSubview(of: UISlider.self, in: view) {
+            slider.minimumTrackTintColor = UIColor(htmlToIOS: appearance.fillTint)
+            slider.maximumTrackTintColor = UIColor(htmlToIOS: appearance.trackTint)
+            slider.thumbTintColor = UIColor(htmlToIOS: appearance.thumbTint)
+        }
+        if let segmented = firstSubview(of: UISegmentedControl.self, in: view) {
+            segmented.selectedSegmentTintColor = UIColor(htmlToIOS: appearance.selectedTint ?? appearance.fillTint)
+            if let selected = UIColor(htmlToIOS: appearance.selectedForeground) {
+                segmented.setTitleTextAttributes([.foregroundColor: selected], for: .selected)
+            }
+            if let normal = UIColor(htmlToIOS: appearance.foreground) {
+                segmented.setTitleTextAttributes([.foregroundColor: normal], for: .normal)
+            }
+        }
+        if let pages = firstSubview(of: UIPageControl.self, in: view) {
+            pages.pageIndicatorTintColor = UIColor(htmlToIOS: appearance.trackTint)
+            pages.currentPageIndicatorTintColor = UIColor(htmlToIOS: appearance.fillTint ?? appearance.tint)
+        }
+        if let progress = firstSubview(of: UIProgressView.self, in: view) {
+            progress.trackTintColor = UIColor(htmlToIOS: appearance.trackTint)
+            progress.progressTintColor = UIColor(htmlToIOS: appearance.fillTint ?? appearance.tint)
+        }
+        if let indicator = firstSubview(of: UIActivityIndicatorView.self, in: view) {
+            indicator.color = UIColor(htmlToIOS: appearance.tint ?? appearance.foreground)
+        }
+        if let foreground = UIColor(htmlToIOS: appearance.foreground ?? appearance.selectedForeground) {
+            applyControlForeground(foreground, to: view)
+        }
+    }
+
     private func installControlVisualStates(_ spec: HTMLToIOSNodeSpec, on view: UIView) {
-        guard !spec.controlVisualStates.isEmpty else { return }
+        guard !spec.controlVisualStates.isEmpty || !(spec.controlConfig?.stateAppearances?.isEmpty ?? true) else { return }
         let update: (String) -> Void = { [weak self, weak view] stateName in
             guard let self, let view else { return }
+            self.applyNativeControlStateAppearance(stateName, spec: spec, to: view)
             self.applyControlVisualState(stateName, spec: spec, to: view)
         }
         if let button = view as? HTMLToIOSStatefulButton {
@@ -7772,22 +7885,29 @@ final class HTMLToIOSNodeRenderer {
         } else if let control = view as? HTMLToIOSStatefulControl {
             control.visualStateDidChange = update
         } else if let field = view as? UITextField {
-            field.addAction(UIAction { _ in update("focused") }, for: .editingDidBegin)
+            field.addAction(UIAction { _ in update("editing") }, for: .editingDidBegin)
             field.addAction(UIAction { _ in update("normal") }, for: .editingDidEnd)
         } else if let textView = view as? HTMLToIOSManagedTextView {
             textView.visualStateDidChange = update
         } else if let control = firstNativeControl(in: view) {
-            control.addAction(UIAction { _ in update("pressed") }, for: .touchDown)
-            control.addAction(UIAction { _ in update("normal") }, for: [.touchUpInside, .touchUpOutside, .touchCancel])
-            control.addAction(UIAction { [weak control] _ in
-                update(control?.isSelected == true ? "selected" : "normal")
+            control.addAction(UIAction { _ in update("highlighted") }, for: .touchDown)
+            control.addAction(UIAction { [weak self, weak control] _ in
+                guard let self else { return }
+                update(self.nativeControlStateName(control, spec: spec))
+            }, for: [.touchUpInside, .touchUpOutside, .touchCancel])
+            control.addAction(UIAction { [weak self, weak control] _ in
+                guard let self else { return }
+                update(self.nativeControlStateName(control, spec: spec))
             }, for: .valueChanged)
         }
-        update(spec.isEnabled ? (state.isSelected(spec) ? "selected" : "normal") : "disabled")
+        update(nativeControlStateName(firstNativeControl(in: view), spec: spec))
     }
 
     private func applyControlVisualState(_ stateName: String, spec: HTMLToIOSNodeSpec, to view: UIView) {
         let visual = spec.controlVisualStates[stateName]
+            ?? (stateName == "highlighted" ? spec.controlVisualStates["pressed"] : nil)
+            ?? (stateName == "editing" ? spec.controlVisualStates["focused"] : nil)
+            ?? (stateName == "checked" ? spec.controlVisualStates["selected"] : nil)
         let selected = state.isSelected(spec)
         let baseBackground = spec.selectionStateID == nil
             ? spec.style.background
@@ -10075,11 +10195,13 @@ def build_native_structure_manifest(
                 "controlConfig": bool(config),
                 "contentInsets": list(config.get("contentInsets") or []) == list(geometry.get("contentInsetsPt") or []),
                 "itemSpacing": number(config.get("itemSpacing")) == number(geometry.get("itemSpacingPt")),
+                "intrinsicSize": bool(config.get("preservesIntrinsicSize")) == bool(geometry.get("preservesIntrinsicSize")),
                 "tint": config.get("tint") == appearance.get("tint"),
                 "fillTint": config.get("fillTint") == appearance.get("fillTint"),
                 "trackTint": config.get("trackTint") == appearance.get("trackTint"),
                 "preferredStyle": str(config.get("preferredStyle") or "automatic") == str(behavior.get("preferredStyle") or "automatic"),
                 "nativeStates": list(config.get("nativeStateNames") or []) == list(behavior.get("stateNames") or []),
+                "stateAppearances": (config.get("stateAppearances") or {}) == (planned.get("stateAppearances") or {}),
             }
             control_configuration_consumption.append({
                 "nodeId": node_id,

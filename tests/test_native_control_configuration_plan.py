@@ -56,7 +56,9 @@ class NativeControlConfigurationPlanTests(unittest.TestCase):
             self.assertEqual(control["appearance"]["fillTint"], "rgb(0, 122, 255)")
             self.assertEqual(control["appearance"]["thumbTint"], "rgb(255, 255, 255)")
             self.assertEqual(control["appearance"]["trackTint"], "rgb(220, 220, 225)")
-            self.assertEqual(control["behavior"]["stateNames"], ["disabled", "selected"])
+            self.assertEqual(control["behavior"]["stateNames"], ["checked", "disabled", "normal", "selected"])
+            self.assertEqual(control["stateAppearances"]["selected"]["fillTint"], "rgb(0, 122, 255)")
+            self.assertEqual(control["stateAppearances"]["checked"], control["stateAppearances"]["selected"])
             result = subprocess.run(
                 ["python3", str(VALIDATE), "--plan", str(plan), "--out", str(validation)],
                 text=True, capture_output=True,
@@ -83,7 +85,10 @@ class NativeControlConfigurationPlanTests(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0)
             codes = {item["code"] for item in json.loads(report.read_text(encoding="utf-8"))["issues"]}
-            self.assertEqual(codes, {"CONTROL_INSETS_INVALID", "NATIVE_STATE_MACHINE_DISABLED"})
+            self.assertEqual(codes, {
+                "CONTROL_INSETS_INVALID", "NATIVE_STATE_MACHINE_DISABLED",
+                "CONTROL_NORMAL_STATE_MISSING",
+            })
 
 
 if __name__ == "__main__":

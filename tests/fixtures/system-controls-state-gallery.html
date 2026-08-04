@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 15px system-ui; color: rgb(28, 32, 40); }
+    main { width: 393px; min-height: 852px; padding: 20px; display: grid; gap: 12px; background: rgb(246, 247, 250); }
+    .control { min-height: 36px; padding: 7px 10px; border: 1px solid rgb(190, 195, 205); border-radius: 8px; background: white; accent-color: rgb(35, 105, 235); }
+    .control:focus { border: 2px solid rgb(35, 105, 235); }
+    .control:active { opacity: .72; transform: scale(.98); }
+    .control:disabled { color: rgb(130, 135, 145); opacity: .45; }
+    .check:checked { color: white; background: rgb(35, 105, 235); }
+  </style>
+</head>
+<body>
+<main id="app" data-ios-screen="controls">
+  <button class="control" data-ios-node-id="controls.button">Continue</button>
+  <input class="control" data-ios-node-id="controls.text" placeholder="Name">
+  <textarea class="control" data-ios-node-id="controls.area" placeholder="Notes"></textarea>
+  <input class="control" type="search" data-ios-node-id="controls.search-input" placeholder="Search">
+  <div class="control" role="searchbox" data-ios-component="search-bar" data-ios-node-id="controls.search-bar">Search</div>
+  <input class="control check" type="checkbox" role="switch" data-ios-node-id="controls.switch">
+  <input class="control" type="range" min="0" max="100" value="35" data-ios-node-id="controls.slider">
+  <div class="control" role="spinbutton" data-ios-component="stepper" data-ios-node-id="controls.stepper">3</div>
+  <div class="control" data-ios-component="segmented-control" data-ios-node-id="controls.segmented">Day Week Month</div>
+  <input class="control" type="date" data-ios-node-id="controls.date">
+  <select class="control" data-ios-component="wheel-picker" data-ios-node-id="controls.wheel"><option>One</option><option>Two</option></select>
+  <input class="control" type="color" value="#2369eb" data-ios-node-id="controls.color">
+  <div class="control" data-ios-component="page-control" data-ios-page-count="4" data-ios-current-page="1" data-ios-node-id="controls.pages">1 / 4</div>
+  <progress class="control" value="0.6" max="1" data-ios-node-id="controls.progress"></progress>
+  <div class="control" role="progressbar" data-ios-component="activity-indicator" data-ios-node-id="controls.activity">Loading</div>
+  <button class="control" data-ios-component="paste-control" data-ios-node-id="controls.paste">Paste</button>
+  <div class="control" data-ios-component="refresh-control" data-ios-node-id="controls.refresh">Pull to refresh</div>
+  <div class="control" data-ios-component="calendar-view" data-ios-node-id="controls.calendar">August 2026</div>
+</main>
+</body>
+</html>

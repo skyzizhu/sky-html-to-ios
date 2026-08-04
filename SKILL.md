@@ -35,7 +35,7 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 24. 圆角与后代裁剪必须分离。`border-radius` 只决定背景、边框和自身内容的形状；只有 `overflow:hidden/clip`、clip-path、mask 或等价明确证据才能裁剪子树。`overflow:visible` 的伪元素、阴影和越界装饰必须允许绘制到圆角边界之外。
 25. 滚动与区域归属必须形成独立的 `scroll-and-attachment-plan.json`。每个 Scroll、固定/粘性/随内容滚动区域、Safe Area 和键盘避让只能有一个 owner；计划和生成后的消费清单都必须通过确定性门禁，不能依赖截图发现整页双轴滚动。
 26. 系统控件覆盖必须以当前本机 iPhoneOS SDK 审计，不使用永久硬编码的“最新控件”结论。公开 `UIControl` 子类及页面常用 UIKit 输入/选择/状态控件必须贯通识别、UI IR、架构、SwiftUI/UIKit 执行和编译测试；SwiftUI 对无直接等价物可使用局部 `UIViewRepresentable`，但禁止整页 UIKit/WebView 包装。
-27. 系统控件内部视觉必须形成独立的 `native-control-configuration-plan.json`。Switch 轨道/滑块、Slider/Progress 轨道与填充、Segmented 选中项、PageControl 当前页、content inset、item spacing、preferred style 和原生状态机都要由 SwiftUI/UIKit 共同消费，并在生成后清单中证明；不得由两套生成器各自猜测。
+27. 系统控件内部视觉必须形成独立的 `native-control-configuration-plan.json`。浏览器实测的 `accent-color`、`appearance`、normal、highlighted/pressed、editing/focused、checked/selected、disabled/loading，以及 Switch 轨道/滑块、Slider/Progress 轨道与填充、Segmented 选中项、PageControl 当前页、content inset、item spacing、preferred style 和固有尺寸都要由 SwiftUI/UIKit 共同消费，并在生成后清单中证明；不得由两套生成器各自猜测。
 
 ## 支持范围
 

@@ -91,8 +91,9 @@ def control_appearance(
     selected_background: str | None,
     disabled_foreground: str | None,
     disabled_opacity: float,
+    accent: str | None = None,
 ) -> dict[str, Any]:
-    accent = selected_background or border or selected_foreground or foreground
+    accent = accent or selected_background or border or selected_foreground or foreground
     appearance = {
         "tint": accent,
         "foreground": foreground,
@@ -124,6 +125,35 @@ def control_appearance(
     return appearance
 
 
+def state_appearances(semantic: str, style: dict[str, Any], states: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    def slots(raw: dict[str, Any], opacity_default: float = 1) -> dict[str, Any]:
+        foreground = first_color(raw.get("color"), raw.get("foreground"), style.get("color"), style.get("foreground"))
+        background = first_color(raw.get("backgroundColor"), raw.get("background"), style.get("backgroundColor"), style.get("background"))
+        border = first_color(
+            raw.get("borderTopColor"), raw.get("borderRightColor"), raw.get("borderBottomColor"), raw.get("borderLeftColor"),
+            *(style.get("borderColors") or []), style.get("borderColor"),
+        )
+        accent = first_color(raw.get("accentColor"), style.get("accentColor"))
+        return control_appearance(
+            semantic, foreground, background, border, foreground, background, foreground,
+            number(raw.get("opacity"), opacity_default), accent,
+        )
+
+    result = {"normal": slots(style)}
+    for state_name, raw in states.items():
+        if state_name in ALLOWED_STATES and isinstance(raw, dict):
+            result[state_name] = slots(raw, 0.5 if state_name == "disabled" else 1)
+    if "pressed" in result and "highlighted" not in result:
+        result["highlighted"] = dict(result["pressed"])
+    if "focused" in result and "editing" not in result:
+        result["editing"] = dict(result["focused"])
+    if "checked" in result and "selected" not in result:
+        result["selected"] = dict(result["checked"])
+    if "selected" in result and "checked" not in result:
+        result["checked"] = dict(result["selected"])
+    return result
+
+
 def node_contract(node: dict[str, Any], scale: float) -> dict[str, Any]:
     semantic = str(node.get("semanticType") or "")
     style = node.get("style") or {}
@@ -151,6 +181,7 @@ def node_contract(node: dict[str, Any], scale: float) -> dict[str, Any]:
     source_width = number(rect.get("width")) * scale
     source_height = number(rect.get("height")) * scale
     primitive = SEMANTICS[semantic]
+    visual_states = state_appearances(semantic, style, states)
     return {
         "nodeId": str(node.get("id") or ""),
         "semantic": semantic,
@@ -172,10 +203,12 @@ def node_contract(node: dict[str, Any], scale: float) -> dict[str, Any]:
             selected_background,
             disabled_foreground,
             number((states.get("disabled") or {}).get("opacity"), 0.5),
+            first_color(style.get("accentColor")),
         ),
+        "stateAppearances": visual_states,
         "behavior": {
             "preferredStyle": preferred_style(semantic, node),
-            "stateNames": state_names,
+            "stateNames": sorted(visual_states),
             "usesNativeStateMachine": True,
             "requiresWrapper": decision.get("decision") == "system-control-with-wrapper",
         },
