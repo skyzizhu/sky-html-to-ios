@@ -2316,6 +2316,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("field.markedTextRange == nil", uikit_runtime)
             self.assertIn("installControlVisualStates", uikit_runtime)
             self.assertIn("HTMLToIOSStatefulButton", uikit_runtime)
+            self.assertIn("htmlToIOSContentInsets", uikit_runtime)
+            self.assertNotIn("button.contentEdgeInsets", uikit_runtime)
             generated = json.loads((uikit_dir / PAYLOAD).read_text(encoding="utf-8"))
             generated_field = generated["screens"][0]["root"]["children"][0]
             self.assertEqual(generated_field["textBehavior"]["initialValue"], "Sky")

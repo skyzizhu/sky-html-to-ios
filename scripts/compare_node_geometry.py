@@ -36,7 +36,7 @@ def median(values: list[float]) -> float | None:
     return rounded(statistics.median(values)) if values else None
 
 
-def geometry_confidence(category: str, element_type: int | None) -> str:
+def geometry_confidence(category: str, element_type: int | None, has_children: bool) -> str:
     expected_types = {
         "typography": {48},
         "asset": {43},
@@ -46,6 +46,12 @@ def geometry_confidence(category: str, element_type: int | None) -> str:
         return "excluded"
     if element_type in expected_types.get(category, set()):
         return "high"
+    # SwiftUI commonly exposes an explicitly identified leaf as XCUIElementTypeOther
+    # after accessibility modifiers are applied. Its frame still belongs to the
+    # requested source node, so retain it for geometry diagnostics without
+    # claiming the same confidence as a native typed element.
+    if element_type == 1 and category in expected_types and not has_children:
+        return "medium"
     return "low"
 
 
@@ -127,7 +133,12 @@ def main() -> int:
         height_delta = actual_rect[3] - expected_rect[3]
         category = str(region.get("category") or "")
         element_type = int(captured.get("elementType")) if captured.get("elementType") is not None else None
-        confidence = geometry_confidence(category, element_type)
+        definition = requested_geometry.get(node_id) or {}
+        confidence = geometry_confidence(
+            category,
+            element_type,
+            bool(definition.get("hasChildren")),
+        )
         comparisons.append({
             "nodeId": node_id,
             "category": category,
@@ -135,7 +146,8 @@ def main() -> int:
             "elementType": element_type,
             "geometryConfidence": confidence,
             "verticalAggregationEligible": (
-                confidence == "high" and horizontally_corresponds(expected_rect, actual_rect)
+                confidence in {"high", "medium"}
+                and horizontally_corresponds(expected_rect, actual_rect)
             ),
             "expectedRect": [rounded(item) for item in expected_rect],
             "actualRect": [rounded(item) for item in actual_rect],

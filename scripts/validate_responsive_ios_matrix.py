@@ -145,11 +145,28 @@ def analyze_geometry(manifest: dict, geometry: dict, width: int) -> dict:
         for item in manifest.get("geometryNodes") or []
         if item.get("nodeId")
     }
+    validation_ids = {
+        str(item.get("nodeId"))
+        for item in manifest.get("validationRegions") or []
+        if item.get("nodeId")
+    }
+    root_ids = {
+        node_id
+        for node_id, item in definitions.items()
+        if not item.get("parentNodeId")
+    }
     overflow = []
     for item in geometry.get("nodes") or []:
         node_id = str(item.get("nodeId") or "")
         definition = definitions.get(node_id) or {}
-        if definition.get("hasChildren") or definition.get("isDecorative"):
+        checks_structural_container = (
+            node_id in validation_ids
+            or str(definition.get("parentNodeId") or "") in root_ids
+        )
+        if (
+            definition.get("isDecorative")
+            or (definition.get("hasChildren") and not checks_structural_container)
+        ):
             continue
         frame = item.get("frame") or {}
         left = float(frame.get("x") or 0)
@@ -163,11 +180,6 @@ def analyze_geometry(manifest: dict, geometry: dict, width: int) -> dict:
     unowned = [item for item in overflow if not item["ownedByHorizontalScroller"]]
     requested = len(definitions)
     captured = len({str(item.get("nodeId")) for item in geometry.get("nodes") or []} & set(definitions))
-    validation_ids = {
-        str(item.get("nodeId"))
-        for item in manifest.get("validationRegions") or []
-        if item.get("nodeId")
-    }
     captured_ids = {str(item.get("nodeId")) for item in geometry.get("nodes") or []}
     return {
         "requestedGeometryNodes": requested,

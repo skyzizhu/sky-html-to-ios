@@ -116,10 +116,19 @@ def build_screen_graph(screen: dict[str, Any]) -> dict[str, Any]:
         container_id = str(container["containerNodeId"])
         ordered = [str(item) for item in container.get("orderedChildNodeIds") or []]
         source_ordered = [str(item) for item in container.get("sourceChildNodeIds") or ordered]
-        fallback_order = {node_id: index for index, node_id in enumerate(source_ordered)}
+        paint_source_ordered = [
+            str(item)
+            for item in container.get("paintChildNodeIds") or source_ordered
+        ]
+        paint_fallback_order = {
+            node_id: index for index, node_id in enumerate(paint_source_ordered)
+        }
         container["paintOrderNodeIds"] = sorted(
-            source_ordered,
-            key=lambda node_id: paint_key(nodes.get(node_id) or {}, fallback_order.get(node_id, 0)),
+            paint_source_ordered,
+            key=lambda node_id: paint_key(
+                nodes.get(node_id) or {},
+                paint_fallback_order.get(node_id, 0),
+            ),
         )
         axis = str(container.get("axis") or "vertical")
         for index, (left_id, right_id) in enumerate(zip(ordered, ordered[1:])):
@@ -205,8 +214,8 @@ def build_screen_graph(screen: dict[str, Any]) -> dict[str, Any]:
             for right_id, right_rect in child_rects[index + 1:]:
                 if not intersects(left_rect, right_rect):
                     continue
-                left_key = paint_key(nodes[left_id], fallback_order.get(left_id, 0))
-                right_key = paint_key(nodes[right_id], fallback_order.get(right_id, 0))
+                left_key = paint_key(nodes[left_id], paint_fallback_order.get(left_id, 0))
+                right_key = paint_key(nodes[right_id], paint_fallback_order.get(right_id, 0))
                 back_id, front_id = (left_id, right_id) if left_key <= right_key else (right_id, left_id)
                 append_relation(
                     relations,

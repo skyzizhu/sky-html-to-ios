@@ -337,6 +337,7 @@ python3 "$SKILL_ROOT/scripts/generate_ios_from_ir.py" \
 - 每个 screen 必须有且只有一个 Safe Area owner。默认由 SwiftUI/`UIScrollView.adjustedContentInset` 管理系统安全区；滚动容器铺满父容器，不得预先减去顶部、底部、左侧或右侧安全距离。自绘栏位只追加栏位自身高度一次，禁止把系统 safe area 再手工加入 contentInset、padding 或 frame。
 - 自绘顶部栏和底部操作栏必须从滚动内容拆出；普通文档 footer 保持随内容滚动。
 - 容器轴向优先取浏览器 computed style 的 `display` 与 `flex-direction`；`layout.mode` 只作为缺失 computed style 时的回退。`row-reverse`/`column-reverse` 必须同步原生子节点顺序，不能因元素是 absolute/fixed 就丢失其内部 Flex 语义。
+- 浏览器会为非 Flex 元素返回默认 `flex-direction: row`；只有 `display:flex/inline-flex` 或明确的行布局证据才允许据此生成横向 Stack。普通 `display:block` 保持纵向文档流；单行富文本按 Range 行框聚合后保留 inline/baseline 布局。混合流式与 absolute/fixed 子节点时，`orderedChildNodeIds` 只保存参与测量的流式节点，定位节点由独立 overlay 所有权承接，`paintOrderNodeIds` 仍覆盖全部直接子节点。
 - 浏览器测得的 `preferredWidth` 不能无条件套到每层 SwiftUI 容器。结构容器由父级 Stack、Grid 和可用宽度分配；叶子节点保留理想宽度，Button、输入和选择类原生控件在来源明确时保留最小宽度，避免文字内在尺寸把等宽操作栏压缩。
 - 每个 scroll node 必须具有单独的轴向契约。页面根纵向滚动容器只拥有 vertical；嵌套横向列表只拥有 horizontal。不得因为某个子节点暂时越界就把根页面升级为双轴滚动，也不得用一个双轴 ScrollView 包住整页兜底。
 - 横向重复条目的来源 rect、`flex-basis`、`min-width`、`flex-shrink` 和 gap 是 item sizing 证据。来源未换行且实测为一行时，原生条目必须保持 intrinsic/fixed width 与单行语义，禁止由父容器平均拉伸后导致文字换行。

@@ -94,7 +94,7 @@ class VisualValidationTests(unittest.TestCase):
             root = Path(temporary)
             manifest = {
                 "geometryNodes": [
-                    {"nodeId": "top"},
+                    {"nodeId": "top", "hasChildren": False},
                     {"nodeId": "middle"},
                     {"nodeId": "bottom"},
                     {"nodeId": "missing-container"},
@@ -109,7 +109,7 @@ class VisualValidationTests(unittest.TestCase):
             actual = {
                 "stateId": "initial",
                 "nodes": [
-                    {"nodeId": "top", "elementType": 48, "frame": {"x": 10, "y": 101, "width": 80, "height": 20}},
+                    {"nodeId": "top", "elementType": 1, "frame": {"x": 10, "y": 101, "width": 80, "height": 20}},
                     {"nodeId": "middle", "elementType": 9, "frame": {"x": 10, "y": 306, "width": 100, "height": 38}},
                     {"nodeId": "bottom", "elementType": 48, "frame": {"x": 10, "y": 615, "width": 120, "height": 20}},
                     {"nodeId": "misidentified", "elementType": 48, "frame": {"x": 5, "y": 200, "width": 40, "height": 20}},
@@ -140,6 +140,9 @@ class VisualValidationTests(unittest.TestCase):
             self.assertEqual(report["summary"]["geometryCaptureCoverage"]["requestedNodeCount"], 4)
             self.assertEqual(report["summary"]["geometryCaptureCoverage"]["capturedNodeCount"], 3)
             self.assertEqual(report["summary"]["geometryCaptureCoverage"]["captureRate"], 0.75)
+            top = next(item for item in report["nodes"] if item["nodeId"] == "top")
+            self.assertEqual(top["geometryConfidence"], "medium")
+            self.assertTrue(top["verticalAggregationEligible"])
             misidentified = next(item for item in report["nodes"] if item["nodeId"] == "misidentified")
             self.assertFalse(misidentified["verticalAggregationEligible"])
 

@@ -103,7 +103,10 @@ class ResponsiveIOSMatrixTests(unittest.TestCase):
         }
         report = MODULE.analyze_geometry(manifest, geometry, 393)
         self.assertEqual(report["status"], "review-required")
-        self.assertEqual([item["nodeId"] for item in report["unownedHorizontalOverflowNodes"]], ["bad"])
+        self.assertEqual(
+            [item["nodeId"] for item in report["unownedHorizontalOverflowNodes"]],
+            ["bad", "container"],
+        )
         carousel = next(item for item in report["horizontalOverflowNodes"] if item["nodeId"] == "carousel.item")
         self.assertTrue(carousel["ownedByHorizontalScroller"])
         self.assertEqual(report["validationGeometryCaptureRate"], 1.0)

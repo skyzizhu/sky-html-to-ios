@@ -38,6 +38,8 @@ SwiftUI 使用这些证据选择 Stack/Grid/Overlay、spacing、frame 和 layout
 
 `orderedChildNodeIds` 与 `paintOrderNodeIds` 承担不同职责：前者用于 Stack/Grid、intrinsic size 和普通流测量，后者只决定重叠绘制的前后层级。关系图对直接子节点的真实矩形交叠生成 overlap-order 关系，并保存 paint group、stacking level 与 source order 证据；SwiftUI ZStack/overlay 和 UIKit overlay subviews 必须消费同一顺序。不得只比较 `z-index`，也不得为了层级正确而重排普通流测量顺序。
 
+computed style 对普通块元素同样可能返回默认 `flex-direction: row`，它不能单独证明横向布局。只有 `display:flex/inline-flex`、Grid/row mode 或浏览器实测的单行 inline 文本证据可以选择横向容器；普通 `display:block` 默认保持纵向文档流。混合普通流与 positioned 子节点时，结构契约必须分别保存 flow order、positioned ownership 和覆盖全部直接子节点的 paint order。
+
 复用容器另外生成 `collectionLayouts`：
 
 - `adaptiveColumns`：保存 `auto-fit`/`auto-fill`/实测响应式列变化及最小 item 宽度；

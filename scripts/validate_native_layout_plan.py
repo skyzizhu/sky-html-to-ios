@@ -102,7 +102,12 @@ def main() -> int:
             if container.get("orderedChildNodeIds") != expected_order:
                 add("LAYOUT_VISUAL_ORDER_MISMATCH", screen_id, "Container visual order changed during lowering.", container_id)
             paint_order = [str(item) for item in container.get("paintOrderNodeIds") or []]
-            if len(paint_order) != len(set(paint_order)) or set(paint_order) != set(expected_order):
+            expected_paint_order = [
+                str(item)
+                for item in (architecture_relations.get(container_id) or {}).get("paintChildNodeIds")
+                or expected_order
+            ]
+            if len(paint_order) != len(set(paint_order)) or set(paint_order) != set(expected_paint_order):
                 add("LAYOUT_PAINT_ORDER_SET_MISMATCH", screen_id, "Container paint order must contain every visual child exactly once.", container_id)
             paint_index = {node_id: index for index, node_id in enumerate(paint_order)}
             for relation in overlap_relations_by_container.get(container_id) or []:

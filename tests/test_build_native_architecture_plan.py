@@ -37,6 +37,86 @@ def make_ir(screen_id: str = "home") -> dict:
 
 
 class BuildNativeArchitecturePlanTests(unittest.TestCase):
+    def test_block_container_ignores_computed_flex_direction_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = make_ir("article")
+            screen = payload["screens"][0]
+            root_id = screen["rootNodeId"]
+            screen["nodes"][0].update({
+                "layout": {"mode": "flow", "scrollAxis": "none"},
+                "style": {"display": "block", "flexDirection": "row"},
+            })
+            screen["nodes"].extend([
+                {
+                    "id": "article.heading", "parentId": root_id,
+                    "semanticType": "heading",
+                    "layout": {"rect": {"x": 20, "y": 20, "width": 200, "height": 30}},
+                },
+                {
+                    "id": "article.body", "parentId": root_id,
+                    "semanticType": "text",
+                    "layout": {"rect": {"x": 20, "y": 70, "width": 353, "height": 120}},
+                },
+            ])
+            ir_path = root / "ui-ir.json"
+            output = root / "plan.json"
+            ir_path.write_text(json.dumps(payload), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), "--ir", str(ir_path), "--out", str(output), "--ui-stack", "uikit",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            relations = json.loads(output.read_text(encoding="utf-8"))["screens"][0]["layers"]["contentContainer"]["layoutRelations"]
+            root_relation = next(item for item in relations if item["containerNodeId"] == root_id)
+            self.assertEqual(root_relation["axis"], "vertical")
+            self.assertEqual(root_relation["orderedChildNodeIds"], ["article.heading", "article.body"])
+
+    def test_block_rich_text_stays_inline_and_positioned_decoration_stays_out_of_flow(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = make_ir("article")
+            screen = payload["screens"][0]
+            root_id = screen["rootNodeId"]
+            screen["nodes"][0].update({
+                "layout": {"mode": "flow", "scrollAxis": "none"},
+                "style": {"display": "block", "flexDirection": "row"},
+            })
+            rich_text = {
+                "id": "article.rich", "parentId": root_id, "semanticType": "text",
+                "layout": {"mode": "flow", "rect": {"x": 20, "y": 20, "width": 200, "height": 24}},
+                "style": {"display": "block", "flexDirection": "row"},
+                "content": {"runs": [
+                    {"kind": "text", "text": "Count ", "rect": {"x": 20, "y": 20, "width": 48, "height": 24}},
+                    {"kind": "node", "text": "6", "nodeId": "article.count", "rect": {"x": 68, "y": 20, "width": 12, "height": 24}},
+                ]},
+            }
+            screen["nodes"].extend([
+                rich_text,
+                {
+                    "id": "article.count", "parentId": rich_text["id"], "semanticType": "text",
+                    "layout": {"rect": {"x": 68, "y": 20, "width": 12, "height": 24}},
+                    "style": {"display": "inline"},
+                },
+                {
+                    "id": "article.decoration", "parentId": root_id, "semanticType": "decoration",
+                    "layout": {"rect": {"x": 0, "y": 0, "width": 120, "height": 120}},
+                    "style": {"position": "absolute"},
+                },
+            ])
+            ir_path = root / "ui-ir.json"
+            output = root / "plan.json"
+            ir_path.write_text(json.dumps(payload), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), "--ir", str(ir_path), "--out", str(output), "--ui-stack", "uikit",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            relations = json.loads(output.read_text(encoding="utf-8"))["screens"][0]["layers"]["contentContainer"]["layoutRelations"]
+            root_relation = next(item for item in relations if item["containerNodeId"] == root_id)
+            text_relation = next(item for item in relations if item["containerNodeId"] == rich_text["id"])
+            self.assertEqual(root_relation["orderedChildNodeIds"], [rich_text["id"]])
+            self.assertEqual(root_relation["paintChildNodeIds"], [rich_text["id"], "article.decoration"])
+            self.assertEqual(text_relation["axis"], "horizontal")
+
     def test_dominant_vertical_list_replaces_same_axis_scroll_owner(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

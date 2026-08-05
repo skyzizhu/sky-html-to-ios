@@ -193,6 +193,38 @@ def css_number(value: Any, default: float = 0.0) -> float:
     return float(match.group(0)) if match else default
 
 
+def visual_text_line_count(content: dict[str, Any]) -> int:
+    runs = content.get("runs") or []
+    if len(runs) <= 1:
+        return int(css_number(content.get("lines"), 0))
+    rects = [
+        item.get("sourceRectCssPx") or item.get("rect") or {}
+        for item in runs
+    ]
+    rects = [item for item in rects if css_number(item.get("height")) > 0]
+    if not rects:
+        return int(css_number(content.get("lines"), 0))
+    lines: list[dict[str, float]] = []
+    for rect in sorted(rects, key=lambda item: (css_number(item.get("y")), css_number(item.get("x")))):
+        top = css_number(rect.get("y"))
+        height = css_number(rect.get("height"))
+        bottom = top + height
+        center = top + height / 2
+        matched = next((line for line in lines if (
+            max(min(bottom, line["bottom"]) - max(top, line["top"]), 0)
+            / max(min(height, line["height"]), 1) >= 0.45
+            or abs(center - line["center"]) <= max(min(height, line["height"]) * 0.35, 2)
+        )), None)
+        if matched is None:
+            lines.append({"top": top, "bottom": bottom, "center": center, "height": height})
+        else:
+            matched["top"] = min(matched["top"], top)
+            matched["bottom"] = max(matched["bottom"], bottom)
+            matched["height"] = max(matched["height"], height)
+            matched["center"] = (matched["top"] + matched["bottom"]) / 2
+    return len(lines)
+
+
 def layout_relation_plan(
     nodes: dict[str, dict[str, Any]],
     children: dict[str, list[str]],
@@ -200,8 +232,8 @@ def layout_relation_plan(
     relations: list[dict[str, Any]] = []
     for node_id, source_order in children.items():
         parent = nodes.get(node_id)
-        child_ids = [child_id for child_id in source_order if child_id in nodes]
-        if not parent or not child_ids:
+        source_child_ids = [child_id for child_id in source_order if child_id in nodes]
+        if not parent or not source_child_ids:
             continue
         semantic = str(parent.get("semanticType") or "container")
         if semantic in {"icon", "image", "decoration", "canvas-artwork"}:
@@ -211,18 +243,37 @@ def layout_relation_plan(
         mode = str(layout.get("mode") or "")
         flex_direction = str(style.get("flexDirection") or "")
         display = str(style.get("display") or layout.get("display") or "")
-        if mode == "absolute":
+        positioned_child_ids = [
+            child_id for child_id in source_child_ids
+            if str((nodes[child_id].get("style") or {}).get("position") or "static")
+            in {"absolute", "fixed"}
+        ]
+        flow_child_ids = [child_id for child_id in source_child_ids if child_id not in positioned_child_ids]
+        child_ids = flow_child_ids or source_child_ids
+        detached_positioned_child_ids = positioned_child_ids if flow_child_ids else []
+        content = parent.get("content") or {}
+        inline_rich_text = (
+            semantic in {"text", "label", "heading"}
+            and len(content.get("runs") or []) > 1
+            and visual_text_line_count(content) == 1
+        )
+        if positioned_child_ids and not flow_child_ids:
             axis = "overlay"
         elif "grid" in mode or display in {"grid", "inline-grid"}:
             axis = "grid"
-        elif "row" in mode or flex_direction.startswith("row"):
+        elif inline_rich_text:
+            axis = "horizontal"
+        elif "row" in mode or (
+            display in {"flex", "inline-flex"}
+            and flex_direction.startswith("row")
+        ):
             axis = "horizontal"
         else:
             axis = "vertical"
 
         def visual_key(child_id: str) -> tuple[float, float, int]:
             rect = (nodes[child_id].get("layout") or {}).get("rect") or {}
-            source_index = child_ids.index(child_id)
+            source_index = source_child_ids.index(child_id)
             x = css_number(rect.get("x"))
             y = css_number(rect.get("y"))
             if axis == "horizontal":
@@ -292,6 +343,8 @@ def layout_relation_plan(
             "containerNodeId": node_id,
             "axis": axis,
             "sourceChildNodeIds": child_ids,
+            "paintChildNodeIds": source_child_ids,
+            "positionedChildNodeIds": detached_positioned_child_ids,
             "orderedChildNodeIds": visual_order,
             "reordersSourceChildren": visual_order != child_ids,
             "alignment": str(style.get("alignItems") or "normal"),

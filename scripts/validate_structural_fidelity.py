@@ -122,12 +122,18 @@ def validate_screen(
             ))
             continue
         ordered = [str(item) for item in relation.get("orderedChildNodeIds") or []]
+        positioned = [str(item) for item in relation.get("positionedChildNodeIds") or []]
         if len(ordered) != len(set(ordered)):
             issues.append(issue("DUPLICATE_VISUAL_ORDER_NODE", "error", screen_id, "Visual order contains duplicate children.", parent_id))
-        if set(ordered) != set(child_ids):
+        if set(ordered) & set(positioned):
+            issues.append(issue(
+                "FLOW_POSITIONED_CHILD_OVERLAP", "error", screen_id,
+                "A child cannot belong to both flow order and positioned overlay ownership.", parent_id,
+            ))
+        if set(ordered) | set(positioned) != set(child_ids):
             issues.append(issue(
                 "VISUAL_ORDER_CHILD_SET_MISMATCH", "error", screen_id,
-                "Visual order does not contain exactly the container's direct children.", parent_id,
+                "Flow order plus positioned overlay ownership does not contain exactly the container's direct children.", parent_id,
             ))
 
     scroll_relations = {

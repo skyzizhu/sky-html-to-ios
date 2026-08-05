@@ -6502,6 +6502,29 @@ final class HTMLToIOSManagedTextView: UITextView, UITextViewDelegate {
 
 final class HTMLToIOSStatefulButton: UIButton {
     var visualStateDidChange: ((String) -> Void)?
+    var htmlToIOSContentInsets = NSDirectionalEdgeInsets.zero {
+        didSet {
+            invalidateIntrinsicContentSize()
+            setNeedsLayout()
+        }
+    }
+
+    override var intrinsicContentSize: CGSize {
+        let size = super.intrinsicContentSize
+        return CGSize(
+            width: size.width + htmlToIOSContentInsets.leading + htmlToIOSContentInsets.trailing,
+            height: size.height + htmlToIOSContentInsets.top + htmlToIOSContentInsets.bottom
+        )
+    }
+
+    override func contentRect(forBounds bounds: CGRect) -> CGRect {
+        bounds.inset(by: UIEdgeInsets(
+            top: htmlToIOSContentInsets.top,
+            left: htmlToIOSContentInsets.leading,
+            bottom: htmlToIOSContentInsets.bottom,
+            right: htmlToIOSContentInsets.trailing
+        ))
+    }
 
     override var isHighlighted: Bool {
         didSet { notifyVisualState() }
@@ -8190,17 +8213,16 @@ final class HTMLToIOSNodeRenderer {
             control.setContentCompressionResistancePriority(.required, for: .horizontal)
             control.setContentCompressionResistancePriority(.required, for: .vertical)
         }
-        if let button = view as? UIButton, let insets = config.contentInsets, insets.count == 4 {
+        if let button = firstSubview(of: UIButton.self, in: view),
+           let insets = config.contentInsets, insets.count == 4 {
             let directionalInsets = NSDirectionalEdgeInsets(
                 top: insets[0], leading: insets[3], bottom: insets[2], trailing: insets[1]
             )
-            if var configuration = button.configuration {
+            if let statefulButton = button as? HTMLToIOSStatefulButton {
+                statefulButton.htmlToIOSContentInsets = directionalInsets
+            } else if var configuration = button.configuration {
                 configuration.contentInsets = directionalInsets
                 button.configuration = configuration
-            } else {
-                button.contentEdgeInsets = UIEdgeInsets(
-                    top: insets[0], left: insets[3], bottom: insets[2], right: insets[1]
-                )
             }
         }
         if let stack = view as? UIStackView, let spacing = config.itemSpacing { stack.spacing = spacing }
@@ -10293,13 +10315,22 @@ def relation_native_consumption(
         ratio = number(style.get("aspectRatio"), None)
         fixed_width = number(style.get("fixedWidth"), None)
         fixed_height = number(style.get("fixedHeight"), None)
+        preferred_width = number(style.get("preferredWidth"), None)
+        preferred_height = number(style.get("preferredHeight"), None)
         consumed = bool(
             ratio is not None and abs(ratio - 1) <= 0.05
             or fixed_width is not None and fixed_height is not None and abs(fixed_width - fixed_height) <= 1.5
+            or preferred_width is not None and preferred_height is not None and abs(preferred_width - preferred_height) <= 1.5
             or optimized.get(node_id)
         )
         strategy = "native-aspect-ratio-constraint"
-        check("square-aspect-contract", consumed, {"aspectRatio": ratio, "fixedWidth": fixed_width, "fixedHeight": fixed_height})
+        check("square-aspect-contract", consumed, {
+            "aspectRatio": ratio,
+            "fixedWidth": fixed_width,
+            "fixedHeight": fixed_height,
+            "preferredWidth": preferred_width,
+            "preferredHeight": preferred_height,
+        })
     elif kind == "scroll-axis-ownership":
         node_id = str(relation.get("ownerNodeId") or "")
         axis = str(relation.get("axis") or "none")
