@@ -1357,6 +1357,8 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         overlay_child_payloads.sort(
             key=lambda child: paint_index.get(str(child.get("id") or ""), len(paint_index))
         )
+    layout_node = context.layout_nodes.get(node_id) or {}
+    content_geometry = layout_node.get("contentGeometry") or {}
     inline_runs = rich_text_runs(context, node, allow_block_children=True)
     inline_text_container = bool(
         semantic == "container"
@@ -1381,8 +1383,36 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
                 key=lambda item: planned_slot_index.get(str(item.get("id") or ""), len(planned_slot_index))
             )
         child_by_id = {str(child.get("id") or ""): child for child in child_payloads}
+        planned_slots = {
+            str(item.get("slotId") or ""): item
+            for item in compound_layout.get("orderedSlots") or []
+            if isinstance(item, dict) and item.get("slotId")
+        }
         for item in content_items:
+            planned_slot = planned_slots.get(str(item.get("id") or "")) or {}
+            slot_geometry = planned_slot.get("contentGeometry") or {}
+            if planned_slot:
+                source_width = number(slot_geometry.get("sourceWidthPt"), 0)
+                source_height = number(slot_geometry.get("sourceHeightPt"), 0)
+                item["preferredWidth"] = source_width if source_width > 0 else item.get("preferredWidth")
+                item["preferredHeight"] = source_height if source_height > 0 else item.get("preferredHeight")
+                item["singleLine"] = bool(slot_geometry.get("singleLine"))
+                item["gapBefore"] = (
+                    number(planned_slot.get("gapBeforePt"))
+                    if planned_slot.get("gapBeforePt") is not None else None
+                )
+                item["flexibleGapBefore"] = bool(planned_slot.get("flexibleGapBefore"))
             child = child_by_id.get(str(item.get("childID") or ""))
+            child_style = (child or {}).get("style") or {}
+            if child and slot_geometry:
+                if slot_geometry.get("widthMode") == "fixed" and source_width > 0:
+                    child_style["fixedWidth"] = source_width
+                if slot_geometry.get("heightMode") == "fixed" and source_height > 0:
+                    child_style["fixedHeight"] = source_height
+                if slot_geometry.get("aspectRatio") is not None:
+                    child_style["aspectRatio"] = number(slot_geometry.get("aspectRatio"))
+                child_style["preservesIntrinsicWidth"] = bool(slot_geometry.get("preservesIntrinsicWidth"))
+                child_style["resistsCompression"] = bool(slot_geometry.get("resistsHorizontalCompression"))
             child_margin = ((child or {}).get("style") or {}).get("margin")
             if not child or not isinstance(child_margin, list) or len(child_margin) != 4:
                 continue
@@ -1390,7 +1420,6 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
                 child_margin[3] = 0
             elif axis == "vertical" and item.get("gapBefore") is not None:
                 child_margin[0] = 0
-    layout_node = context.layout_nodes.get(node_id) or {}
     box_model = layout_node.get("boxModel") or {}
     positioning = layout_node.get("positioning") or {}
     compositing = layout_node.get("compositing") or {}
@@ -1528,7 +1557,8 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         and not content.get("clippedHorizontally")
     )
     text_line_limit = explicit_line_clamp if explicit_line_clamp > 0 else (
-        1 if explicit_no_wrap or inferred_compact_single_line or rich_text_visual_single_line else None
+        1 if explicit_no_wrap or inferred_compact_single_line or rich_text_visual_single_line
+        or content_geometry.get("singleLine") is True else None
     )
     child_by_id_for_baseline = {str(child.get("id") or ""): child for child in child_payloads}
 
@@ -1603,6 +1633,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         or measured_visual_leaf
         or compact_styled_inline_geometry
         or compact_overlay_geometry
+        or content_geometry.get("preservesIntrinsicWidth") is True
     )
     layout_sizing = context.layout_sizing.get(node_id) or {}
     layout_width_policy = str(layout_sizing.get("widthPolicy") or "")
@@ -1626,6 +1657,10 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         fixed_width = number(layout_sizing.get("measuredWidth"))
     if layout_height_policy == "fixed" and number(layout_sizing.get("measuredHeight")) > 0:
         fixed_height = number(layout_sizing.get("measuredHeight"))
+    if content_geometry.get("widthMode") == "fixed" and number(content_geometry.get("sourceWidthPt")) > 0:
+        fixed_width = number(content_geometry.get("sourceWidthPt"))
+    if content_geometry.get("heightMode") == "fixed" and number(content_geometry.get("sourceHeightPt")) > 0:
+        fixed_height = number(content_geometry.get("sourceHeightPt"))
     preserves_aspect_ratio = bool(
         ratio is not None
         and (
@@ -1633,6 +1668,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             or measured_visual_leaf
             or compact_overlay_geometry
             or semantic in {"image", "icon", "canvas-artwork"}
+            or content_geometry.get("aspectRatio") is not None
         )
     )
 
@@ -1941,11 +1977,13 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
                 if last_baseline_y is not None else None
             ),
             "baselineAligned": baseline_aligned,
-            "resistsCompression": str(style.get("flexShrink") or "1") == "0" or bool(layout_sizing.get("resistsHorizontalCompression")),
+            "resistsCompression": str(style.get("flexShrink") or "1") == "0"
+                or bool(layout_sizing.get("resistsHorizontalCompression"))
+                or bool(content_geometry.get("resistsHorizontalCompression")),
             "preservesIntrinsicWidth": preserves_intrinsic_width or layout_width_policy == "intrinsic",
             "fixedWidth": min(max(fixed_width, 0), context.root_width) if fixed_width is not None else None,
             "fixedHeight": max(fixed_height, 0) if fixed_height is not None else None,
-            "aspectRatio": ratio if preserves_aspect_ratio else None,
+            "aspectRatio": number(content_geometry.get("aspectRatio"), ratio) if preserves_aspect_ratio else None,
             "scrollAxis": scroll_axis,
             "textLineLimit": text_line_limit,
             "textOverflow": str(style.get("textOverflow") or "clip"),
@@ -1957,8 +1995,8 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "positioningScheme": str(positioning.get("scheme") or style.get("position") or "static"),
             "positioningOwnerNodeID": positioning.get("containingBlockNodeId"),
             "coordinateSpace": positioning.get("coordinateSpace"),
-            "mediaContentMode": str(asset.get("renderMode") or style.get("objectFit") or "contain"),
-            "mediaPosition": str(asset.get("position") or style.get("objectPosition") or "50% 50%"),
+            "mediaContentMode": str(asset.get("renderMode") or content_geometry.get("mediaContentMode") or style.get("objectFit") or "contain"),
+            "mediaPosition": str(asset.get("position") or content_geometry.get("mediaPosition") or style.get("objectPosition") or "50% 50%"),
             "backgroundContentMode": str(asset.get("renderMode") or "cover") if asset_kind == "css-background" else None,
             "backgroundPosition": str(asset.get("position") or "50% 50%") if asset_kind == "css-background" else None,
             "backgroundRepeat": str(asset.get("repeat") or "no-repeat") if asset_kind == "css-background" else None,
@@ -10651,6 +10689,21 @@ def build_native_structure_manifest(
                     item for item in expected_slots if item in content_slots
                 ] or merged_slots_consumed,
                 "axis": str(payload_node.get("axis") or "") == str(compound_plan.get("axis") or "") or merged_slots_consumed,
+                "slotGeometry": all(
+                    merged_slots_consumed or any(
+                        str(content_item.get("id") or "") == str(slot.get("slotId") or "")
+                        and abs(number(content_item.get("preferredWidth")) - number((slot.get("contentGeometry") or {}).get("sourceWidthPt"))) <= 0.01
+                        and abs(number(content_item.get("preferredHeight")) - number((slot.get("contentGeometry") or {}).get("sourceHeightPt"))) <= 0.01
+                        and bool(content_item.get("singleLine")) == bool((slot.get("contentGeometry") or {}).get("singleLine"))
+                        and (
+                            content_item.get("gapBefore") is None and slot.get("gapBeforePt") is None
+                            or abs(number(content_item.get("gapBefore")) - number(slot.get("gapBeforePt"))) <= 0.01
+                        )
+                        and bool(content_item.get("flexibleGapBefore")) == bool(slot.get("flexibleGapBefore"))
+                        for content_item in payload_node.get("contentItems") or []
+                    )
+                    for slot in compound_plan.get("orderedSlots") or []
+                ),
             }
             compound_consumption.append({
                 "nodeId": node_id,
@@ -10741,6 +10794,8 @@ def build_native_structure_manifest(
             contract = payload_node.get("layoutContract") or {}
             positioning = node_plan.get("positioning") or {}
             box = node_plan.get("boxModel") or {}
+            content_geometry = node_plan.get("contentGeometry") or {}
+            generated_style = payload_node.get("style") or {}
             native_owner_id = str(positioning.get("nativeOwnerNodeId") or "")
             native_owner = payload_nodes.get(native_owner_id) or {}
             native_owner_children = direct_payload_child_ids(native_owner)
@@ -10754,6 +10809,26 @@ def build_native_structure_manifest(
                 "positionedUnderOwner": (
                     positioning.get("scheme") not in {"absolute", "fixed"}
                     or node_id in native_owner_children
+                ),
+                "contentWidth": (
+                    content_geometry.get("widthMode") != "fixed"
+                    or abs(number(generated_style.get("fixedWidth")) - number(content_geometry.get("sourceWidthPt"))) <= 0.01
+                ),
+                "contentHeight": (
+                    content_geometry.get("heightMode") != "fixed"
+                    or abs(number(generated_style.get("fixedHeight")) - number(content_geometry.get("sourceHeightPt"))) <= 0.01
+                ),
+                "contentAspectRatio": (
+                    content_geometry.get("aspectRatio") is None
+                    or abs(number(generated_style.get("aspectRatio")) - number(content_geometry.get("aspectRatio"))) <= 0.001
+                ),
+                "singleLine": (
+                    content_geometry.get("singleLine") is not True
+                    or int(number(generated_style.get("textLineLimit"))) == 1
+                ),
+                "compression": (
+                    content_geometry.get("resistsHorizontalCompression") is not True
+                    or generated_style.get("resistsCompression") is True
                 ),
             }
             optimized_reason = (

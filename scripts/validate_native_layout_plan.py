@@ -129,6 +129,18 @@ def main() -> int:
                 add("NEGATIVE_CONTAINER_GAP", screen_id, "Container row/column gaps cannot be negative.", container_id)
         for node_id, node_plan in plan_nodes.items():
             box = node_plan.get("boxModel") or {}
+            content_geometry = node_plan.get("contentGeometry") or {}
+            if content_geometry.get("widthMode") not in {"fixed", "intrinsic", "flexible", "parent-relative"}:
+                add("INVALID_CONTENT_WIDTH_MODE", screen_id, "Node content width mode is not executable.", node_id)
+            if content_geometry.get("heightMode") not in {"fixed", "intrinsic", "flexible", "parent-relative"}:
+                add("INVALID_CONTENT_HEIGHT_MODE", screen_id, "Node content height mode is not executable.", node_id)
+            if float(content_geometry.get("sourceWidthPt") or 0) < 0 or float(content_geometry.get("sourceHeightPt") or 0) < 0:
+                add("NEGATIVE_CONTENT_GEOMETRY", screen_id, "Node content geometry cannot be negative.", node_id)
+            aspect_ratio = content_geometry.get("aspectRatio")
+            if aspect_ratio is not None and float(aspect_ratio) <= 0:
+                add("INVALID_CONTENT_ASPECT_RATIO", screen_id, "Content aspect ratio must be positive.", node_id)
+            if content_geometry.get("singleLine") is True and int(content_geometry.get("lineCount") or 1) > 1:
+                add("SINGLE_LINE_CONTENT_CONFLICT", screen_id, "Single-line content cannot declare multiple measured lines.", node_id)
             if box.get("boxSizing") not in {"border-box", "content-box"}:
                 add("UNSUPPORTED_BOX_SIZING", screen_id, "Box sizing must be border-box or content-box.", node_id)
             for key in ("borderBoxWidthPt", "borderBoxHeightPt", "contentWidthPt", "contentHeightPt"):
@@ -271,6 +283,16 @@ def main() -> int:
             slots = [str(item.get("slotId") or "") for item in compound.get("orderedSlots") or []]
             if len(slot_ids) < 2 or slot_ids != slots or len(slot_ids) != len(set(slot_ids)):
                 add("INVALID_COMPOUND_SLOT_ORDER", screen_id, "Compound-control slots must be unique and preserve visual order.", str(compound.get("nodeId") or ""))
+            for index, slot in enumerate(compound.get("orderedSlots") or []):
+                geometry = slot.get("contentGeometry") or {}
+                if geometry.get("widthMode") not in {"fixed", "intrinsic", "flexible", "parent-relative"}:
+                    add("INVALID_COMPOUND_SLOT_WIDTH_MODE", screen_id, "Compound slot has no executable width mode.", str(slot.get("slotId") or ""))
+                if geometry.get("heightMode") not in {"fixed", "intrinsic", "flexible", "parent-relative"}:
+                    add("INVALID_COMPOUND_SLOT_HEIGHT_MODE", screen_id, "Compound slot has no executable height mode.", str(slot.get("slotId") or ""))
+                if index == 0 and slot.get("gapBeforePt") is not None:
+                    add("INVALID_COMPOUND_INITIAL_GAP", screen_id, "The first compound slot cannot have a leading gap.", str(slot.get("slotId") or ""))
+                if float(slot.get("gapBeforePt") or 0) < 0:
+                    add("NEGATIVE_COMPOUND_SLOT_GAP", screen_id, "Compound slot gaps cannot be negative.", str(slot.get("slotId") or ""))
         ir_states = ir_states_by_screen.get(screen_id) or {}
         planned_states = {str(item.get("stateId") or ""): item for item in screen_plan.get("stateLayouts") or []}
         expected_state_ids = {

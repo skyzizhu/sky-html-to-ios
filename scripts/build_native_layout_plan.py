@@ -214,6 +214,11 @@ def authored_value(style: dict[str, Any], key: str) -> Any:
     return evidence.get("value") if evidence.get("value") not in {None, ""} else style.get(key)
 
 
+def explicit_authored_value(style: dict[str, Any], key: str) -> Any:
+    evidence = (style.get("authoredLayout") or {}).get(key) or {}
+    return evidence.get("value") if evidence.get("value") not in {None, ""} else None
+
+
 def rect(node: dict[str, Any]) -> dict[str, float]:
     raw = (node.get("layout") or {}).get("rect") or {}
     return {key: number(raw.get(key)) for key in ("x", "y", "width", "height")}
@@ -312,6 +317,104 @@ def classify_slot(node: dict[str, Any], container_text: bool) -> str:
     return "content"
 
 
+def content_geometry_contract(
+    node: dict[str, Any],
+    parent: dict[str, Any] | None,
+    *,
+    has_children: bool,
+) -> dict[str, Any]:
+    style = node.get("style") or {}
+    content = node.get("content") or {}
+    measured = rect(node)
+    parent_rect = rect(parent or {})
+    semantic = str(node.get("semanticType") or "container")
+    # Computed style resolves auto/flex/Grid widths to px. Only authored evidence may
+    # turn an ordinary content dimension into a fixed native constraint.
+    width_contract = length_contract(explicit_authored_value(style, "width"), "horizontal")
+    height_contract = length_contract(explicit_authored_value(style, "height"), "vertical")
+    width_fraction = measured["width"] / parent_rect["width"] if parent_rect["width"] > 0 else 0
+    background = str(style.get("backgroundColor") or "").lower()
+    has_visual_style = bool(
+        background not in {"", "transparent", "rgba(0, 0, 0, 0)"}
+        or str(style.get("backgroundImage") or "none") != "none"
+        or any(number(item) > 0 for item in style.get("borderWidths") or [])
+        or any(number(item) > 0 for item in style.get("cornerRadii") or [])
+        or str(style.get("boxShadow") or "none") != "none"
+    )
+    is_media = semantic in {"icon", "image", "canvas-artwork"}
+    is_text = semantic in {"text", "label", "heading", "link"}
+    is_control = semantic in CONTROL_SEMANTICS
+    compact_visual = bool(
+        measured["width"] > 0
+        and measured["height"] > 0
+        and measured["width"] <= 120
+        and measured["height"] <= 56
+        and width_fraction < 0.5
+        and has_visual_style
+        and (is_text or is_control or not has_children)
+    )
+    if is_media:
+        role = "media"
+    elif compact_visual:
+        role = "compact-visual"
+    elif is_text:
+        role = "text"
+    elif is_control:
+        role = "control"
+    else:
+        role = "content"
+
+    def dimension_mode(contract: dict[str, Any], *, horizontal: bool) -> str:
+        kind = str(contract.get("kind") or "automatic")
+        if number(style.get("flexGrow")) > 0 and horizontal:
+            return "flexible"
+        if kind == "fixed":
+            return "fixed"
+        if kind in {"percentage", "calculation", "viewport-relative", "font-relative"}:
+            return "parent-relative"
+        if compact_visual:
+            return "fixed"
+        if is_media and (not horizontal or width_fraction < 0.88):
+            return "fixed"
+        return "intrinsic"
+
+    width_mode = dimension_mode(width_contract, horizontal=True)
+    height_mode = dimension_mode(height_contract, horizontal=False)
+    ratio = measured["width"] / measured["height"] if measured["width"] > 0 and measured["height"] > 0 else None
+    lines = int(number(content.get("lines"), 0))
+    explicit_single_line = str(style.get("whiteSpace") or "").lower() == "nowrap"
+    single_line = bool(
+        explicit_single_line
+        or ((compact_visual or is_control) and lines <= 1 and bool(str(content.get("text") or "").strip()))
+    )
+    resists_compression = bool(
+        str(style.get("flexShrink") or "1") == "0"
+        or explicit_single_line
+        or is_media
+        or compact_visual
+    )
+    preserves_intrinsic = bool(
+        width_mode in {"fixed", "intrinsic"}
+        and (is_media or compact_visual or explicit_single_line)
+    )
+    return {
+        "role": role,
+        "sourceWidthPt": measured["width"],
+        "sourceHeightPt": measured["height"],
+        "widthMode": width_mode,
+        "heightMode": height_mode,
+        "aspectRatio": ratio if is_media or compact_visual else None,
+        "singleLine": single_line,
+        "lineCount": lines or None,
+        "preservesIntrinsicWidth": preserves_intrinsic,
+        "resistsHorizontalCompression": resists_compression,
+        "horizontalAlignment": str(style.get("textAlign") or style.get("justifyContent") or "start"),
+        "verticalAlignment": str(style.get("alignItems") or "center"),
+        "mediaContentMode": str(style.get("objectFit") or "contain") if is_media else None,
+        "mediaPosition": str(style.get("objectPosition") or "50% 50%") if is_media else None,
+    }
+
+
 def compound_slots(
     node: dict[str, Any],
     child_ids: list[str],
@@ -323,13 +426,23 @@ def compound_slots(
     slots: list[dict[str, Any]] = []
     seen: set[str] = set()
     text_index = 0
+
+    def is_slot_node(child_id: str) -> bool:
+        child = nodes.get(child_id) or {}
+        tag = str((child.get("source") or {}).get("tag") or "").lower()
+        if tag in {"br", "wbr"}:
+            return False
+        return True
+
     for run_index, run in enumerate(content.get("runs") or []):
         if not isinstance(run, dict):
             continue
         child_id = str(run.get("nodeId") or "")
         kind = str(run.get("kind") or "")
-        source_rect = run.get("sourceRectCssPx") or run.get("rect") or {}
-        if kind == "node" and child_id in child_ids and child_id not in seen:
+        # UI IR run rects are already normalized into the target-point coordinate
+        # space. sourceRectCssPx remains provenance and must not drive native slots.
+        source_rect = run.get("rect") or run.get("sourceRectCssPx") or {}
+        if kind == "node" and child_id in child_ids and child_id not in seen and is_slot_node(child_id):
             slots.append({
                 "slotId": child_id,
                 "kind": classify_slot(nodes[child_id], bool(text)),
@@ -349,7 +462,7 @@ def compound_slots(
             })
             text_index += 1
     for index, child_id in enumerate(child_ids):
-        if child_id in seen:
+        if child_id in seen or not is_slot_node(child_id):
             continue
         slots.append({
             "slotId": child_id,
@@ -383,6 +496,51 @@ def compound_slots(
         for index, slot in enumerate(slots):
             if slot["kind"] == "icon":
                 slot["kind"] = "leadingIcon" if index < title_index else "trailingIcon"
+    parent_style = node.get("style") or {}
+    parent_rect = rect(node)
+    default_gap = max(number(parent_style.get("gap")), 0)
+    distribution = str(parent_style.get("justifyContent") or "normal").lower()
+    main_origin = "x" if axis == "horizontal" else "y"
+    main_extent = "width" if axis == "horizontal" else "height"
+    for index, slot in enumerate(slots):
+        child = nodes.get(str(slot.get("nodeId") or ""))
+        geometry = content_geometry_contract(child, node, has_children=False) if child else {
+            "role": "text",
+            "sourceWidthPt": number((slot.get("rect") or {}).get("width")),
+            "sourceHeightPt": number((slot.get("rect") or {}).get("height")),
+            "widthMode": "intrinsic",
+            "heightMode": "intrinsic",
+            "aspectRatio": None,
+            "singleLine": str(parent_style.get("whiteSpace") or "").lower() == "nowrap",
+            "lineCount": 1,
+            "preservesIntrinsicWidth": str(parent_style.get("whiteSpace") or "").lower() == "nowrap",
+            "resistsHorizontalCompression": str(parent_style.get("whiteSpace") or "").lower() == "nowrap",
+            "horizontalAlignment": str(parent_style.get("textAlign") or "start"),
+            "verticalAlignment": str(parent_style.get("alignItems") or "center"),
+            "mediaContentMode": None,
+            "mediaPosition": None,
+        }
+        slot["contentGeometry"] = geometry
+        if index == 0:
+            slot["gapBeforePt"] = None
+            slot["flexibleGapBefore"] = False
+            continue
+        previous_rect = slots[index - 1].get("rect") or {}
+        current_rect = slot.get("rect") or {}
+        measured_gap = max(
+            number(current_rect.get(main_origin))
+            - number(previous_rect.get(main_origin))
+            - number(previous_rect.get(main_extent)),
+            0,
+        )
+        child_style = (child or {}).get("style") or {}
+        auto_margin = str(authored_value(
+            child_style,
+            "marginLeft" if axis == "horizontal" else "marginTop",
+        ) or "").lower() == "auto"
+        flexible_gap = bool(distribution == "space-between" or auto_margin)
+        slot["gapBeforePt"] = default_gap if flexible_gap else measured_gap
+        slot["flexibleGapBefore"] = flexible_gap
     return slots
 
 
@@ -516,6 +674,11 @@ def build_screen(
         }
         node_plans.append({
             "nodeId": node_id,
+            "contentGeometry": content_geometry_contract(
+                node,
+                nodes.get(str(node.get("parentId") or "")),
+                has_children=bool(children.get(node_id)),
+            ),
             "boxModel": {
                 "boxSizing": box_sizing,
                 "constraintReferenceBox": "border-box",

@@ -38,6 +38,7 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 27. 系统控件内部视觉必须形成独立的 `native-control-configuration-plan.json`。浏览器实测的 `accent-color`、`appearance`、normal、highlighted/pressed、editing/focused、checked/selected、disabled/loading，以及 Switch 轨道/滑块、Slider/Progress 轨道与填充、Segmented 选中项、PageControl 当前页、content inset、item spacing、preferred style 和固有尺寸都要由 SwiftUI/UIKit 共同消费，并在生成后清单中证明；不得由两套生成器各自猜测。
 28. 版本与设备兼容性必须形成 `native-api-fallback-plan.json` 和 `compatibility-matrix.json`。计划同时绑定本机 SDK、target deployment、SwiftUI/UIKit、来源实测宽度、Size Class 与 iPad 待验证项；低于运行时基线、必需能力无降级实现或生成器不认识降级策略时必须在代码生成前停止。`source-analyzed`、`pending-runtime-validation` 和视觉验收通过不得混为同一状态。
 29. 多设备运行验收必须使用真实 Simulator App 窗口形成 `ios-runtime-compatibility-report.json`。手机 320/375/393/430pt、横屏、iPad Split View 和 regular width 分别作为 profile；截图像素尺寸、`XCUIApplication.frame`、方向、Size Class 推断和无主横向溢出共同作为证据。不得把一台设备截图缩放成其他尺寸，也不得把全屏 iPad 截图声明为 Split View 已通过。
+30. 叶子节点和复合控件必须由 `native-layout-plan.json` 中统一的内容几何契约驱动。图标、图片、紧凑标签、数量徽标和单行文字要保存来源宽高、fixed/intrinsic/flexible/parent-relative 模式、宽高比、单行、抗压缩、媒体适配和对齐；复合控件还必须保存每个槽位的实测间距与弹性间距。SwiftUI/UIKit 不得分别重新推断这些属性。
 
 ## 支持范围
 

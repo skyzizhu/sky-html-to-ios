@@ -79,6 +79,19 @@ Wrapping stack 在 SwiftUI 中使用原生 `Layout` 协议实现，在 UIKit 中
 
 原生运行时必须消费可确定的 min/max、padding、border、margin 和 compression 证据。transform 只改变视觉绘制时，不得反向污染正常流尺寸。
 
+## 叶子内容几何
+
+`native-layout-plan.json` 的每个节点必须包含 `contentGeometry`。它不替代盒模型，而是描述边框盒内部最终原生内容如何保持浏览器度量：
+
+- `sourceWidthPt`、`sourceHeightPt` 和槽位 `gapBeforePt` 使用 UI IR 已归一化的目标 pt，不得再次乘 `designScale`；CSS padding、margin、字号等来源样式 token 仍按既有规则只缩放一次；
+- `widthMode` / `heightMode` 区分 fixed、intrinsic、flexible 与 parent-relative；
+- 图标、图片和紧凑视觉包装保存来源宽高与宽高比，防止 Stack/Grid 拉伸成错误形状；
+- 单行文字、徽标和图标保存 compression resistance 与 intrinsic-width 所有权；
+- 媒体保存 object-fit/object-position 对应的 content mode 和位置；
+- 普通响应式大图不得仅因浏览器测得一个宽度就降级成固定宽度。
+
+复合控件的 `orderedSlots` 在视觉顺序之外还必须保存每个槽位的 `contentGeometry`、`gapBeforePt` 和 `flexibleGapBefore`。普通 gap 使用实测固定间距；`space-between` 或明确的 auto margin 使用弹性 Spacer。生成器消费槽位契约后，必须清除已经由父布局消费的对应 margin，避免重复占宽。
+
 每个节点的 `compositing` 契约保存 source order、paint group、stacking level、stacking context owner、创建原因、clip owner、clip-path、mask、blend mode 与 isolation。圆角绘制和子树裁剪必须分开消费：corner radius 可以只作用于背景/边框，只有 `clipsOwnContent` 或等价来源证据才裁剪后代。复杂 blend/filter/mask 没有原生等价实现时保留证据并显式降级，不能静默当成普通透明度。
 
 ## 定位与状态布局

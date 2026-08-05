@@ -90,6 +90,7 @@ CSS Grid 解析覆盖 `repeat()`、`minmax()`、`auto-fit`、`auto-fill`、`fr`�
 - 复合控件内部顺序必须依据浏览器最终几何位置，而不是“父节点直接文本优先”或 DOM 顺序硬编码。图标、徽标、计数、标签文字和尾部元信息应作为有序 `contentItems` 保留，横向布局按最终 x 坐标、纵向布局按最终 y 坐标校准，并保留 CSS `order`/reverse 的视觉结果。
 - 带图标、背景、padding、圆角、固定尺寸、大 margin 或显著空白分组的 Flex 行不是普通富文本。不得把它压成单个 Text/UILabel；应保留子 View 和实测间距，使前导图标、计数徽标以及 `margin-left:auto` 形成的尾部信息保持原位。
 - `contentItems` 还必须保留每个文字片段的实测宽高、是否单行以及与前项的几何间距。普通 gap 生成固定 spacing；`space-between`、自动外边距或占据容器大部分剩余宽度的空白生成弹性 Spacer。已由父布局消费的 margin 不得再次作为子 View 外层 padding 重复占宽。
+- 上述内容盒规则必须先写入共享 `contentGeometry` 和复合槽位契约，再由 SwiftUI/UIKit 消费。禁止在某一个生成器中根据控件名称临时补固定 frame，导致另一技术栈或后续页面行为不同。
 - 浏览器中已经保持单行的独立文字片段应在实测宽度内使用单行排版和有限字号适配，避免 iOS 字形度量差异额外制造换行。多行文字和富文本使用浏览器实测文字容器宽度作为可收缩的上限，不锁死为不可响应的整页 frame。
 - 对宽度不超过约 120pt、高度不超过约 56pt 的图标底座、计数徽标、标签 Chip 等紧凑视觉包装，应保留实测宽高；不能只让内部 Image/Text 的 intrinsic size 决定外层尺寸，否则背景、圆角、padding 和点击区域都会系统性缩小。
 - CSS border 属于 border box，会参与来源节点的总宽高；SwiftUI overlay stroke 和 CALayer border 默认不参与 intrinsic size。带可见边框的普通流式容器必须至少保留浏览器实测 border-box `minHeight`，避免每经过一个卡片、配置行或 footer 就丢失上下边框厚度并形成纵向累计误差。正文、动态内容和响应式大容器仍允许向下扩展，不得因此统一改成 fixed height。

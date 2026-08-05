@@ -207,6 +207,36 @@ class NativeStructureManifestTests(unittest.TestCase):
                 self.assertEqual(manifest["summary"]["missingNodeCount"], 0)
                 self.assertEqual(manifest["summary"]["unconsumedRelationCount"], 0)
 
+    def test_target_point_content_geometry_is_not_scaled_twice(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = make_ir("swiftui")
+            payload["target"]["scale"] = 1.25
+            outputs = self.build_chain(root, "swiftui", payload)
+            _, report = self.validate_chain(root, *outputs)
+            self.assertEqual(report["status"], "passed")
+            generated = json.loads((outputs[4] / "Resources/Payload/HTMLToIOSGeneratedPayload.json").read_text(encoding="utf-8"))
+
+            def find(value: object, node_id: str) -> dict | None:
+                if isinstance(value, dict):
+                    if value.get("id") == node_id and "style" in value:
+                        return value
+                    for child in value.values():
+                        match = find(child, node_id)
+                        if match:
+                            return match
+                elif isinstance(value, list):
+                    for child in value:
+                        match = find(child, node_id)
+                        if match:
+                            return match
+                return None
+
+            icon = find(generated, "home.icon")
+            self.assertIsNotNone(icon)
+            self.assertEqual(icon["style"]["fixedWidth"], 24)
+            self.assertEqual(icon["style"]["fixedHeight"], 24)
+
     def test_validator_rejects_consumer_changed_after_manifest_generation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -323,6 +353,18 @@ class NativeStructureManifestTests(unittest.TestCase):
                     [item["kind"] for item in compound["orderedSlots"]],
                     ["leadingIcon", "title", "badge"],
                 )
+                icon_slot, title_slot, badge_slot = compound["orderedSlots"]
+                self.assertEqual(icon_slot["contentGeometry"]["widthMode"], "fixed")
+                self.assertEqual(icon_slot["contentGeometry"]["heightMode"], "fixed")
+                self.assertEqual(icon_slot["contentGeometry"]["aspectRatio"], 1)
+                self.assertTrue(icon_slot["contentGeometry"]["resistsHorizontalCompression"])
+                self.assertEqual(title_slot["gapBeforePt"], 12)
+                self.assertEqual(title_slot["contentGeometry"]["sourceWidthPt"], 88)
+                self.assertEqual(badge_slot["gapBeforePt"], 74)
+                self.assertEqual(badge_slot["contentGeometry"]["widthMode"], "fixed")
+                layout_nodes = {item["nodeId"]: item for item in layout_plan["screens"][0]["nodes"]}
+                self.assertEqual(layout_nodes["home.icon"]["contentGeometry"]["aspectRatio"], 1)
+                self.assertEqual(layout_nodes["home.count"]["contentGeometry"]["role"], "compact-visual")
                 generated = json.loads((outputs[4] / "Resources/Payload/HTMLToIOSGeneratedPayload.json").read_text(encoding="utf-8"))
                 indexed: dict[str, dict] = {}
 
@@ -345,7 +387,14 @@ class NativeStructureManifestTests(unittest.TestCase):
                 self.assertEqual(native_toolbar["style"]["boxSizing"], "border-box")
                 self.assertEqual(native_toolbar["style"]["minWidth"], 280)
                 self.assertEqual(native_toolbar["style"]["maxWidth"], 361)
+                self.assertEqual(native_toolbar["contentItems"][1]["gapBefore"], 12)
+                self.assertEqual(native_toolbar["contentItems"][2]["gapBefore"], 74)
+                self.assertEqual(indexed["home.icon"]["style"]["fixedWidth"], 24)
+                self.assertEqual(indexed["home.icon"]["style"]["fixedHeight"], 24)
+                self.assertEqual(indexed["home.icon"]["style"]["aspectRatio"], 1)
                 self.assertEqual(indexed["home.count"]["style"]["minWidth"], 18)
+                self.assertEqual(indexed["home.count"]["style"]["fixedWidth"], 24)
+                self.assertEqual(indexed["home.count"]["style"]["fixedHeight"], 24)
 
     def test_constraint_solver_lowers_wrap_grid_positioning_and_state_layouts(self) -> None:
         for ui_stack in ("swiftui", "uikit"):
