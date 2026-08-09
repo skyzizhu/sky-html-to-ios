@@ -209,6 +209,58 @@ def edges(values: Any) -> list[float]:
     return [max(number(source[index]) if index < len(source) else 0, 0) for index in range(4)]
 
 
+def edge_strings(values: Any, default: str) -> list[str]:
+    source = values if isinstance(values, list) else []
+    return [str(source[index] or default) if index < len(source) else default for index in range(4)]
+
+
+def corner_radius_pair(value: Any, width: float, height: float) -> tuple[float, float]:
+    tokens = split_css_tokens(value)
+    if not tokens:
+        return 0.0, 0.0
+
+    def resolve(token: str, extent: float) -> float:
+        raw = token.strip().lower()
+        if raw.endswith("%"):
+            return max(extent * number(raw) / 100, 0)
+        return max(number(raw), 0)
+
+    horizontal = resolve(tokens[0], width)
+    vertical = resolve(tokens[1] if len(tokens) > 1 else tokens[0], height)
+    return horizontal, vertical
+
+
+def appearance_contract(style: dict[str, Any], measured: dict[str, float]) -> dict[str, Any]:
+    radii = list(style.get("cornerRadii") or [])
+    radii = (radii + ["0px"] * 4)[:4]
+    pairs = [
+        corner_radius_pair(value, measured["width"], measured["height"])
+        for value in radii
+    ]
+    return {
+        "cornerRadiiXPt": [pair[0] for pair in pairs],
+        "cornerRadiiYPt": [pair[1] for pair in pairs],
+        "borderWidthsPt": edges(style.get("borderWidths")),
+        "borderColors": edge_strings(style.get("borderColors"), "transparent"),
+        "borderStyles": edge_strings(style.get("borderStyles"), "none"),
+        "backgroundColor": str(style.get("backgroundColor") or "transparent"),
+        "backgroundImage": str(style.get("backgroundImage") or "none"),
+        "backgroundSize": str(style.get("backgroundSize") or "auto"),
+        "backgroundPosition": str(style.get("backgroundPosition") or "0% 0%"),
+        "backgroundRepeat": str(style.get("backgroundRepeat") or "repeat"),
+        "opacity": min(max(number(style.get("opacity"), 1), 0), 1),
+        "clipsDescendants": (
+            str(style.get("overflowX") or "visible") in {"hidden", "clip"}
+            or str(style.get("overflowY") or "visible") in {"hidden", "clip"}
+        ),
+        "clipPath": str(style.get("clipPath") or "none"),
+        "maskImage": str(style.get("maskImage") or "none"),
+        "boxShadow": str(style.get("boxShadow") or "none"),
+        "preservesPerCornerGeometry": True,
+        "preservesPerEdgeBorders": True,
+    }
+
+
 def authored_value(style: dict[str, Any], key: str) -> Any:
     evidence = (style.get("authoredLayout") or {}).get(key) or {}
     return evidence.get("value") if evidence.get("value") not in {None, ""} else style.get(key)
@@ -674,6 +726,7 @@ def build_screen(
         }
         node_plans.append({
             "nodeId": node_id,
+            "appearance": appearance_contract(style, measured),
             "contentGeometry": content_geometry_contract(
                 node,
                 nodes.get(str(node.get("parentId") or "")),

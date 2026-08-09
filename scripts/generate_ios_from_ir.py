@@ -1423,6 +1423,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     box_model = layout_node.get("boxModel") or {}
     positioning = layout_node.get("positioning") or {}
     compositing = layout_node.get("compositing") or {}
+    appearance = layout_node.get("appearance") or {}
     parent_paint_order = [
         str(item)
         for item in (context.layout_containers.get(parent_id) or {}).get("paintOrderNodeIds") or []
@@ -1440,7 +1441,9 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         grid_column_widths.append(number(fixed_value) * context.design_scale if fixed_value is not None else None)
     padding = [number(item) * context.design_scale for item in box_model.get("paddingPt") or []]
     margin = [number(item) * context.design_scale for item in box_model.get("marginPt") or []]
-    border_widths = [number(item) * context.design_scale for item in box_model.get("borderWidthsPt") or []]
+    border_widths = [number(item) * context.design_scale for item in appearance.get("borderWidthsPt") or []]
+    if len(border_widths) != 4:
+        border_widths = [number(item) * context.design_scale for item in box_model.get("borderWidthsPt") or []]
     if len(padding) != 4:
         padding = scaled_edges(style.get("padding"), context.design_scale)
     if len(margin) != 4:
@@ -1448,24 +1451,29 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     if len(border_widths) != 4:
         border_widths = scaled_edges(style.get("borderWidths"), context.design_scale)
     border_index = max(range(4), key=lambda index: border_widths[index])
-    border_colors = style.get("borderColors") or []
-    border_styles = style.get("borderStyles") or []
+    border_colors = appearance.get("borderColors") or style.get("borderColors") or []
+    border_styles = appearance.get("borderStyles") or style.get("borderStyles") or []
     border_color = color_string(border_colors[border_index]) if border_index < len(border_colors) else None
     border_style = str(border_styles[border_index] or "solid") if border_index < len(border_styles) else "solid"
-    gradient = gradient_spec(style.get("backgroundImage"))
-    shadow = shadow_spec(style.get("boxShadow"), context.design_scale)
+    gradient = gradient_spec(appearance.get("backgroundImage", style.get("backgroundImage")))
+    shadow = shadow_spec(appearance.get("boxShadow", style.get("boxShadow")), context.design_scale)
     font = font_contract(node, style)
     if context.bottom_bar_placement == "safe-area-inset" and semantic == "scroll":
         padding[2] = 0
-    radii = style.get("cornerRadii") or [0]
-    radius_values = []
-    for item in radii:
-        raw_radius = str(item or "").strip()
-        if raw_radius.endswith("%") and width > 0 and height > 0:
-            radius_values.append(min(width, height) * min(max(number(raw_radius), 0), 100) / 100)
-        else:
-            radius_values.append(number(item) * context.design_scale)
-    corner_radius = max(radius_values) if radius_values else 0.0
+    radius_values = [number(item) * context.design_scale for item in appearance.get("cornerRadiiXPt") or []]
+    radius_y_values = [number(item) * context.design_scale for item in appearance.get("cornerRadiiYPt") or []]
+    if len(radius_values) != 4 or len(radius_y_values) != 4:
+        radii = style.get("cornerRadii") or [0]
+        radius_values = []
+        for item in radii:
+            raw_radius = str(item or "").strip()
+            if raw_radius.endswith("%") and width > 0 and height > 0:
+                radius_values.append(min(width, height) * min(max(number(raw_radius), 0), 100) / 100)
+            else:
+                radius_values.append(number(item) * context.design_scale)
+        radius_values = (radius_values + [0.0] * 4)[:4]
+        radius_y_values = list(radius_values)
+    corner_radius = max(radius_values + radius_y_values) if radius_values or radius_y_values else 0.0
     measured_height = max(number(rect.get("height")), 0.0)
     control_min_height = min(measured_height, 160.0) if semantic in {
         "button", "input", "text-field", "secure-field", "toggle", "switch", "progress", "progress-view"
@@ -1482,7 +1490,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         min_height = max(min_height, number(box_model.get("minHeightPt")) * context.design_scale)
     decorative = bool(content.get("isDecorative"))
     has_visual_style = (
-        color_string(style.get("backgroundColor")) is not None
+        color_string(appearance.get("backgroundColor", style.get("backgroundColor"))) is not None
         or bool(gradient["colors"])
         or corner_radius > 0
         or max(border_widths) > 0
@@ -1910,21 +1918,26 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "lineHeight": scaled_css_value(style.get("lineHeight"), context.design_scale) or None,
             "letterSpacing": scaled_css_value(style.get("letterSpacing"), context.design_scale),
             "foreground": color_string(style.get("color")),
-            "background": color_string(style.get("backgroundColor")),
+            "background": color_string(appearance.get("backgroundColor", style.get("backgroundColor"))),
             "gradientColors": gradient["colors"],
             "gradientLocations": gradient["locations"],
             "gradientKind": gradient["kind"],
             "gradientAngle": gradient["angle"],
-            "cornerRadius": min(corner_radius, 120),
-            "borderWidth": min(max(border_widths), 20),
+            "cornerRadius": max(corner_radius, 0),
+            "cornerRadii": [max(value, 0) for value in radius_values],
+            "cornerRadiiY": [max(value, 0) for value in radius_y_values],
+            "borderWidth": max(max(border_widths), 0),
             "borderColor": border_color,
             "borderStyle": border_style,
-            "opacity": min(max(number(style.get("opacity"), 1), 0), 1),
+            "borderWidths": [max(value, 0) for value in border_widths],
+            "borderColors": [color_string(value) or "transparent" for value in border_colors[:4]],
+            "borderStyles": [str(value or "none") for value in border_styles[:4]],
+            "opacity": min(max(number(appearance.get("opacity", style.get("opacity")), 1), 0), 1),
             "shadowColor": shadow["color"],
             "shadowOffsetX": shadow["x"],
             "shadowOffsetY": shadow["y"],
-            "shadowRadius": min(shadow["radius"], 80),
-            "shadowSpread": min(max(shadow["spread"], -40), 40),
+            "shadowRadius": max(shadow["radius"], 0),
+            "shadowSpread": shadow["spread"],
             "offsetX": offset_x,
             "offsetY": offset_y,
             "zIndex": number(style.get("zIndex"), 0),
@@ -1932,11 +1945,13 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "paintGroup": int(number(compositing.get("paintGroup"), 2)),
             "createsStackingContext": bool(compositing.get("createsStackingContext")),
             "stackingContextOwnerNodeID": compositing.get("stackingContextOwnerNodeId"),
-            "clipPath": str(compositing.get("clipPath") or "none"),
-            "maskImage": str(compositing.get("maskImage") or "none"),
+            "clipPath": str(appearance.get("clipPath") or compositing.get("clipPath") or "none"),
+            "maskImage": str(appearance.get("maskImage") or compositing.get("maskImage") or "none"),
             "clipsOwnContent": bool(is_foreground_asset and corner_radius > 0),
-            "clipsContent": str(style.get("overflowX") or "visible") in {"hidden", "clip"}
-                or str(style.get("overflowY") or "visible") in {"hidden", "clip"},
+            "clipsContent": bool(appearance.get("clipsDescendants")) if appearance else (
+                str(style.get("overflowX") or "visible") in {"hidden", "clip"}
+                or str(style.get("overflowY") or "visible") in {"hidden", "clip"}
+            ),
             "padding": padding,
             "margin": margin,
             "spacing": (
@@ -1997,9 +2012,9 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "coordinateSpace": positioning.get("coordinateSpace"),
             "mediaContentMode": str(asset.get("renderMode") or content_geometry.get("mediaContentMode") or style.get("objectFit") or "contain"),
             "mediaPosition": str(asset.get("position") or content_geometry.get("mediaPosition") or style.get("objectPosition") or "50% 50%"),
-            "backgroundContentMode": str(asset.get("renderMode") or "cover") if asset_kind == "css-background" else None,
-            "backgroundPosition": str(asset.get("position") or "50% 50%") if asset_kind == "css-background" else None,
-            "backgroundRepeat": str(asset.get("repeat") or "no-repeat") if asset_kind == "css-background" else None,
+            "backgroundContentMode": str(asset.get("renderMode") or appearance.get("backgroundSize") or "cover") if asset_kind == "css-background" else None,
+            "backgroundPosition": str(appearance.get("backgroundPosition") or asset.get("position") or "50% 50%") if asset_kind == "css-background" else None,
+            "backgroundRepeat": str(appearance.get("backgroundRepeat") or asset.get("repeat") or "no-repeat") if asset_kind == "css-background" else None,
         },
         "systemImage": system_image_name(node, context.nodes.get(str(node.get("parentId") or ""))),
         "assetName": asset.get("iosName") if is_foreground_asset else None,
@@ -3292,9 +3307,14 @@ struct HTMLToIOSStyleSpec: Codable {{
     let gradientKind: String?
     let gradientAngle: Double?
     let cornerRadius: Double?
+    let cornerRadii: [Double]?
+    let cornerRadiiY: [Double]?
     let borderWidth: Double?
     let borderColor: String?
     let borderStyle: String?
+    let borderWidths: [Double]?
+    let borderColors: [String]?
+    let borderStyles: [String]?
     let opacity: Double?
     let shadowColor: String?
     let shadowOffsetX: Double?
@@ -3912,7 +3932,9 @@ private struct HTMLToIOSBackgroundModifier: ViewModifier {
             )
         }
         return content
-            .background(Color(htmlToIOS: backgroundOverride ?? style.background))
+            .background {
+                style.cssCornerShape.fill(Color(htmlToIOS: backgroundOverride ?? style.background))
+            }
             .background {
                 if colors.count >= 2 {
                     if style.gradientKind == "radial" {
@@ -3923,9 +3945,11 @@ private struct HTMLToIOSBackgroundModifier: ViewModifier {
                                 startRadius: 0,
                                 endRadius: radialEndRadius(proxy.size)
                             )
+                            .clipShape(style.cssCornerShape)
                         }
                     } else {
                         LinearGradient(gradient: Gradient(stops: stops), startPoint: gradientStart, endPoint: gradientEnd)
+                            .clipShape(style.cssCornerShape)
                     }
                 }
             }
@@ -3937,6 +3961,7 @@ private struct HTMLToIOSBackgroundModifier: ViewModifier {
                             .aspectRatio(contentMode: backgroundContentMode)
                             .frame(width: proxy.size.width, height: proxy.size.height, alignment: backgroundAlignment)
                             .clipped()
+                            .clipShape(style.cssCornerShape)
                     }
                 }
             }
@@ -3977,12 +4002,74 @@ private struct HTMLToIOSBackgroundModifier: ViewModifier {
     }
 }
 
+private struct HTMLToIOSCSSRoundedRect: Shape {
+    let radiiX: [Double]
+    let radiiY: [Double]
+
+    func path(in rect: CGRect) -> Path {
+        let x = normalized(radiiX, fallback: 0)
+        let y = normalized(radiiY, fallback: x.first ?? 0)
+        let scale = min(
+            1,
+            rect.width / max(CGFloat(x[0] + x[1]), 0.0001),
+            rect.width / max(CGFloat(x[3] + x[2]), 0.0001),
+            rect.height / max(CGFloat(y[0] + y[3]), 0.0001),
+            rect.height / max(CGFloat(y[1] + y[2]), 0.0001)
+        )
+        let rx = x.map { CGFloat($0) * scale }
+        let ry = y.map { CGFloat($0) * scale }
+        let k: CGFloat = 0.5522847498
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX + rx[0], y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX - rx[1], y: rect.minY))
+        path.addCurve(
+            to: CGPoint(x: rect.maxX, y: rect.minY + ry[1]),
+            control1: CGPoint(x: rect.maxX - rx[1] + k * rx[1], y: rect.minY),
+            control2: CGPoint(x: rect.maxX, y: rect.minY + ry[1] - k * ry[1])
+        )
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - ry[2]))
+        path.addCurve(
+            to: CGPoint(x: rect.maxX - rx[2], y: rect.maxY),
+            control1: CGPoint(x: rect.maxX, y: rect.maxY - ry[2] + k * ry[2]),
+            control2: CGPoint(x: rect.maxX - rx[2] + k * rx[2], y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX + rx[3], y: rect.maxY))
+        path.addCurve(
+            to: CGPoint(x: rect.minX, y: rect.maxY - ry[3]),
+            control1: CGPoint(x: rect.minX + rx[3] - k * rx[3], y: rect.maxY),
+            control2: CGPoint(x: rect.minX, y: rect.maxY - ry[3] + k * ry[3])
+        )
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + ry[0]))
+        path.addCurve(
+            to: CGPoint(x: rect.minX + rx[0], y: rect.minY),
+            control1: CGPoint(x: rect.minX, y: rect.minY + ry[0] - k * ry[0]),
+            control2: CGPoint(x: rect.minX + rx[0] - k * rx[0], y: rect.minY)
+        )
+        path.closeSubpath()
+        return path
+    }
+
+    private func normalized(_ values: [Double], fallback: Double) -> [Double] {
+        Array((values + Array(repeating: fallback, count: 4)).prefix(4)).map { max($0, 0) }
+    }
+}
+
+private extension HTMLToIOSStyleSpec {
+    var cssCornerShape: HTMLToIOSCSSRoundedRect {
+        let fallback = cornerRadius ?? 0
+        return HTMLToIOSCSSRoundedRect(
+            radiiX: cornerRadii ?? Array(repeating: fallback, count: 4),
+            radiiY: cornerRadiiY ?? cornerRadii ?? Array(repeating: fallback, count: 4)
+        )
+    }
+}
+
 private struct HTMLToIOSClipModifier: ViewModifier {
     let style: HTMLToIOSStyleSpec
 
     @ViewBuilder func body(content: Content) -> some View {
         if style.clipsContent == true || style.clipsOwnContent == true {
-            content.clipShape(RoundedRectangle(cornerRadius: style.cornerRadius ?? 0, style: .continuous))
+            content.clipShape(style.cssCornerShape)
         } else {
             content
         }
@@ -3994,7 +4081,7 @@ private struct HTMLToIOSOverlayClipModifier: ViewModifier {
 
     @ViewBuilder func body(content: Content) -> some View {
         if style.clipsContent == true {
-            content.clipShape(RoundedRectangle(cornerRadius: style.cornerRadius ?? 0, style: .continuous))
+            content.clipShape(style.cssCornerShape)
         } else {
             content
         }
@@ -4018,19 +4105,66 @@ private struct HTMLToIOSBorderModifier: ViewModifier {
     let style: HTMLToIOSStyleSpec
 
     @ViewBuilder func body(content: Content) -> some View {
-        if let width = style.borderWidth, width > 0, let color = style.borderColor {
+        if isUniform, widths[0] > 0 {
             content.overlay {
-                RoundedRectangle(cornerRadius: style.cornerRadius ?? 0, style: .continuous)
+                style.cssCornerShape
                     .stroke(
-                        Color(htmlToIOS: color),
+                        Color(htmlToIOS: colors[0]),
                         style: StrokeStyle(
-                            lineWidth: width,
-                            dash: style.borderStyle == "dashed" ? [6, 4] : (style.borderStyle == "dotted" ? [1, 3] : [])
+                            lineWidth: widths[0],
+                            dash: dash(for: styles[0])
                         )
                     )
             }
+        } else if widths.contains(where: { $0 > 0 }) {
+            content.overlay {
+                GeometryReader { proxy in
+                    ZStack {
+                        edge(.top, size: proxy.size)
+                        edge(.trailing, size: proxy.size)
+                        edge(.bottom, size: proxy.size)
+                        edge(.leading, size: proxy.size)
+                    }
+                }
+            }
         } else {
             content
+        }
+    }
+
+    private var widths: [Double] {
+        Array(((style.borderWidths ?? Array(repeating: style.borderWidth ?? 0, count: 4)) + [0, 0, 0, 0]).prefix(4))
+    }
+
+    private var colors: [String] {
+        Array(((style.borderColors ?? Array(repeating: style.borderColor ?? "transparent", count: 4)) + Array(repeating: "transparent", count: 4)).prefix(4))
+    }
+
+    private var styles: [String] {
+        Array(((style.borderStyles ?? Array(repeating: style.borderStyle ?? "none", count: 4)) + Array(repeating: "none", count: 4)).prefix(4))
+    }
+
+    private var isUniform: Bool {
+        Set(widths).count == 1 && Set(colors).count == 1 && Set(styles).count == 1
+    }
+
+    private func dash(for borderStyle: String) -> [CGFloat] {
+        borderStyle == "dashed" ? [6, 4] : (borderStyle == "dotted" ? [1, 3] : [])
+    }
+
+    @ViewBuilder private func edge(_ edge: Edge, size: CGSize) -> some View {
+        let index = edge == .top ? 0 : edge == .trailing ? 1 : edge == .bottom ? 2 : 3
+        let width = widths[index]
+        if width > 0 && styles[index] != "none" {
+            Path { path in
+                switch edge {
+                case .top: path.move(to: .zero); path.addLine(to: CGPoint(x: size.width, y: 0))
+                case .trailing: path.move(to: CGPoint(x: size.width, y: 0)); path.addLine(to: CGPoint(x: size.width, y: size.height))
+                case .bottom: path.move(to: CGPoint(x: 0, y: size.height)); path.addLine(to: CGPoint(x: size.width, y: size.height))
+                case .leading: path.move(to: .zero); path.addLine(to: CGPoint(x: 0, y: size.height))
+                }
+            }
+            .stroke(Color(htmlToIOS: colors[index]), style: StrokeStyle(lineWidth: width, dash: dash(for: styles[index])))
         }
     }
 }
@@ -6152,6 +6286,43 @@ struct HTMLToIOSGeneratedRootView: View {
 
 UIKIT_RUNTIME = r'''// Generated by sky-html-to-ios. Native UIKit rendering runtime.
 import UIKit
+
+private final class HTMLToIOSCSSShapeLayer: CAShapeLayer {
+    var radiiX: [CGFloat] = [0, 0, 0, 0]
+    var radiiY: [CGFloat] = [0, 0, 0, 0]
+    var edgeIndex: Int?
+}
+
+private func htmlToIOSCSSRoundedPath(
+    in rect: CGRect,
+    radiiX sourceX: [CGFloat],
+    radiiY sourceY: [CGFloat]
+) -> CGPath {
+    let x = Array((sourceX + [0, 0, 0, 0]).prefix(4)).map { max($0, 0) }
+    let y = Array((sourceY + x).prefix(4)).map { max($0, 0) }
+    let scale = min(
+        1,
+        rect.width / max(x[0] + x[1], 0.0001),
+        rect.width / max(x[3] + x[2], 0.0001),
+        rect.height / max(y[0] + y[3], 0.0001),
+        rect.height / max(y[1] + y[2], 0.0001)
+    )
+    let rx = x.map { $0 * scale }
+    let ry = y.map { $0 * scale }
+    let k: CGFloat = 0.5522847498
+    let path = UIBezierPath()
+    path.move(to: CGPoint(x: rect.minX + rx[0], y: rect.minY))
+    path.addLine(to: CGPoint(x: rect.maxX - rx[1], y: rect.minY))
+    path.addCurve(to: CGPoint(x: rect.maxX, y: rect.minY + ry[1]), controlPoint1: CGPoint(x: rect.maxX - rx[1] + k * rx[1], y: rect.minY), controlPoint2: CGPoint(x: rect.maxX, y: rect.minY + ry[1] - k * ry[1]))
+    path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - ry[2]))
+    path.addCurve(to: CGPoint(x: rect.maxX - rx[2], y: rect.maxY), controlPoint1: CGPoint(x: rect.maxX, y: rect.maxY - ry[2] + k * ry[2]), controlPoint2: CGPoint(x: rect.maxX - rx[2] + k * rx[2], y: rect.maxY))
+    path.addLine(to: CGPoint(x: rect.minX + rx[3], y: rect.maxY))
+    path.addCurve(to: CGPoint(x: rect.minX, y: rect.maxY - ry[3]), controlPoint1: CGPoint(x: rect.minX + rx[3] - k * rx[3], y: rect.maxY), controlPoint2: CGPoint(x: rect.minX, y: rect.maxY - ry[3] + k * ry[3]))
+    path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + ry[0]))
+    path.addCurve(to: CGPoint(x: rect.minX + rx[0], y: rect.minY), controlPoint1: CGPoint(x: rect.minX, y: rect.minY + ry[0] - k * ry[0]), controlPoint2: CGPoint(x: rect.minX + rx[0] - k * rx[0], y: rect.minY))
+    path.close()
+    return path.cgPath
+}
 
 private final class HTMLToIOSWrappingView: UIView {
     let horizontalSpacing: CGFloat
@@ -8475,6 +8646,23 @@ final class HTMLToIOSNodeRenderer {
             let mode = (spec.style.backgroundContentMode ?? "cover").lowercased()
             imageView.contentMode = mode.contains("contain") ? .scaleAspectFit : .scaleAspectFill
             imageView.clipsToBounds = true
+            let fallback = spec.style.cornerRadius ?? 0
+            var imageRadiiX = spec.style.cornerRadii ?? Array(repeating: fallback, count: 4)
+            var imageRadiiY = spec.style.cornerRadiiY ?? imageRadiiX
+            while imageRadiiX.count < 4 { imageRadiiX.append(0) }
+            while imageRadiiY.count < 4 { imageRadiiY.append(0) }
+            let x = imageRadiiX[0..<4].map { CGFloat($0) }
+            let y = imageRadiiY[0..<4].map { CGFloat($0) }
+            if Set(x).count == 1 && Set(y).count == 1 && x[0] == y[0] {
+                imageView.layer.cornerCurve = .circular
+                imageView.layer.cornerRadius = x[0]
+            } else {
+                let mask = HTMLToIOSCSSShapeLayer()
+                mask.name = "html-to-ios-corner-mask"
+                mask.radiiX = x
+                mask.radiiY = y
+                imageView.layer.mask = mask
+            }
             imageView.translatesAutoresizingMaskIntoConstraints = false
             view.insertSubview(imageView, at: 0)
             NSLayoutConstraint.activate([
@@ -8490,19 +8678,56 @@ final class HTMLToIOSNodeRenderer {
             (view as? UITextField)?.textColor = color
             (view as? UITextView)?.textColor = color
         }
-        view.layer.cornerRadius = spec.style.cornerRadius ?? 0
+        let fallbackRadius = CGFloat(spec.style.cornerRadius ?? 0)
+        var sourceRadiiX: [Double] = spec.style.cornerRadii ?? Array(repeating: Double(fallbackRadius), count: 4)
+        var sourceRadiiY: [Double] = spec.style.cornerRadiiY ?? sourceRadiiX
+        while sourceRadiiX.count < 4 { sourceRadiiX.append(0) }
+        while sourceRadiiY.count < 4 { sourceRadiiY.append(0) }
+        let radiiX: [CGFloat] = sourceRadiiX[0..<4].map { CGFloat($0) }
+        let radiiY: [CGFloat] = sourceRadiiY[0..<4].map { CGFloat($0) }
+        let hasUniformCircularCorners = Set(radiiX).count == 1 && Set(radiiY).count == 1 && radiiX[0] == radiiY[0]
+        view.layer.cornerCurve = .circular
+        view.layer.cornerRadius = hasUniformCircularCorners ? radiiX[0] : 0
+        if !hasUniformCircularCorners && (radiiX.contains(where: { $0 > 0 }) || radiiY.contains(where: { $0 > 0 })) {
+            let backgroundShape = HTMLToIOSCSSShapeLayer()
+            backgroundShape.name = "html-to-ios-background-shape"
+            backgroundShape.radiiX = radiiX
+            backgroundShape.radiiY = radiiY
+            backgroundShape.fillColor = view.backgroundColor?.cgColor ?? UIColor.clear.cgColor
+            view.backgroundColor = .clear
+            view.layer.insertSublayer(backgroundShape, at: 0)
+        }
         view.alpha = spec.style.opacity ?? 1
-        if let width = spec.style.borderWidth, width > 0, spec.style.borderStyle != "dashed", spec.style.borderStyle != "dotted" {
-            view.layer.borderWidth = width
-            view.layer.borderColor = UIColor(htmlToIOS: spec.style.borderColor)?.cgColor
-        } else if let width = spec.style.borderWidth, width > 0, let color = UIColor(htmlToIOS: spec.style.borderColor) {
-            let border = CAShapeLayer()
+        let borderWidths = Array(((spec.style.borderWidths ?? Array(repeating: spec.style.borderWidth ?? 0, count: 4)) + [0, 0, 0, 0]).prefix(4))
+        let borderColors = Array(((spec.style.borderColors ?? Array(repeating: spec.style.borderColor ?? "transparent", count: 4)) + Array(repeating: "transparent", count: 4)).prefix(4))
+        let borderStyles = Array(((spec.style.borderStyles ?? Array(repeating: spec.style.borderStyle ?? "none", count: 4)) + Array(repeating: "none", count: 4)).prefix(4))
+        let uniformBorder = Set(borderWidths).count == 1 && Set(borderColors).count == 1 && Set(borderStyles).count == 1
+        if uniformBorder, borderWidths[0] > 0, borderStyles[0] == "solid", hasUniformCircularCorners {
+            view.layer.borderWidth = borderWidths[0]
+            view.layer.borderColor = UIColor(htmlToIOS: borderColors[0])?.cgColor
+        } else if uniformBorder, borderWidths[0] > 0, let color = UIColor(htmlToIOS: borderColors[0]) {
+            let border = HTMLToIOSCSSShapeLayer()
             border.name = "html-to-ios-border"
             border.fillColor = UIColor.clear.cgColor
             border.strokeColor = color.cgColor
-            border.lineWidth = width
-            border.lineDashPattern = spec.style.borderStyle == "dotted" ? [1, 3] : [6, 4]
+            border.lineWidth = borderWidths[0]
+            border.lineDashPattern = borderStyles[0] == "dotted" ? [1, 3] : (borderStyles[0] == "dashed" ? [6, 4] : nil)
+            border.radiiX = radiiX
+            border.radiiY = radiiY
             view.layer.addSublayer(border)
+        } else {
+            for index in 0..<4 where borderWidths[index] > 0 && borderStyles[index] != "none" {
+                let border = HTMLToIOSCSSShapeLayer()
+                border.name = "html-to-ios-border-edge-\(index)"
+                border.edgeIndex = index
+                border.fillColor = UIColor.clear.cgColor
+                border.strokeColor = UIColor(htmlToIOS: borderColors[index])?.cgColor
+                border.lineWidth = borderWidths[index]
+                border.lineDashPattern = borderStyles[index] == "dotted" ? [1, 3] : (borderStyles[index] == "dashed" ? [6, 4] : nil)
+                border.radiiX = radiiX
+                border.radiiY = radiiY
+                view.layer.addSublayer(border)
+            }
         }
         if let color = UIColor(htmlToIOS: spec.style.shadowColor) {
             view.layer.shadowColor = color.cgColor
@@ -8511,7 +8736,15 @@ final class HTMLToIOSNodeRenderer {
             view.layer.shadowOffset = CGSize(width: spec.style.shadowOffsetX ?? 0, height: spec.style.shadowOffsetY ?? 0)
         }
         let needsClipping = spec.style.clipsContent == true || spec.style.clipsOwnContent == true
-        view.clipsToBounds = needsClipping && spec.style.shadowColor == nil
+        if needsClipping && !hasUniformCircularCorners {
+            let mask = HTMLToIOSCSSShapeLayer()
+            mask.name = "html-to-ios-corner-mask"
+            mask.radiiX = radiiX
+            mask.radiiY = radiiY
+            view.layer.mask = mask
+        } else {
+            view.clipsToBounds = needsClipping && spec.style.shadowColor == nil
+        }
         let sizeOverride = state.sizeOverrides[spec.id]
         if let width = sizeOverride?.width ?? spec.style.fixedWidth, width > 0 {
             view.widthAnchor.constraint(equalToConstant: width).isActive = true
@@ -8605,16 +8838,44 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController, UIScrollViewDele
     }
 
     private func updateGeneratedLayers(in current: UIView) {
+        let appearanceShape = (current.layer.sublayers ?? [])
+            .compactMap { $0 as? HTMLToIOSCSSShapeLayer }
+            .first { $0.name == "html-to-ios-background-shape" || $0.name == "html-to-ios-border" }
+        if let mask = current.layer.mask as? HTMLToIOSCSSShapeLayer {
+            mask.frame = current.bounds
+            mask.path = htmlToIOSCSSRoundedPath(in: current.bounds, radiiX: mask.radiiX, radiiY: mask.radiiY)
+        }
         for layer in current.layer.sublayers ?? [] {
             if layer.name == "html-to-ios-gradient" || layer.name == "html-to-ios-control-state-gradient" {
                 layer.frame = current.bounds
+                if let appearanceShape {
+                    let mask = CAShapeLayer()
+                    mask.path = htmlToIOSCSSRoundedPath(in: current.bounds, radiiX: appearanceShape.radiiX, radiiY: appearanceShape.radiiY)
+                    layer.mask = mask
+                }
             }
-            if let border = layer as? CAShapeLayer, layer.name == "html-to-ios-border" {
+            if let shape = layer as? HTMLToIOSCSSShapeLayer, layer.name == "html-to-ios-background-shape" {
+                shape.frame = current.bounds
+                shape.path = htmlToIOSCSSRoundedPath(in: current.bounds, radiiX: shape.radiiX, radiiY: shape.radiiY)
+            }
+            if let border = layer as? HTMLToIOSCSSShapeLayer, layer.name == "html-to-ios-border" {
                 border.frame = current.bounds
-                border.path = UIBezierPath(
-                    roundedRect: current.bounds.insetBy(dx: border.lineWidth / 2, dy: border.lineWidth / 2),
-                    cornerRadius: max(current.layer.cornerRadius - border.lineWidth / 2, 0)
-                ).cgPath
+                border.path = htmlToIOSCSSRoundedPath(
+                    in: current.bounds.insetBy(dx: border.lineWidth / 2, dy: border.lineWidth / 2),
+                    radiiX: border.radiiX.map { max($0 - border.lineWidth / 2, 0) },
+                    radiiY: border.radiiY.map { max($0 - border.lineWidth / 2, 0) }
+                )
+            }
+            if let border = layer as? HTMLToIOSCSSShapeLayer, let edge = border.edgeIndex {
+                border.frame = current.bounds
+                let path = UIBezierPath()
+                switch edge {
+                case 0: path.move(to: .zero); path.addLine(to: CGPoint(x: current.bounds.width, y: 0))
+                case 1: path.move(to: CGPoint(x: current.bounds.width, y: 0)); path.addLine(to: CGPoint(x: current.bounds.width, y: current.bounds.height))
+                case 2: path.move(to: CGPoint(x: 0, y: current.bounds.height)); path.addLine(to: CGPoint(x: current.bounds.width, y: current.bounds.height))
+                default: path.move(to: .zero); path.addLine(to: CGPoint(x: 0, y: current.bounds.height))
+                }
+                border.path = path.cgPath
             }
         }
         current.subviews.forEach { updateGeneratedLayers(in: $0) }
@@ -10498,6 +10759,18 @@ def build_native_structure_manifest(
         for screen in all_layout_screens
         for item in screen.get("collectionLayouts") or []
     )
+    requires_per_corner_appearance = any(
+        len(set(round(number(value), 4) for value in (node.get("appearance") or {}).get("cornerRadiiXPt") or [])) > 1
+        or len(set(round(number(value), 4) for value in (node.get("appearance") or {}).get("cornerRadiiYPt") or [])) > 1
+        for screen in all_layout_screens
+        for node in screen.get("nodes") or []
+    )
+    requires_per_edge_borders = any(
+        len(set(str(value) for value in (node.get("appearance") or {}).get(key) or [])) > 1
+        for screen in all_layout_screens
+        for node in screen.get("nodes") or []
+        for key in ("borderWidthsPt", "borderColors", "borderStyles")
+    )
     runtime_capabilities = {
         "relativeConstraints": {
             "required": requires_relative_constraints,
@@ -10539,6 +10812,20 @@ def build_native_structure_manifest(
             "consumed": not requires_pinned_supplementary or (
                 "pinnedSectionViews" in runtime_text
                 if ui_stack == "swiftui" else "sectionHeadersPinToVisibleBounds" in runtime_text
+            ),
+        },
+        "perCornerAppearance": {
+            "required": requires_per_corner_appearance,
+            "consumed": not requires_per_corner_appearance or (
+                "HTMLToIOSCSSRoundedRect" in runtime_text
+                if ui_stack == "swiftui" else "HTMLToIOSCSSShapeLayer" in runtime_text
+            ),
+        },
+        "perEdgeBorders": {
+            "required": requires_per_edge_borders,
+            "consumed": not requires_per_edge_borders or (
+                "private func edge(_ edge: Edge" in runtime_text
+                if ui_stack == "swiftui" else "html-to-ios-border-edge" in runtime_text
             ),
         },
     }
@@ -10795,6 +11082,7 @@ def build_native_structure_manifest(
             positioning = node_plan.get("positioning") or {}
             box = node_plan.get("boxModel") or {}
             content_geometry = node_plan.get("contentGeometry") or {}
+            appearance = node_plan.get("appearance") or {}
             generated_style = payload_node.get("style") or {}
             native_owner_id = str(positioning.get("nativeOwnerNodeId") or "")
             native_owner = payload_nodes.get(native_owner_id) or {}
@@ -10829,6 +11117,31 @@ def build_native_structure_manifest(
                 "compression": (
                     content_geometry.get("resistsHorizontalCompression") is not True
                     or generated_style.get("resistsCompression") is True
+                ),
+                "cornerRadii": all(
+                    abs(number(actual) - number(expected) * design_scale) <= 0.01
+                    for actual, expected in zip(
+                        generated_style.get("cornerRadii") or [],
+                        appearance.get("cornerRadiiXPt") or [],
+                    )
+                ) and len(generated_style.get("cornerRadii") or []) == 4,
+                "cornerRadiiY": all(
+                    abs(number(actual) - number(expected) * design_scale) <= 0.01
+                    for actual, expected in zip(
+                        generated_style.get("cornerRadiiY") or [],
+                        appearance.get("cornerRadiiYPt") or [],
+                    )
+                ) and len(generated_style.get("cornerRadiiY") or []) == 4,
+                "borderEdges": (
+                    all(
+                        abs(number(actual) - number(expected) * design_scale) <= 0.01
+                        for actual, expected in zip(
+                            generated_style.get("borderWidths") or [],
+                            appearance.get("borderWidthsPt") or [],
+                        )
+                    )
+                    and len(generated_style.get("borderWidths") or []) == 4
+                    and generated_style.get("borderStyles") == appearance.get("borderStyles")
                 ),
             }
             optimized_reason = (

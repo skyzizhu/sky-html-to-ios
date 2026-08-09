@@ -39,6 +39,7 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 28. 版本与设备兼容性必须形成 `native-api-fallback-plan.json` 和 `compatibility-matrix.json`。计划同时绑定本机 SDK、target deployment、SwiftUI/UIKit、来源实测宽度、Size Class 与 iPad 待验证项；低于运行时基线、必需能力无降级实现或生成器不认识降级策略时必须在代码生成前停止。`source-analyzed`、`pending-runtime-validation` 和视觉验收通过不得混为同一状态。
 29. 多设备运行验收必须使用真实 Simulator App 窗口形成 `ios-runtime-compatibility-report.json`。手机 320/375/393/430pt、横屏、iPad Split View 和 regular width 分别作为 profile；截图像素尺寸、`XCUIApplication.frame`、方向、Size Class 推断和无主横向溢出共同作为证据。不得把一台设备截图缩放成其他尺寸，也不得把全屏 iPad 截图声明为 Split View 已通过。
 30. 叶子节点和复合控件必须由 `native-layout-plan.json` 中统一的内容几何契约驱动。图标、图片、紧凑标签、数量徽标和单行文字要保存来源宽高、fixed/intrinsic/flexible/parent-relative 模式、宽高比、单行、抗压缩、媒体适配和对齐；复合控件还必须保存每个槽位的实测间距与弹性间距。SwiftUI/UIKit 不得分别重新推断这些属性。
+31. 首次生成的视觉外观必须由计算样式直接形成可执行契约，不能等待截图纠偏。四角圆角必须分别保存水平/垂直半径，四边边框必须分别保存宽度、颜色和线型；禁止用最大值或单一代表值统一化。CSS 圆角使用圆弧/椭圆几何，不得默认替换为 Apple continuous corner；背景、透明度与后代裁剪也必须由同一节点契约驱动。截图和多模态只用于生成后的可选验收。
 
 ## 支持范围
 

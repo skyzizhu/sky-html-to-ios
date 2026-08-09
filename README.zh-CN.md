@@ -190,7 +190,7 @@ UI IR 保存：
 
 每个 screen 还会生成强类型布局契约，保存子节点视觉顺序、轴向、对齐、分布、换行、间距、尺寸策略、宽高比和抗压缩证据。输入控件、显式/项目组件、特殊媒体和稳定业务控件会生成强类型叶子 View；普通文本、SVG 内部路径、装饰节点和自动编号 DOM 叶子继续由公共运行时处理，不会形成一节点一 Swift 文件。
 
-生成 Swift 之前，`layout-relation-graph-1.0` 会把单节点测量提升为跨节点约束，`structural-fidelity-report-1.0` 检查六层架构能否表达这些关系；随后 `native-layout-plan-1.1` 把结果降级为 SwiftUI/UIKit 共用的唯一可执行契约，包括 Stack/Wrapping/Grid/Overlay 算法、子节点视觉顺序、原始 CSS 长度表达式、computed 几何、盒模型、Grid 轨道与 item placement、定位所有权、状态布局增量和复合控件槽位。可求解的 `%` 与 `calc()` 会作为父容器仿射约束执行。代码生成后，`native-structure-manifest-1.0` 再证明 Swift/Payload 和原生运行时已实际消费所需能力。整套核心门禁不需要截图、Simulator 或多模态模型。
+生成 Swift 之前，`layout-relation-graph-1.0` 会把单节点测量提升为跨节点约束，`structural-fidelity-report-1.0` 检查六层架构能否表达这些关系；随后 `native-layout-plan-1.1` 把结果降级为 SwiftUI/UIKit 共用的唯一可执行契约，包括 Stack/Wrapping/Grid/Overlay 算法、子节点视觉顺序、原始 CSS 长度表达式、computed 几何、盒模型、Grid 轨道与 item placement、定位所有权、状态布局增量、复合控件槽位和节点外观。节点外观保留四角独立的水平/垂直半径、四边独立的宽度/颜色/线型、背景、透明度和裁剪证据，不会把它们压缩为最大圆角或单一边框。可求解的 `%` 与 `calc()` 会作为父容器仿射约束执行。代码生成后，`native-structure-manifest-1.0` 再证明 Swift/Payload 和原生运行时已实际消费所需能力。整套核心门禁不需要截图、Simulator 或多模态模型。
 
 ## 控件与视图支持
 

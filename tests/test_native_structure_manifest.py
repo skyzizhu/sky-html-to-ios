@@ -237,6 +237,54 @@ class NativeStructureManifestTests(unittest.TestCase):
             self.assertEqual(icon["style"]["fixedWidth"], 24)
             self.assertEqual(icon["style"]["fixedHeight"], 24)
 
+    def test_per_corner_and_per_edge_appearance_survives_native_lowering(self) -> None:
+        for ui_stack in ("swiftui", "uikit"):
+            with self.subTest(ui_stack=ui_stack), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                payload = make_ir(ui_stack)
+                toolbar = next(item for item in payload["screens"][0]["nodes"] if item["id"] == "home.toolbar")
+                toolbar["style"].update({
+                    "cornerRadii": ["4px 8px", "12px 16px", "20px 24px", "28px 32px"],
+                    "borderWidths": ["1px", "2px", "3px", "4px"],
+                    "borderColors": ["red", "green", "blue", "black"],
+                    "borderStyles": ["solid", "dashed", "dotted", "none"],
+                    "overflowX": "hidden",
+                })
+                outputs = self.build_chain(root, ui_stack, payload)
+                _, report = self.validate_chain(root, *outputs)
+                self.assertEqual(report["status"], "passed")
+
+                layout = json.loads(outputs[2].read_text(encoding="utf-8"))
+                planned = next(item for item in layout["screens"][0]["nodes"] if item["nodeId"] == "home.toolbar")
+                self.assertEqual(planned["appearance"]["cornerRadiiXPt"], [4, 12, 20, 28])
+                self.assertEqual(planned["appearance"]["cornerRadiiYPt"], [8, 16, 24, 32])
+                self.assertEqual(planned["appearance"]["borderWidthsPt"], [1, 2, 3, 4])
+
+                generated = json.loads((outputs[4] / "Resources/Payload/HTMLToIOSGeneratedPayload.json").read_text(encoding="utf-8"))
+
+                def find(value: object, node_id: str) -> dict | None:
+                    if isinstance(value, dict):
+                        if value.get("id") == node_id:
+                            return value
+                        for child in value.values():
+                            result = find(child, node_id)
+                            if result:
+                                return result
+                    elif isinstance(value, list):
+                        for child in value:
+                            result = find(child, node_id)
+                            if result:
+                                return result
+                    return None
+
+                generated_toolbar = find(generated, "home.toolbar")
+                self.assertIsNotNone(generated_toolbar)
+                self.assertEqual(generated_toolbar["style"]["cornerRadii"], [4, 12, 20, 28])
+                self.assertEqual(generated_toolbar["style"]["cornerRadiiY"], [8, 16, 24, 32])
+                self.assertEqual(generated_toolbar["style"]["borderWidths"], [1, 2, 3, 4])
+                runtime = (outputs[4] / "Core/Runtime/HTMLToIOSGeneratedRuntime.swift").read_text(encoding="utf-8")
+                self.assertIn("HTMLToIOSCSSRoundedRect" if ui_stack == "swiftui" else "HTMLToIOSCSSShapeLayer", runtime)
+
     def test_validator_rejects_consumer_changed_after_manifest_generation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

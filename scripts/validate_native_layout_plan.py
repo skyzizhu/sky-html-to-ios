@@ -130,6 +130,20 @@ def main() -> int:
         for node_id, node_plan in plan_nodes.items():
             box = node_plan.get("boxModel") or {}
             content_geometry = node_plan.get("contentGeometry") or {}
+            appearance = node_plan.get("appearance") or {}
+            for key in ("cornerRadiiXPt", "cornerRadiiYPt", "borderWidthsPt", "borderColors", "borderStyles"):
+                values = appearance.get(key)
+                if not isinstance(values, list) or len(values) != 4:
+                    add("INVALID_APPEARANCE_EDGE_CONTRACT", screen_id, f"{key} must preserve four CSS corners or edges.", node_id)
+            for key in ("cornerRadiiXPt", "cornerRadiiYPt", "borderWidthsPt"):
+                if any(float(value or 0) < 0 for value in appearance.get(key) or []):
+                    add("NEGATIVE_APPEARANCE_GEOMETRY", screen_id, f"{key} cannot contain negative geometry.", node_id)
+            if appearance.get("preservesPerCornerGeometry") is not True:
+                add("CORNER_GEOMETRY_WAS_FLATTENED", screen_id, "Per-corner CSS geometry must remain executable.", node_id)
+            if appearance.get("preservesPerEdgeBorders") is not True:
+                add("BORDER_GEOMETRY_WAS_FLATTENED", screen_id, "Per-edge CSS borders must remain executable.", node_id)
+            if not 0 <= float(appearance.get("opacity", 1)) <= 1:
+                add("INVALID_APPEARANCE_OPACITY", screen_id, "Appearance opacity must be in the closed 0...1 interval.", node_id)
             if content_geometry.get("widthMode") not in {"fixed", "intrinsic", "flexible", "parent-relative"}:
                 add("INVALID_CONTENT_WIDTH_MODE", screen_id, "Node content width mode is not executable.", node_id)
             if content_geometry.get("heightMode") not in {"fixed", "intrinsic", "flexible", "parent-relative"}:
