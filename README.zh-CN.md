@@ -184,13 +184,15 @@ UI IR 保存：
 5. **Reusable Section and Item**：Section、Header、Footer、Item Template、Cell 策略、顺序和滚动轴所有权。
 6. **Leaf Component**：最终的 `UIView`、`UIImageView`、`UILabel`、`UIButton`、输入控件、状态控件、Shape、Layer 或项目组件，并保留映射证据。
 
+六层描述的是所有权和包含关系，不是把每一种视觉属性都变成结构层。全局 `native-application-plan-1.0` 唯一负责 App 壳、首屏、Tab、每个 Tab 的导航栈、页面 membership 与 route；布局、外观、控件配置、Presentation、交互和动画以横向契约附着到六层节点。这样既能精确保存非对称圆角、边框、文字、图标、控件状态和动画，也不会为了细节虚构第七层 UI 架构。
+
 少量固定内容使用静态布局；长单列同构内容使用 Table/Lazy 容器；网格、轮播、数据表和异构 Section 使用 Collection。集合容器只有在主 Scroll 的直接内容层中占主导且轴向一致时，才能替换页面根 Scroll；嵌套横向 Collection 只拥有横轴，不能关闭页面纵向滚动。Table/Collection 不再套同轴页面根 ScrollView。
 
 复用容器不会统一依赖 `automaticSize`，而是生成可执行的 Section 契约：有序 item IDs、fixed/fractional/full-width 尺寸模式、内容估算高度、宽高比、列数、content insets、主/交叉轴间距、方向锁定以及 supplementary header/footer 所有权。来源中的 sticky header 会映射为 SwiftUI pinned Section 或 UIKit supplementary view；无法确认原生所有权的 sticky 会阻断生成。
 
 每个 screen 还会生成强类型布局契约，保存子节点视觉顺序、轴向、对齐、分布、换行、间距、尺寸策略、宽高比和抗压缩证据。输入控件、显式/项目组件、特殊媒体和稳定业务控件会生成强类型叶子 View；普通文本、SVG 内部路径、装饰节点和自动编号 DOM 叶子继续由公共运行时处理，不会形成一节点一 Swift 文件。
 
-生成 Swift 之前，`layout-relation-graph-1.0` 会把单节点测量提升为跨节点约束，`structural-fidelity-report-1.0` 检查六层架构能否表达这些关系；随后 `native-layout-plan-1.1` 把结果降级为 SwiftUI/UIKit 共用的唯一可执行契约，包括 Stack/Wrapping/Grid/Overlay 算法、子节点视觉顺序、原始 CSS 长度表达式、computed 几何、盒模型、Grid 轨道与 item placement、定位所有权、状态布局增量、复合控件槽位和节点外观。节点外观保留四角独立的水平/垂直半径、四边独立的宽度/颜色/线型、背景、透明度和裁剪证据，不会把它们压缩为最大圆角或单一边框。可求解的 `%` 与 `calc()` 会作为父容器仿射约束执行。代码生成后，`native-structure-manifest-1.0` 再证明 Swift/Payload 和原生运行时已实际消费所需能力。整套核心门禁不需要截图、Simulator 或多模态模型。
+生成 Swift 之前，`layout-relation-graph-1.0` 会把单节点测量提升为跨节点约束，`structural-fidelity-report-1.0` 检查六层架构能否表达这些关系；随后 `native-layout-plan-1.1` 形成 SwiftUI/UIKit 共用的唯一可执行布局契约。`native-appearance-plan-1.0` 独立保存四角水平/垂直半径、四边宽度/颜色/线型、背景、透明度、裁剪、媒体适配和排版外观；文字行盒、baseline 和 intrinsic 几何仍由布局计划拥有。`native-control-configuration-plan-1.1` 保存语义候选、上下文、系统候选、有界几何适配和最终控件决策；`native-interaction-motion-plan-1.0` 为每个动作和动画指定唯一原生 owner 与 executor。代码生成后，`native-structure-manifest-1.0` 再证明 Swift/Payload 已实际消费这些契约。整套核心门禁不需要截图、Simulator 或多模态模型。
 
 ## 控件与视图支持
 
@@ -822,15 +824,21 @@ Skill 可以处理普通 HTML，但结构和语义越清楚，自动还原越稳
 | `ios-compatibility-validation.json` | 代码生成前的兼容性一致性门禁 |
 | `ios-runtime-compatibility-report.json` | 各必测运行 profile 的生成后 Simulator 证据 |
 | `native-naming-plan.json` | 文件名、类型名前缀和冲突 |
+| `native-application-plan.json` | 全局 App 壳、首屏、Tab、导航栈、页面 membership 与 route |
+| `native-application-plan-validation.json` | 不依赖截图的全局应用所有权门禁 |
 | `native-architecture-plan.json` | Controller、导航、滚动、Safe Area 和 presentation |
 | `layout-relation-graph.json` | 父子归属、视觉顺序、间距、对齐、宽高比、层级和滚动轴所有权 |
 | `structural-fidelity-report.json` | 不依赖截图的来源到原生结构质量门禁 |
 | `native-layout-plan.json` | SwiftUI/UIKit 共用的可执行布局契约 |
 | `native-layout-plan-validation.json` | 代码生成前的布局降级门禁 |
+| `native-appearance-plan.json` | SwiftUI/UIKit 共用的节点背景、边框、圆角、裁剪、媒体和排版外观契约 |
+| `native-appearance-plan-validation.json` | 不依赖截图的外观归属与兼容镜像门禁 |
 | `native-control-configuration-plan.json` | SwiftUI/UIKit 共用的系统控件内部几何、外观、style 与状态契约 |
 | `native-control-configuration-validation.json` | 不依赖截图的原生控件配置门禁 |
 | `native-presentation-plan.json` | SwiftUI/UIKit 共用的 sheet、cover、popover、alert、menu、遮罩、锚点、关闭与转场契约 |
 | `native-presentation-validation.json` | 不依赖截图的 presentation 归属与几何门禁 |
+| `native-interaction-motion-plan.json` | SwiftUI/UIKit 共用的动作/动画 owner 与原生 executor 契约 |
+| `native-interaction-motion-plan-validation.json` | 不依赖截图的行为归属门禁 |
 | `native-structure-manifest.json` | 实际 Swift/Payload 对节点和关系的消费证据 |
 | `native-structure-validation.json` | Xcode target 接入前执行的生成后结构门禁 |
 | `screens/<id>/render-tree.json` | 浏览器渲染树 |

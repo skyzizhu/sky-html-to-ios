@@ -40,6 +40,9 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 29. 多设备运行验收必须使用真实 Simulator App 窗口形成 `ios-runtime-compatibility-report.json`。手机 320/375/393/430pt、横屏、iPad Split View 和 regular width 分别作为 profile；截图像素尺寸、`XCUIApplication.frame`、方向、Size Class 推断和无主横向溢出共同作为证据。不得把一台设备截图缩放成其他尺寸，也不得把全屏 iPad 截图声明为 Split View 已通过。
 30. 叶子节点和复合控件必须由 `native-layout-plan.json` 中统一的内容几何契约驱动。图标、图片、紧凑标签、数量徽标和单行文字要保存来源宽高、fixed/intrinsic/flexible/parent-relative 模式、宽高比、单行、抗压缩、媒体适配和对齐；复合控件还必须保存每个槽位的实测间距与弹性间距。SwiftUI/UIKit 不得分别重新推断这些属性。
 31. 首次生成的视觉外观必须由计算样式直接形成可执行契约，不能等待截图纠偏。四角圆角必须分别保存水平/垂直半径，四边边框必须分别保存宽度、颜色和线型；禁止用最大值或单一代表值统一化。CSS 圆角使用圆弧/椭圆几何，不得默认替换为 Apple continuous corner；背景、透明度与后代裁剪也必须由同一节点契约驱动。截图和多模态只用于生成后的可选验收。
+32. 六层只负责原生节点的所有权与包含关系，不新增“视觉属性层”。全局应用壳由 `native-application-plan.json` 唯一确定；布局、外观、系统控件配置、Presentation、交互与动画分别通过横向契约附着到六层节点，禁止同一事实在多个计划中各自推断。
+33. 控件选择分为语义候选、上下文角色、系统候选、几何适配和最终决策。几何适配最多进行两轮有界解析；保留系统语义的 wrapper 不得改变控件的交互、状态机和无障碍所有权。
+34. `native-appearance-plan.json` 负责节点外观，文字占位尺寸仍由 `native-layout-plan.json` 负责；`native-interaction-motion-plan.json` 负责每个动作和动画的唯一 owner 与 executor。生成器必须消费这些计划并在结构清单中记录哈希与消费状态。
 
 ## 支持范围
 
@@ -261,7 +264,7 @@ python3 "$SKILL_ROOT/scripts/build_ui_ir.py" render-tree.json \
 
 ### 6. 规划原生结构
 
-读取 `references/six-layer-native-architecture.md`、`references/common-mapping-rules.md`、`references/control-mapping-matrix.md`、`references/native-control-selection-policy.md`、`references/native-component-catalog.md`、`references/interaction-rules.md`、`references/navigation-presentation-containment.md`、`references/page-regions-and-system-chrome.md`、`references/custom-component-fallback.md`、`references/motion-and-effects.md`、`references/edge-case-policy.md`、`references/multi-page-routing.md`、`references/project-component-discovery.md`、`references/text-calibration.md`、`references/form-and-dynamic-data.md` 和 `references/responsive-auto-layout.md`，再按技术栈读取：
+读取 `references/native-architecture-adjustment-plan.md`、`references/six-layer-native-architecture.md`、`references/common-mapping-rules.md`、`references/control-mapping-matrix.md`、`references/native-control-selection-policy.md`、`references/native-component-catalog.md`、`references/interaction-rules.md`、`references/navigation-presentation-containment.md`、`references/page-regions-and-system-chrome.md`、`references/custom-component-fallback.md`、`references/motion-and-effects.md`、`references/edge-case-policy.md`、`references/multi-page-routing.md`、`references/project-component-discovery.md`、`references/text-calibration.md`、`references/form-and-dynamic-data.md` 和 `references/responsive-auto-layout.md`，再按技术栈读取：
 
 - SwiftUI：`references/swiftui-rules.md`
 - UIKit：`references/uikit-rules.md`
@@ -276,11 +279,15 @@ python3 "$SKILL_ROOT/scripts/build_ui_ir.py" render-tree.json \
 - 不可直接映射的 CSS → CALayer、Core Graphics 或局部 UIKit fallback
 - 系统无对应控件 → 项目组件、组合 View、自定义 UIControl/View 或在确有生命周期需要时自定义 ViewController
 
-总控必须运行 `scripts/build_native_architecture_plan.py` 生成 `native-architecture-plan.json`。计划必须完整包含 Application Container、Screen Container、Screen Regions、Content Container、Reusable Section/Item 和 Leaf Component 六层。它将 controller/container 所有权、导航栈、导航栏绘制、滚动行为、Table/Collection/Scroll/静态容器选择、Cell 复用、叶子 View/Control、presentation 和 Safe Area 分开建模。系统导航栈与顶部栏是否使用系统样式是两个独立决策；滚动页面的容器宽高始终等于父容器 bounds，禁止用 `width/height - safeAreaInsets` 计算 frame。
+总控先生成并校验全局唯一的 `native-application-plan.json`，确定 App 容器、初始页面、Tab、每个 Tab 的 Navigation Stack、screen membership 和跨页面 route；随后运行 `scripts/build_native_architecture_plan.py` 生成 `native-architecture-plan.json`。页面计划必须完整包含 Application Container 兼容镜像、Screen Container、Screen Regions、Content Container、Reusable Section/Item 和 Leaf Component 六层，并引用全局 application membership 与唯一布局关系图，不得逐页面重新猜测 Tab 或 Navigation Stack。它将 controller/container 所有权、导航栏绘制、滚动行为、Table/Collection/Scroll/静态容器选择、Cell 复用、叶子 View/Control、presentation 和 Safe Area 分开建模。系统导航栈与顶部栏是否使用系统样式是两个独立决策；滚动页面的容器宽高始终等于父容器 bounds，禁止用 `width/height - safeAreaInsets` 计算 frame。
 
 随后读取 `references/structural-fidelity.md`。总控必须生成 `layout-relation-graph.json`，固化 containment、视觉子节点顺序、相邻间距、对齐、等宽/等高、宽高比、overlap 与 scroll axis owner；再生成 `structural-fidelity-report.json`，验证这些关系能被六层原生架构完整表达。该生成前门禁不依赖截图或多模态能力，失败时必须回到提取、UI IR 或架构计划修复，不得直接补丁生成后的 Swift。
 
 随后读取 `references/native-layout-lowering.md`。总控必须运行 `build_native_layout_plan.py` 与 `validate_native_layout_plan.py`，把架构关系降级为容器算法、视觉顺序、独立行列间距、尺寸表达式、CSS border-box、Flex/Grid item、定位参照系、状态布局增量和复合控件槽位。原始 CSS 声明用于保留 `%`、`calc()` 和 Grid 轨道语义，computed style 与浏览器几何用于验证最终生效结果；两类证据不得相互替代。该门禁通过后生成器才能运行，并必须通过 `--native-layout-plan` 消费同一份计划。
+
+布局计划完成后，总控生成并校验 `native-appearance-plan.json`，将背景、透明度、四角椭圆半径、四边边框、阴影、裁剪、媒体适配和排版外观从布局兼容镜像中抽离。文字行盒、baseline、换行与 intrinsic size 仍由布局计划拥有，避免外观和布局互相循环修改。
+
+控件计划使用 `native-control-configuration-plan-1.1`：先形成语义候选和上下文角色，再评估系统控件固有尺寸与来源几何，最后沿用 system control、system control with wrapper 或已证实的自定义降级。Presentation 完成后，总控生成并校验 `native-interaction-motion-plan.json`，把 Tab、Navigation、Screen Host、Reusable Content 和 Source Component 的动作/动画绑定到唯一 owner 与原生 executor。
 
 控件映射必须先判断语义，再选择原生控件，最后还原外观。不要仅按 HTML tag 映射，也不要为了视觉方便把 Button、输入框和选择控件退化成无语义的普通 View。
 

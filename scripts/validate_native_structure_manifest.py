@@ -40,10 +40,13 @@ def main() -> int:
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--layout-graph", required=True, type=Path)
     parser.add_argument("--architecture-plan", required=True, type=Path)
+    parser.add_argument("--application-plan", type=Path)
     parser.add_argument("--native-layout-plan", required=True, type=Path)
     parser.add_argument("--scroll-attachment-plan", type=Path)
     parser.add_argument("--control-configuration-plan", type=Path)
     parser.add_argument("--presentation-plan", type=Path)
+    parser.add_argument("--appearance-plan", type=Path)
+    parser.add_argument("--interaction-motion-plan", type=Path)
     parser.add_argument("--compatibility-matrix", type=Path)
     parser.add_argument("--api-fallback-plan", type=Path)
     parser.add_argument("--generated-dir", required=True, type=Path)
@@ -54,10 +57,13 @@ def main() -> int:
     manifest = load_json(args.manifest)
     graph = load_json(args.layout_graph)
     architecture = load_json(args.architecture_plan)
+    application_plan = load_json(args.application_plan) if args.application_plan else {}
     native_layout = load_json(args.native_layout_plan)
     scroll_attachment = load_json(args.scroll_attachment_plan) if args.scroll_attachment_plan else {}
     control_configuration = load_json(args.control_configuration_plan) if args.control_configuration_plan else {}
     presentation_plan = load_json(args.presentation_plan) if args.presentation_plan else {}
+    appearance_plan = load_json(args.appearance_plan) if args.appearance_plan else {}
+    interaction_motion_plan = load_json(args.interaction_motion_plan) if args.interaction_motion_plan else {}
     compatibility_matrix = load_json(args.compatibility_matrix) if args.compatibility_matrix else {}
     api_fallback_plan = load_json(args.api_fallback_plan) if args.api_fallback_plan else {}
     generation = load_json(args.generation_manifest)
@@ -67,14 +73,20 @@ def main() -> int:
         raise ValueError("--layout-graph must use layout-relation-graph-1.0")
     if architecture.get("schemaVersion") != "native-architecture-plan-1.1":
         raise ValueError("--architecture-plan must use native-architecture-plan-1.1")
+    if args.application_plan and application_plan.get("schemaVersion") != "native-application-plan-1.0":
+        raise ValueError("--application-plan must use native-application-plan-1.0")
     if native_layout.get("schemaVersion") != "native-layout-plan-1.1":
         raise ValueError("--native-layout-plan must use native-layout-plan-1.1")
     if args.scroll_attachment_plan and scroll_attachment.get("schemaVersion") != "scroll-and-attachment-plan-1.0":
         raise ValueError("--scroll-attachment-plan must use scroll-and-attachment-plan-1.0")
-    if args.control_configuration_plan and control_configuration.get("schemaVersion") != "native-control-configuration-plan-1.0":
-        raise ValueError("--control-configuration-plan must use native-control-configuration-plan-1.0")
+    if args.control_configuration_plan and control_configuration.get("schemaVersion") not in {"native-control-configuration-plan-1.0", "native-control-configuration-plan-1.1"}:
+        raise ValueError("--control-configuration-plan must use native-control-configuration-plan-1.0 or 1.1")
     if args.presentation_plan and presentation_plan.get("schemaVersion") != "native-presentation-plan-1.0":
         raise ValueError("--presentation-plan must use native-presentation-plan-1.0")
+    if args.appearance_plan and appearance_plan.get("schemaVersion") != "native-appearance-plan-1.0":
+        raise ValueError("--appearance-plan must use native-appearance-plan-1.0")
+    if args.interaction_motion_plan and interaction_motion_plan.get("schemaVersion") != "native-interaction-motion-plan-1.0":
+        raise ValueError("--interaction-motion-plan must use native-interaction-motion-plan-1.0")
     if args.compatibility_matrix and compatibility_matrix.get("schemaVersion") != "ios-compatibility-matrix-1.0":
         raise ValueError("--compatibility-matrix must use ios-compatibility-matrix-1.0")
     if args.api_fallback_plan and api_fallback_plan.get("schemaVersion") != "native-api-fallback-plan-1.0":
@@ -100,6 +112,24 @@ def main() -> int:
             "STALE_ARCHITECTURE_PLAN_PROVENANCE", None,
             "Native structure manifest was not generated from the current native architecture plan.",
         ))
+    cross_cutting = manifest.get("crossCuttingContractConsumption") or {}
+    for argument, manifest_key, consumption_key, label in (
+        (args.application_plan, "applicationPlanSha256", "application", "application"),
+        (args.appearance_plan, "appearancePlanSha256", "appearance", "appearance"),
+        (args.interaction_motion_plan, "interactionMotionPlanSha256", "interactionMotion", "interaction and motion"),
+    ):
+        if not argument:
+            continue
+        if manifest.get(manifest_key) != sha256_file(argument):
+            issues.append(issue(
+                f"STALE_{consumption_key.upper()}_PLAN_PROVENANCE", None,
+                f"Native structure manifest was not generated from the current {label} plan.",
+            ))
+        if cross_cutting.get(consumption_key) != "consumed":
+            issues.append(issue(
+                f"{consumption_key.upper()}_PLAN_NOT_CONSUMED", None,
+                f"Generated native structure does not report the {label} contract as consumed.",
+            ))
     if manifest.get("nativeLayoutPlanSha256") != sha256_file(args.native_layout_plan):
         issues.append(issue(
             "STALE_NATIVE_LAYOUT_PLAN_PROVENANCE", None,

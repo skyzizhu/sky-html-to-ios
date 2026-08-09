@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -83,6 +84,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ir", action="append", required=True, type=Path)
     parser.add_argument("--scroll-behavior", action="append", type=Path, default=[])
+    parser.add_argument("--application-plan", type=Path)
+    parser.add_argument("--layout-graph", type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--ui-stack", choices=("swiftui", "uikit"))
     parser.add_argument("--minimum-ios", default="16.0")
@@ -724,7 +727,11 @@ def leaf_component_plan(
     return result
 
 
-def screen_plan(ir: dict[str, Any], report: dict[str, Any] | None, ui_stack: str) -> dict[str, Any]:
+def screen_plan(
+    ir: dict[str, Any], report: dict[str, Any] | None, ui_stack: str,
+    application_membership: dict[str, Any] | None = None,
+    graph_screen: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     screen = (ir.get("screens") or [])[0]
     screen_id = str(screen.get("id") or "screen")
     navigation = screen.get("navigation") or {}
@@ -779,7 +786,10 @@ def screen_plan(ir: dict[str, Any], report: dict[str, Any] | None, ui_stack: str
     if tab and bottom:
         warnings.append("Native tab ownership suppresses the page bottomBar to avoid duplicate bottom insets.")
     content_container, sections = content_container_plan(screen, nodes, children)
-    content_container["layoutRelations"] = layout_relation_plan(nodes, children)
+    content_container["layoutRelations"] = (
+        [dict(item) for item in graph_screen.get("containers") or []]
+        if graph_screen else layout_relation_plan(nodes, children)
+    )
     leaf_components = leaf_component_plan(screen, nodes, children)
     app_container_kind = "tab-navigation" if tab else "navigation"
     top_region = {
@@ -800,6 +810,10 @@ def screen_plan(ir: dict[str, Any], report: dict[str, Any] | None, ui_stack: str
             "swiftUIType": "TabView + NavigationStack per tab" if tab else "NavigationStack",
             "uiKitType": "UITabBarController + UINavigationController per tab" if tab else "UINavigationController",
             "ownership": "generated-or-existing-project-router",
+            "compatibilityMirror": bool(application_membership),
+            "applicationContainerId": (application_membership or {}).get("applicationContainerId"),
+            "tabId": (application_membership or {}).get("tabId"),
+            "navigationStackId": (application_membership or {}).get("navigationStackId"),
         },
         "screenContainer": {
             "kind": "screen",
@@ -891,7 +905,26 @@ def main() -> int:
     if ui_stack not in {"swiftui", "uikit"}:
         raise ValueError("--ui-stack is required when UI IR targets disagree")
     behavior_reports = scroll_report_by_screen(args.scroll_behavior)
-    screens = [screen_plan(ir, behavior_reports.get(str(ir["screens"][0].get("id") or "")), ui_stack) for ir in irs]
+    application = load_json(args.application_plan) if args.application_plan else {}
+    if application and application.get("schemaVersion") != "native-application-plan-1.0":
+        raise ValueError("--application-plan must use native-application-plan-1.0")
+    memberships = {str(item.get("screenId") or ""): item for item in application.get("screenMemberships") or []}
+    graph = load_json(args.layout_graph) if args.layout_graph else {}
+    if graph and graph.get("schemaVersion") != "layout-relation-graph-1.0":
+        raise ValueError("--layout-graph must use layout-relation-graph-1.0")
+    graph_screens = {str(item.get("screenId") or ""): item for item in graph.get("screens") or []}
+    input_screen_ids = {str(ir["screens"][0].get("id") or "") for ir in irs}
+    if application and set(memberships) != input_screen_ids:
+        raise ValueError("application plan screen memberships do not match UI IR")
+    if graph and set(graph_screens) != input_screen_ids:
+        raise ValueError("layout relation graph screens do not match UI IR")
+    screens = []
+    for ir in irs:
+        screen_id = str(ir["screens"][0].get("id") or "")
+        screens.append(screen_plan(
+            ir, behavior_reports.get(screen_id), ui_stack,
+            memberships.get(screen_id), graph_screens.get(screen_id),
+        ))
     ids = [screen["screenId"] for screen in screens]
     if len(ids) != len(set(ids)):
         raise ValueError("screen IDs must be unique")
@@ -899,6 +932,8 @@ def main() -> int:
         "schemaVersion": SCHEMA_VERSION,
         "uiStack": ui_stack,
         "minimumIOS": str(args.minimum_ios),
+        "applicationPlanSha256": hashlib.sha256(args.application_plan.read_bytes()).hexdigest() if args.application_plan else None,
+        "layoutRelationGraphSha256": hashlib.sha256(args.layout_graph.read_bytes()).hexdigest() if args.layout_graph else None,
         "invariants": {
             "sixLayerArchitectureComplete": True,
             "singleSafeAreaOwner": True,

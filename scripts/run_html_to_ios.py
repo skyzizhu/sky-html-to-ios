@@ -1120,6 +1120,8 @@ class Orchestrator:
         ir_paths: list[Path],
         ui_stack: str,
         minimum_ios: str,
+        application_plan: Path | None = None,
+        layout_relation_graph: Path | None = None,
     ) -> Path:
         plan = self.report_dir / "native-architecture-plan.json"
         command: list[str | Path] = [sys.executable, self.scripts / "build_native_architecture_plan.py"]
@@ -1132,27 +1134,50 @@ class Orchestrator:
             "--ui-stack", ui_stack,
             "--minimum-ios", minimum_ios,
         ])
+        if application_plan:
+            command.extend(["--application-plan", application_plan])
+        if layout_relation_graph:
+            command.extend(["--layout-graph", layout_relation_graph])
         self.run_command("build-native-architecture-plan", command)
         self.artifacts["nativeArchitecturePlan"] = str(plan)
         self.report["qualityGates"]["nativeArchitecturePlan"] = "passed"
+        return plan
+
+    def build_layout_relation_graph(self, ir_paths: list[Path]) -> Path:
+        graph = self.report_dir / "layout-relation-graph.json"
+        command: list[str | Path] = [sys.executable, self.scripts / "build_layout_relation_graph.py"]
+        for path in ir_paths:
+            command.extend(["--ir", path])
+        command.extend(["--out", graph])
+        self.run_command("build-layout-relation-graph", command)
+        self.artifacts["layoutRelationGraph"] = str(graph)
+        self.report["qualityGates"]["layoutRelationGraph"] = "passed"
+        return graph
+
+    def build_and_validate_native_application_plan(self, ir_paths: list[Path], ui_stack: str) -> Path:
+        plan = self.report_dir / "native-application-plan.json"
+        command: list[str | Path] = [sys.executable, self.scripts / "build_native_application_plan.py"]
+        for path in ir_paths:
+            command.extend(["--ir", path])
+        command.extend(["--ui-stack", ui_stack, "--out", plan])
+        self.run_command("build-native-application-plan", command)
+        validation = self.report_dir / "native-application-plan-validation.json"
+        self.run_command("validate-native-application-plan", [
+            sys.executable, self.scripts / "validate_native_application_plan.py",
+            "--plan", plan, "--out", validation,
+        ])
+        self.artifacts["nativeApplicationPlan"] = str(plan)
+        self.artifacts["nativeApplicationPlanValidation"] = str(validation)
+        self.report["qualityGates"]["nativeApplicationPlan"] = "passed"
         return plan
 
     def build_and_validate_structural_fidelity(
         self,
         ir_paths: list[Path],
         architecture_plan: Path,
+        layout_relation_graph: Path | None = None,
     ) -> tuple[Path, Path]:
-        graph = self.report_dir / "layout-relation-graph.json"
-        graph_command: list[str | Path] = [
-            sys.executable,
-            self.scripts / "build_layout_relation_graph.py",
-        ]
-        for path in ir_paths:
-            graph_command.extend(["--ir", path])
-        graph_command.extend(["--out", graph])
-        self.run_command("build-layout-relation-graph", graph_command)
-        self.artifacts["layoutRelationGraph"] = str(graph)
-        self.report["qualityGates"]["layoutRelationGraph"] = "passed"
+        graph = layout_relation_graph or self.build_layout_relation_graph(ir_paths)
 
         fidelity = self.report_dir / "structural-fidelity-report.json"
         fidelity_command: list[str | Path] = [
@@ -1170,6 +1195,42 @@ class Orchestrator:
         self.artifacts["structuralFidelityReport"] = str(fidelity)
         self.report["qualityGates"]["structuralFidelity"] = "passed"
         return graph, fidelity
+
+    def build_and_validate_native_appearance_plan(self, ir_paths: list[Path], native_layout_plan: Path) -> Path:
+        plan = self.report_dir / "native-appearance-plan.json"
+        command: list[str | Path] = [sys.executable, self.scripts / "build_native_appearance_plan.py"]
+        for path in ir_paths:
+            command.extend(["--ir", path])
+        command.extend(["--native-layout-plan", native_layout_plan, "--out", plan])
+        self.run_command("build-native-appearance-plan", command)
+        validation = self.report_dir / "native-appearance-plan-validation.json"
+        self.run_command("validate-native-appearance-plan", [
+            sys.executable, self.scripts / "validate_native_appearance_plan.py",
+            "--plan", plan, "--native-layout-plan", native_layout_plan, "--out", validation,
+        ])
+        self.artifacts["nativeAppearancePlan"] = str(plan)
+        self.artifacts["nativeAppearancePlanValidation"] = str(validation)
+        self.report["qualityGates"]["nativeAppearancePlan"] = "passed"
+        return plan
+
+    def build_and_validate_native_interaction_motion_plan(
+        self, ir_paths: list[Path], application_plan: Path, presentation_plan: Path,
+    ) -> Path:
+        plan = self.report_dir / "native-interaction-motion-plan.json"
+        command: list[str | Path] = [sys.executable, self.scripts / "build_native_interaction_motion_plan.py"]
+        for path in ir_paths:
+            command.extend(["--ir", path])
+        command.extend(["--application-plan", application_plan, "--presentation-plan", presentation_plan, "--out", plan])
+        self.run_command("build-native-interaction-motion-plan", command)
+        validation = self.report_dir / "native-interaction-motion-plan-validation.json"
+        self.run_command("validate-native-interaction-motion-plan", [
+            sys.executable, self.scripts / "validate_native_interaction_motion_plan.py",
+            "--plan", plan, "--out", validation,
+        ])
+        self.artifacts["nativeInteractionMotionPlan"] = str(plan)
+        self.artifacts["nativeInteractionMotionPlanValidation"] = str(validation)
+        self.report["qualityGates"]["nativeInteractionMotionPlan"] = "passed"
+        return plan
 
     def build_and_validate_scroll_attachment_plan(
         self,
@@ -1322,6 +1383,9 @@ class Orchestrator:
         compatibility_matrix: Path,
         api_fallback_plan: Path,
         naming_plan: Path,
+        application_plan: Path,
+        appearance_plan: Path,
+        interaction_motion_plan: Path,
     ) -> Path:
         generated_dir = source_root / "Generated" / "HTMLToIOS"
         native_structure_manifest = self.report_dir / "native-structure-manifest.json"
@@ -1333,11 +1397,14 @@ class Orchestrator:
             "--ui-stack", ui_stack,
             "--module-name", target,
             "--architecture-plan", architecture_plan,
+            "--application-plan", application_plan,
             "--layout-relation-graph", layout_relation_graph,
             "--native-layout-plan", native_layout_plan,
             "--scroll-attachment-plan", scroll_attachment_plan,
             "--control-configuration-plan", control_configuration_plan,
             "--presentation-plan", presentation_plan,
+            "--appearance-plan", appearance_plan,
+            "--interaction-motion-plan", interaction_motion_plan,
             "--compatibility-matrix", compatibility_matrix,
             "--api-fallback-plan", api_fallback_plan,
             "--native-structure-manifest", native_structure_manifest,
@@ -1361,10 +1428,13 @@ class Orchestrator:
                 "--manifest", native_structure_manifest,
                 "--layout-graph", layout_relation_graph,
                 "--architecture-plan", architecture_plan,
+                "--application-plan", application_plan,
                 "--native-layout-plan", native_layout_plan,
                 "--scroll-attachment-plan", scroll_attachment_plan,
                 "--control-configuration-plan", control_configuration_plan,
                 "--presentation-plan", presentation_plan,
+                "--appearance-plan", appearance_plan,
+                "--interaction-motion-plan", interaction_motion_plan,
                 "--compatibility-matrix", compatibility_matrix,
                 "--api-fallback-plan", api_fallback_plan,
                 "--generated-dir", generated_dir,
@@ -1795,19 +1865,29 @@ struct ContentView: View {
         compatibility_matrix, api_fallback_plan = self.build_and_validate_ios_compatibility(
             ir_paths, sdk_report, ui_stack, minimum_ios,
         )
-        architecture_plan = self.build_native_architecture_plan(ir_paths, ui_stack, minimum_ios)
+        layout_relation_graph = self.build_layout_relation_graph(ir_paths)
+        application_plan = self.build_and_validate_native_application_plan(ir_paths, ui_stack)
+        architecture_plan = self.build_native_architecture_plan(
+            ir_paths, ui_stack, minimum_ios, application_plan, layout_relation_graph,
+        )
+        self.build_and_validate_structural_fidelity(
+            ir_paths, architecture_plan, layout_relation_graph,
+        )
         scroll_attachment_plan = self.build_and_validate_scroll_attachment_plan(ir_paths, architecture_plan)
         control_configuration_plan = self.build_and_validate_native_control_configuration_plan(ir_paths)
         presentation_plan = self.build_and_validate_native_presentation_plan(ir_paths)
-        layout_relation_graph, _ = self.build_and_validate_structural_fidelity(ir_paths, architecture_plan)
         native_layout_plan = self.build_and_validate_native_layout_plan(
             ir_paths, architecture_plan, layout_relation_graph,
+        )
+        appearance_plan = self.build_and_validate_native_appearance_plan(ir_paths, native_layout_plan)
+        interaction_motion_plan = self.build_and_validate_native_interaction_motion_plan(
+            ir_paths, application_plan, presentation_plan,
         )
         self.generate_and_integrate(
             ir_paths, project, target, source_root, ui_stack, minimum_ios,
             architecture_plan, layout_relation_graph, native_layout_plan, scroll_attachment_plan,
             control_configuration_plan, presentation_plan, compatibility_matrix, api_fallback_plan,
-            naming_plan,
+            naming_plan, application_plan, appearance_plan, interaction_motion_plan,
         )
         self.wire_managed_entry(source_root, ui_stack)
         symbol = "HTMLToIOSGeneratedRootView" if ui_stack == "swiftui" else "HTMLToIOSGeneratedRootViewController"
@@ -1874,13 +1954,23 @@ struct ContentView: View {
                     compatibility_matrix, api_fallback_plan = self.build_and_validate_ios_compatibility(
                         ir_paths, sdk_report, ui_stack, minimum_ios,
                     )
-                    architecture_plan = self.build_native_architecture_plan(ir_paths, ui_stack, minimum_ios)
+                    layout_relation_graph = self.build_layout_relation_graph(ir_paths)
+                    application_plan = self.build_and_validate_native_application_plan(ir_paths, ui_stack)
+                    architecture_plan = self.build_native_architecture_plan(
+                        ir_paths, ui_stack, minimum_ios, application_plan, layout_relation_graph,
+                    )
+                    self.build_and_validate_structural_fidelity(
+                        ir_paths, architecture_plan, layout_relation_graph,
+                    )
                     scroll_attachment_plan = self.build_and_validate_scroll_attachment_plan(ir_paths, architecture_plan)
                     control_configuration_plan = self.build_and_validate_native_control_configuration_plan(ir_paths)
                     presentation_plan = self.build_and_validate_native_presentation_plan(ir_paths)
-                    layout_relation_graph, _ = self.build_and_validate_structural_fidelity(ir_paths, architecture_plan)
                     native_layout_plan = self.build_and_validate_native_layout_plan(
                         ir_paths, architecture_plan, layout_relation_graph,
+                    )
+                    appearance_plan = self.build_and_validate_native_appearance_plan(ir_paths, native_layout_plan)
+                    interaction_motion_plan = self.build_and_validate_native_interaction_motion_plan(
+                        ir_paths, application_plan, presentation_plan,
                     )
                     self.generate_and_integrate(
                         ir_paths,
@@ -1898,6 +1988,9 @@ struct ContentView: View {
                         compatibility_matrix,
                         api_fallback_plan,
                         naming_plan,
+                        application_plan,
+                        appearance_plan,
+                        interaction_motion_plan,
                     )
                     self.build(project, scheme)
                 else:  # pragma: no cover - the plan guard normally stops the fourth review pass

@@ -175,13 +175,15 @@ Code generation does not translate the DOM directly into a flat view tree. `nati
 5. **Reusable Section and Item**: sections, headers, footers, item templates, Cell strategy, order, and scroll-axis ownership.
 6. **Leaf Component**: the final `UIView`, `UIImageView`, `UILabel`, `UIButton`, input, status control, Shape, Layer, or project component with mapping evidence.
 
+The hierarchy describes ownership, not every rendering property. A global `native-application-plan-1.0` owns the app shell, initial screen, tabs, per-tab navigation stacks, memberships, and routes. Cross-cutting plans then attach executable layout, appearance, control configuration, presentation, interaction, and motion contracts to nodes in the six layers. This keeps small details such as asymmetric corners, borders, typography, icons, control states, and animations precise without inventing a seventh structural layer.
+
 Small fixed groups remain static layouts. Long homogeneous rows use Table/Lazy containers; grids, carousels, data tables, and heterogeneous sections use Collection layouts. A collection can replace the root scroll only when it is a direct, dominant, same-axis content owner. A nested horizontal Collection keeps only the horizontal axis and never disables the page's vertical scroll. Table and Collection containers are not wrapped in another same-axis root scroll view.
 
 Reusable containers receive an executable Section contract rather than a blanket `automaticSize`: ordered item IDs, fixed/fractional/full-width sizing, estimated content height, aspect ratio, column count, content insets, main/cross-axis spacing, directional locking, and supplementary header/footer ownership. Sticky source headers become pinned SwiftUI Section views or UIKit supplementary views; unresolved sticky ownership blocks generation.
 
 Each screen also receives a typed layout contract containing visual child order, axis, alignment, distribution, wrapping, spacing, sizing policy, aspect ratio, and compression evidence. Inputs, explicit/project components, specialized media, and stable business controls become typed leaf views. Ordinary text, SVG internals, decorative nodes, and auto-numbered DOM leaves stay in the shared runtime instead of creating one Swift file per node.
 
-Before Swift generation, `layout-relation-graph-1.0` promotes those per-node measurements into cross-node constraints. `structural-fidelity-report-1.0` checks that the six-layer architecture can express them, then `native-layout-plan-1.1` lowers the result into the single executable contract shared by SwiftUI and UIKit: stack/wrapping/grid/overlay algorithms, visual child order, authored CSS length expressions, computed geometry, box-model constraints, Grid tracks and item placement, positioning ownership, state-layout deltas, compound-control slots, and node appearance. Appearance preserves independent horizontal/vertical radii for all four corners, independent width/color/style for all four borders, backgrounds, opacity, and clipping evidence instead of flattening them to one maximum radius or representative border. Parent-relative `%` and resolvable `calc()` expressions execute as parent-affine native constraints. After generation, `native-structure-manifest-1.0` proves that Swift/Payload and the native runtime consumed the required capabilities before Xcode target integration. These core gates require neither screenshots nor multimodal capability.
+Before Swift generation, `layout-relation-graph-1.0` promotes those per-node measurements into cross-node constraints. `structural-fidelity-report-1.0` checks that the six-layer architecture can express them, then `native-layout-plan-1.1` lowers the result into the single executable layout contract shared by SwiftUI and UIKit. `native-appearance-plan-1.0` separately preserves independent horizontal/vertical radii for all four corners, independent width/color/style for all four borders, backgrounds, opacity, clipping, media fitting, and typography appearance. Text line boxes and intrinsic geometry remain owned by the layout plan. `native-control-configuration-plan-1.1` records semantic candidates, context, system candidates, bounded geometry fit, and the final control decision. `native-interaction-motion-plan-1.0` assigns every action and motion one native owner and executor. After generation, `native-structure-manifest-1.0` proves that Swift/Payload consumed the contracts before Xcode target integration. These core gates require neither screenshots nor multimodal capability.
 
 ## Supported Views and Controls
 
@@ -569,15 +571,21 @@ Reports are written under `<workspace>/.html-to-ios/`.
 | `ios-compatibility-validation.json` | Compatibility consistency and pre-generation gate |
 | `ios-runtime-compatibility-report.json` | Post-generation Simulator evidence for each required runtime profile |
 | `native-naming-plan.json` | Prefixes and conflicts |
+| `native-application-plan.json` | Global app shell, initial screen, tabs, navigation stacks, memberships, and routes |
+| `native-application-plan-validation.json` | Screenshot-free global application ownership gate |
 | `native-architecture-plan.json` | Navigation, scrolling, Safe Area, and presentation |
 | `layout-relation-graph.json` | Containment, visual order, spacing, alignment, aspect ratio, overlap, and scroll ownership |
 | `structural-fidelity-report.json` | Screenshot-free source-to-native structural quality gate |
 | `native-layout-plan.json` | Executable layout contract shared by SwiftUI and UIKit |
 | `native-layout-plan-validation.json` | Pre-generation layout lowering gate |
+| `native-appearance-plan.json` | Shared per-node background, border, corner, clipping, media, and typography appearance contract |
+| `native-appearance-plan-validation.json` | Screenshot-free appearance ownership and mirror gate |
 | `native-control-configuration-plan.json` | Shared internal geometry, appearance, style, and state contract for system controls |
 | `native-control-configuration-validation.json` | Screenshot-free native control configuration gate |
 | `native-presentation-plan.json` | Shared sheet, cover, popover, alert, menu, backdrop, anchor, dismissal, and transition contract |
 | `native-presentation-validation.json` | Screenshot-free presentation ownership and geometry gate |
+| `native-interaction-motion-plan.json` | Shared action/motion owner and native executor contract |
+| `native-interaction-motion-plan-validation.json` | Screenshot-free behavior ownership gate |
 | `native-structure-manifest.json` | Actual Swift/Payload node and relation consumption evidence |
 | `native-structure-validation.json` | Post-generation structural gate run before target integration |
 | `screens/<id>/render-tree.json` | Browser render tree |

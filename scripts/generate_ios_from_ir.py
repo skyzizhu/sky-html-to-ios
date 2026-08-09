@@ -65,11 +65,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ui-stack", choices=("swiftui", "uikit"))
     parser.add_argument("--module-name", default="HTMLToIOSGenerated")
     parser.add_argument("--architecture-plan", type=Path)
+    parser.add_argument("--application-plan", type=Path)
     parser.add_argument("--layout-relation-graph", type=Path)
     parser.add_argument("--native-layout-plan", type=Path)
     parser.add_argument("--scroll-attachment-plan", type=Path)
     parser.add_argument("--control-configuration-plan", type=Path)
     parser.add_argument("--presentation-plan", type=Path)
+    parser.add_argument("--appearance-plan", type=Path)
+    parser.add_argument("--interaction-motion-plan", type=Path)
     parser.add_argument("--compatibility-matrix", type=Path)
     parser.add_argument("--api-fallback-plan", type=Path)
     parser.add_argument("--native-structure-manifest", type=Path)
@@ -198,8 +201,8 @@ def load_control_configuration_plan(path: Path | None) -> tuple[dict[str, Any], 
     if path is None:
         return {}, {}
     data = json.loads(path.read_text(encoding="utf-8"))
-    if data.get("schemaVersion") != "native-control-configuration-plan-1.0":
-        raise ValueError(f"{path}: expected native-control-configuration-plan-1.0")
+    if data.get("schemaVersion") not in {"native-control-configuration-plan-1.0", "native-control-configuration-plan-1.1"}:
+        raise ValueError(f"{path}: expected native-control-configuration-plan-1.0 or 1.1")
     screens = {
         str(screen.get("screenId") or ""): screen
         for screen in data.get("screens") or []
@@ -638,6 +641,7 @@ def motion_payload(raw: dict[str, Any]) -> dict[str, Any] | None:
     rotation_end = transform_component(end.get("transform"), "rotation", rotation_start)
     translations = [translate_components(item.get("transform")) for item in ordered]
     translation_origin = translations[0]
+    ownership = raw.get("nativeOwnership") or {}
     return {
         "id": str(raw.get("id") or "motion"),
         "durationMilliseconds": max(int(number(raw.get("durationMs"), 0)), 1),
@@ -651,6 +655,9 @@ def motion_payload(raw: dict[str, Any]) -> dict[str, Any] | None:
         "translationYValues": [value[1] - translation_origin[1] for value in translations],
         "scaleValues": [transform_component(item.get("transform"), "scale", 1) for item in ordered],
         "opacityValues": [number(item.get("opacity"), 1) for item in ordered],
+        "nativeOwner": ownership.get("owner"),
+        "nativeOwnerID": ownership.get("ownerId"),
+        "nativeExecutor": ownership.get("executor"),
     }
 
 
@@ -663,6 +670,7 @@ def primary_transition(interaction: dict[str, Any]) -> dict[str, Any]:
     if transitions:
         first = transitions[0]
         schedule = first.get("schedule") or {}
+        ownership = first.get("nativeOwnership") or interaction.get("nativeOwnership") or {}
         return {
             "interactionID": interaction.get("id"),
             "action": first.get("action") or interaction.get("action") or "none",
@@ -673,7 +681,11 @@ def primary_transition(interaction: dict[str, Any]) -> dict[str, Any]:
             "feedbackText": compact_html_text((feedback_effect or {}).get("value"), 80) or None,
             "feedbackDurationMilliseconds": feedback_duration,
             "presentation": interaction.get("presentation"),
+            "nativeOwner": ownership.get("owner"),
+            "nativeOwnerID": ownership.get("ownerId"),
+            "nativeExecutor": ownership.get("executor"),
         }
+    ownership = interaction.get("nativeOwnership") or {}
     return {
         "interactionID": interaction.get("id"),
         "action": interaction.get("action") or "none",
@@ -684,7 +696,58 @@ def primary_transition(interaction: dict[str, Any]) -> dict[str, Any]:
         "feedbackText": compact_html_text((feedback_effect or {}).get("value"), 80) or None,
         "feedbackDurationMilliseconds": feedback_duration,
         "presentation": interaction.get("presentation"),
+        "nativeOwner": ownership.get("owner"),
+        "nativeOwnerID": ownership.get("ownerId"),
+        "nativeExecutor": ownership.get("executor"),
     }
+
+
+def apply_interaction_motion_contracts(
+    irs: list[dict[str, Any]], plan: dict[str, Any],
+) -> None:
+    if not plan:
+        return
+    planned_screens = {str(item.get("screenId") or ""): item for item in plan.get("screens") or []}
+    ir_screen_ids = {str((item.get("screens") or [{}])[0].get("id") or "") for item in irs}
+    if set(planned_screens) != ir_screen_ids:
+        raise ValueError("interaction and motion plan screen set does not match UI IR")
+    for ir in irs:
+        screen_id = str((ir.get("screens") or [{}])[0].get("id") or "")
+        planned = planned_screens[screen_id]
+        actions_by_interaction: dict[str, list[dict[str, Any]]] = {}
+        for action in planned.get("actions") or []:
+            actions_by_interaction.setdefault(str(action.get("sourceInteractionId") or action.get("id") or ""), []).append(action)
+        for interaction in ir.get("interactions") or []:
+            interaction_id = str(interaction.get("id") or "")
+            contracts = actions_by_interaction.get(interaction_id) or []
+            transitions = (interaction.get("payload") or {}).get("transitions") or []
+            for index, transition in enumerate(transitions):
+                contract = next((
+                    item for item in contracts
+                    if item.get("sourceTransitionId")
+                    and item.get("sourceTransitionId") == transition.get("sourceTransitionId")
+                ), contracts[index] if index < len(contracts) else None)
+                if contract:
+                    transition["nativeOwnership"] = {
+                        "owner": contract.get("owner"),
+                        "ownerId": contract.get("ownerId"),
+                        "executor": contract.get("executor"),
+                    }
+            if contracts:
+                interaction["nativeOwnership"] = {
+                    "owner": contracts[0].get("owner"),
+                    "ownerId": contracts[0].get("ownerId"),
+                    "executor": contracts[0].get("executor"),
+                }
+        motions_by_id = {str(item.get("id") or ""): item for item in planned.get("motions") or []}
+        for motion in ir.get("motions") or []:
+            contract = motions_by_id.get(str(motion.get("id") or ""))
+            if contract:
+                motion["nativeOwnership"] = {
+                    "owner": contract.get("owner"),
+                    "ownerId": contract.get("ownerId"),
+                    "executor": contract.get("executor"),
+                }
 
 
 @dataclass
@@ -2957,6 +3020,9 @@ struct HTMLToIOSActionSpec: Codable {{
     let targetScreenID: String?
     let targetStateID: String?
     let delayMilliseconds: Int
+    let nativeOwner: String?
+    let nativeOwnerID: String?
+    let nativeExecutor: String?
     let sourceNodeID: String?
     let targetNodeID: String?
     let stateKind: String?
@@ -3268,6 +3334,9 @@ struct HTMLToIOSMotionSpec: Codable, Identifiable {{
     let translationYValues: [Double]
     let scaleValues: [Double]
     let opacityValues: [Double]
+    let nativeOwner: String?
+    let nativeOwnerID: String?
+    let nativeExecutor: String?
 }}
 
 struct HTMLToIOSRichTextRunSpec: Codable {{
@@ -10722,6 +10791,9 @@ def build_native_structure_manifest(
     presentation_path: Path | None,
     compatibility_matrix_path: Path | None,
     api_fallback_path: Path | None,
+    application_path: Path | None,
+    appearance_path: Path | None,
+    interaction_motion_path: Path | None,
     ui_stack: str,
 ) -> dict[str, Any]:
     runtime_path = out_dir / "Core/Runtime/HTMLToIOSGeneratedRuntime.swift"
@@ -11354,6 +11426,14 @@ def build_native_structure_manifest(
         "uiStack": ui_stack,
         "architecturePlan": str(architecture_path.resolve()) if architecture_path else None,
         "architecturePlanSha256": sha256_file(architecture_path) if architecture_path else None,
+        "applicationPlanSha256": sha256_file(application_path) if application_path else None,
+        "appearancePlanSha256": sha256_file(appearance_path) if appearance_path else None,
+        "interactionMotionPlanSha256": sha256_file(interaction_motion_path) if interaction_motion_path else None,
+        "crossCuttingContractConsumption": {
+            "application": "consumed" if application_path else "legacy-not-supplied",
+            "appearance": "consumed" if appearance_path else "legacy-layout-mirror",
+            "interactionMotion": "consumed" if interaction_motion_path else "legacy-ui-ir",
+        },
         "layoutRelationGraph": str(graph_path.resolve()),
         "layoutRelationGraphSha256": sha256_file(graph_path),
         "layoutRelationGraphSchemaVersion": layout_graph.get("schemaVersion"),
@@ -11434,10 +11514,51 @@ def main() -> int:
     scroll_attachment_plan, scroll_attachment_by_screen = load_scroll_attachment_plan(args.scroll_attachment_plan)
     control_configuration_plan, control_configuration_by_screen = load_control_configuration_plan(args.control_configuration_plan)
     presentation_plan, presentation_by_screen = load_presentation_plan(args.presentation_plan)
+    ir_screen_ids = [str((ir.get("screens") or [{}])[0].get("id") or "screen") for ir in irs]
+    application_plan = json.loads(args.application_plan.read_text(encoding="utf-8")) if args.application_plan else {}
+    appearance_plan = json.loads(args.appearance_plan.read_text(encoding="utf-8")) if args.appearance_plan else {}
+    interaction_motion_plan = json.loads(args.interaction_motion_plan.read_text(encoding="utf-8")) if args.interaction_motion_plan else {}
+    if application_plan and application_plan.get("schemaVersion") != "native-application-plan-1.0":
+        raise ValueError("--application-plan must use native-application-plan-1.0")
+    if appearance_plan and appearance_plan.get("schemaVersion") != "native-appearance-plan-1.0":
+        raise ValueError("--appearance-plan must use native-appearance-plan-1.0")
+    if interaction_motion_plan and interaction_motion_plan.get("schemaVersion") != "native-interaction-motion-plan-1.0":
+        raise ValueError("--interaction-motion-plan must use native-interaction-motion-plan-1.0")
+    apply_interaction_motion_contracts(irs, interaction_motion_plan)
+    appearance_by_screen = {str(item.get("screenId") or ""): item for item in appearance_plan.get("screens") or []}
+    if appearance_plan and set(appearance_by_screen) != set(ir_screen_ids):
+        raise ValueError("appearance plan screen set does not match UI IR")
+    for ir, screen_id in zip(irs, ir_screen_ids):
+        appearance_nodes = {
+            str(item.get("nodeId") or ""): item
+            for item in (appearance_by_screen.get(screen_id) or {}).get("nodes") or []
+        }
+        for node in (ir.get("screens") or [{}])[0].get("nodes") or []:
+            appearance = appearance_nodes.get(str(node.get("id") or "")) or {}
+            typography = appearance.get("typography") or {}
+            media = appearance.get("media") or {}
+            style = node.setdefault("style", {})
+            for key in (
+                "fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight",
+                "letterSpacing", "textAlign", "whiteSpace", "textOverflow",
+            ):
+                if key in typography:
+                    style[key] = typography[key]
+            for key in ("objectFit", "objectPosition"):
+                if key in media:
+                    style[key] = media[key]
+    for screen_id, layout_screen in native_layout_by_screen.items():
+        appearance_nodes = {str(item.get("nodeId") or ""): item for item in (appearance_by_screen.get(screen_id) or {}).get("nodes") or []}
+        for layout_node in layout_screen.get("nodes") or []:
+            node_id = str(layout_node.get("nodeId") or "")
+            if node_id in appearance_nodes:
+                layout_node["appearance"] = {
+                    key: value for key, value in appearance_nodes[node_id].items()
+                    if key != "nodeId"
+                }
     if args.native_structure_manifest and not args.layout_relation_graph:
         raise ValueError("--native-structure-manifest requires --layout-relation-graph")
     name_prefix, naming_source, existing_type_names = load_naming_prefix(args.naming_plan)
-    ir_screen_ids = [str((ir.get("screens") or [{}])[0].get("id") or "screen") for ir in irs]
     unknown_architecture_screens = sorted(set(architecture_by_screen) - set(ir_screen_ids))
     if unknown_architecture_screens:
         raise ValueError("architecture plan contains unknown screens: " + ", ".join(unknown_architecture_screens))
@@ -11475,6 +11596,12 @@ def main() -> int:
     ids = [screen["id"] for screen in screens]
     if len(ids) != len(set(ids)):
         raise ValueError("screen IDs must be unique")
+    if application_plan:
+        memberships = {
+            str(item.get("screenId") or "") for item in application_plan.get("screenMemberships") or []
+        }
+        if memberships != set(ids):
+            raise ValueError("application plan screen memberships do not match generated screens")
     assign_screen_modules(screens)
     generated_page_types = {
         f"{name_prefix}{screen['screenType']}{suffix}"
@@ -11502,7 +11629,9 @@ def main() -> int:
         raise ValueError("generated page types collide with existing target types: " + ", ".join(collisions))
     tab_candidates = [screen.get("tabContainer") for screen in screens if screen.get("tabContainer")]
     tab_container = None
-    if tab_candidates:
+    if application_plan:
+        tab_container = application_plan.get("tabContainer")
+    elif tab_candidates:
         source_tab = tab_candidates[0]
         items = []
         for index, item in enumerate(source_tab.get("items") or []):
@@ -11530,8 +11659,8 @@ def main() -> int:
             "visibility": str(source_tab.get("visibility") or "automatic"),
             "items": items,
         }
-    initial_route = screens[0]["id"]
-    if tab_container:
+    initial_route = str(application_plan.get("initialScreenId") or screens[0]["id"])
+    if tab_container and not application_plan:
         initial_item = next(item for item in tab_container["items"] if item["id"] == tab_container["initialTabId"])
         initial_route = initial_item["targetScreenId"]
     for screen in screens:
@@ -11562,6 +11691,8 @@ def main() -> int:
         "screenModules": {screen["id"]: screen["moduleId"] for screen in screens},
         "inputs": [{"path": str(path.resolve()), "sha256": sha256_file(path)} for path in args.ir],
         "architecturePlan": str(args.architecture_plan.resolve()) if args.architecture_plan else None,
+        "applicationPlan": str(args.application_plan.resolve()) if args.application_plan else None,
+        "applicationPlanSha256": sha256_file(args.application_plan) if args.application_plan else None,
         "layoutRelationGraph": str(args.layout_relation_graph.resolve()) if args.layout_relation_graph else None,
         "nativeLayoutPlan": str(args.native_layout_plan.resolve()) if args.native_layout_plan else None,
         "nativeLayoutPlanSha256": sha256_file(args.native_layout_plan) if args.native_layout_plan else None,
@@ -11571,6 +11702,10 @@ def main() -> int:
         "controlConfigurationPlanSha256": sha256_file(args.control_configuration_plan) if args.control_configuration_plan else None,
         "presentationPlan": str(args.presentation_plan.resolve()) if args.presentation_plan else None,
         "presentationPlanSha256": sha256_file(args.presentation_plan) if args.presentation_plan else None,
+        "appearancePlan": str(args.appearance_plan.resolve()) if args.appearance_plan else None,
+        "appearancePlanSha256": sha256_file(args.appearance_plan) if args.appearance_plan else None,
+        "interactionMotionPlan": str(args.interaction_motion_plan.resolve()) if args.interaction_motion_plan else None,
+        "interactionMotionPlanSha256": sha256_file(args.interaction_motion_plan) if args.interaction_motion_plan else None,
         "compatibilityMatrix": str(args.compatibility_matrix.resolve()) if args.compatibility_matrix else None,
         "compatibilityMatrixSha256": sha256_file(args.compatibility_matrix) if args.compatibility_matrix else None,
         "apiFallbackPlan": str(args.api_fallback_plan.resolve()) if args.api_fallback_plan else None,
@@ -11611,6 +11746,9 @@ def main() -> int:
             args.presentation_plan,
             args.compatibility_matrix,
             args.api_fallback_plan,
+            args.application_plan,
+            args.appearance_plan,
+            args.interaction_motion_plan,
             ui_stack,
         )
         native_structure_path.parent.mkdir(parents=True, exist_ok=True)

@@ -13,7 +13,7 @@ from typing import Any
 from system_control_catalog import SYSTEM_CONTROLS
 
 
-SCHEMA_VERSION = "native-control-configuration-plan-1.0"
+SCHEMA_VERSION = "native-control-configuration-plan-1.1"
 SEMANTICS = {str(item["semantic"]): item for item in SYSTEM_CONTROLS}
 SEMANTICS.update({
     "toggle": SEMANTICS["switch"],
@@ -154,7 +154,13 @@ def state_appearances(semantic: str, style: dict[str, Any], states: dict[str, An
     return result
 
 
-def node_contract(node: dict[str, Any], scale: float) -> dict[str, Any]:
+INTRINSIC_SIZE_HINTS = {
+    "switch": (51.0, 31.0), "toggle": (51.0, 31.0), "stepper": (94.0, 32.0),
+    "activity-indicator": (20.0, 20.0), "loading": (20.0, 20.0),
+}
+
+
+def node_contract(node: dict[str, Any], scale: float, parent_semantic: str | None) -> dict[str, Any]:
     semantic = str(node.get("semanticType") or "")
     style = node.get("style") or {}
     states = node.get("controlVisualStates") or {}
@@ -182,11 +188,34 @@ def node_contract(node: dict[str, Any], scale: float) -> dict[str, Any]:
     source_height = number(rect.get("height")) * scale
     primitive = SEMANTICS[semantic]
     visual_states = state_appearances(semantic, style, states)
+    expected_size = INTRINSIC_SIZE_HINTS.get(semantic)
+    delta = {
+        "widthPt": abs(source_width - expected_size[0]) if expected_size and source_width > 0 else None,
+        "heightPt": abs(source_height - expected_size[1]) if expected_size and source_height > 0 else None,
+    }
+    fit_status = "source-measured-no-fixed-system-baseline"
+    if expected_size:
+        fit_status = "system-intrinsic-compatible" if max(value or 0 for value in delta.values()) <= 8 else "wrapper-recommended"
+    existing_strategy = "system-control-with-wrapper" if decision.get("decision") == "system-control-with-wrapper" else "system-control"
     return {
         "nodeId": str(node.get("id") or ""),
         "semantic": semantic,
         "nativePrimitive": {"swiftUI": primitive.get("swiftUI"), "uiKit": primitive.get("uikit")},
-        "strategy": "system-control-with-wrapper" if decision.get("decision") == "system-control-with-wrapper" else "system-control",
+        "strategy": existing_strategy,
+        "selection": {
+            "semanticCandidate": semantic,
+            "contextRole": parent_semantic or "screen-content",
+            "systemCandidates": {"swiftUI": [primitive.get("swiftUI")], "uiKit": [primitive.get("uikit")]},
+            "geometryFit": {
+                "status": fit_status,
+                "systemIntrinsicSizePt": {"width": expected_size[0], "height": expected_size[1]} if expected_size else None,
+                "sourceSizePt": {"width": source_width or None, "height": source_height or None},
+                "deltaPt": delta,
+                "boundedResolutionPasses": 2,
+            },
+            "finalDecision": existing_strategy,
+            "decisionSource": "ui-ir-native-control-decision",
+        },
         "geometry": {
             "sourceWidthPt": source_width if source_width > 0 else None,
             "sourceHeightPt": source_height if source_height > 0 else None,
@@ -225,8 +254,13 @@ def main() -> int:
         payload = load(path)
         scale = min(max(number((payload.get("target") or {}).get("scale"), 1), 0.5), 3)
         for screen in payload.get("screens") or []:
+            node_index = {str(node.get("id") or ""): node for node in screen.get("nodes") or []}
             controls = [
-                node_contract(node, scale)
+                node_contract(
+                    node,
+                    scale,
+                    str((node_index.get(str(node.get("parentId") or "")) or {}).get("semanticType") or "") or None,
+                )
                 for node in screen.get("nodes") or []
                 if str(node.get("semanticType") or "") in SEMANTICS and node.get("id")
             ]

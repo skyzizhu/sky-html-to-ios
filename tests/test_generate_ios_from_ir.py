@@ -94,6 +94,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
         architecture_plan: Path | None = None,
         control_configuration_plan: Path | None = None,
         presentation_plan: Path | None = None,
+        interaction_motion_plan: Path | None = None,
         compatibility_matrix: Path | None = None,
         api_fallback_plan: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
@@ -109,6 +110,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             command.extend(["--control-configuration-plan", str(control_configuration_plan)])
         if presentation_plan:
             command.extend(["--presentation-plan", str(presentation_plan)])
+        if interaction_motion_plan:
+            command.extend(["--interaction-motion-plan", str(interaction_motion_plan)])
         if compatibility_matrix:
             command.extend(["--compatibility-matrix", str(compatibility_matrix)])
         if api_fallback_plan:
@@ -119,6 +122,33 @@ class GenerateIOSFromIRTests(unittest.TestCase):
         if expect_success and result.returncode != 0:
             self.fail(result.stderr or result.stdout)
         return result
+
+    def test_interaction_motion_plan_is_lowered_into_generated_action_ownership(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("home", transition("open-details", "push", "page-details"))
+            path = root / "home.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            plan = root / "interaction-motion.json"
+            plan.write_text(json.dumps({
+                "schemaVersion": "native-interaction-motion-plan-1.0",
+                "screens": [{
+                    "screenId": "home",
+                    "actions": [{
+                        "id": "open-details", "sourceInteractionId": "open-details",
+                        "sourceNodeId": "home.button", "owner": "navigation-stack",
+                        "ownerId": "main-navigation", "executor": "native-navigation",
+                    }],
+                    "motions": [],
+                }],
+            }), encoding="utf-8")
+            out = root / "generated"
+            self.run_generator([path], out, interaction_motion_plan=plan)
+            generated = json.loads((out / PAYLOAD).read_text(encoding="utf-8"))
+            action = generated["screens"][0]["root"]["children"][0]["action"]
+            self.assertEqual(action["nativeOwner"], "navigation-stack")
+            self.assertEqual(action["nativeOwnerID"], "main-navigation")
+            self.assertEqual(action["nativeExecutor"], "native-navigation")
 
     def test_contextual_state_delta_generates_native_swipe_actions_for_both_stacks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

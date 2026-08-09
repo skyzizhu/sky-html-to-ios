@@ -50,7 +50,11 @@ class NativeControlConfigurationPlanTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
             payload = json.loads(plan.read_text(encoding="utf-8"))
+            self.assertEqual(payload["schemaVersion"], "native-control-configuration-plan-1.1")
             control = payload["screens"][0]["controls"][0]
+            self.assertEqual(control["selection"]["semanticCandidate"], "switch")
+            self.assertEqual(control["selection"]["finalDecision"], "system-control")
+            self.assertEqual(control["selection"]["geometryFit"]["boundedResolutionPasses"], 2)
             self.assertEqual(control["geometry"]["contentInsetsPt"], [2, 4, 2, 4])
             self.assertEqual(control["geometry"]["itemSpacingPt"], 6)
             self.assertEqual(control["appearance"]["fillTint"], "rgb(0, 122, 255)")

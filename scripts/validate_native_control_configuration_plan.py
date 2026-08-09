@@ -21,8 +21,8 @@ def main() -> int:
     plan = load(args.plan)
     issues: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
-    if plan.get("schemaVersion") != "native-control-configuration-plan-1.0":
-        issues.append({"code": "SCHEMA_VERSION_INVALID", "message": "Expected native-control-configuration-plan-1.0."})
+    if plan.get("schemaVersion") not in {"native-control-configuration-plan-1.0", "native-control-configuration-plan-1.1"}:
+        issues.append({"code": "SCHEMA_VERSION_INVALID", "message": "Expected native-control-configuration-plan-1.0 or 1.1."})
     for screen in plan.get("screens") or []:
         screen_id = str(screen.get("screenId") or "")
         if not screen_id:
@@ -35,6 +35,13 @@ def main() -> int:
             seen.add(key)
             if control.get("strategy") not in {"system-control", "system-control-with-wrapper"}:
                 issues.append({"code": "CONTROL_STRATEGY_INVALID", "screenId": screen_id, "nodeId": node_id, "message": "Unsupported native control strategy."})
+            if plan.get("schemaVersion") == "native-control-configuration-plan-1.1":
+                selection = control.get("selection") or {}
+                fit = selection.get("geometryFit") or {}
+                if not selection.get("semanticCandidate") or not selection.get("contextRole"):
+                    issues.append({"code": "CONTROL_CANDIDATE_CONTEXT_MISSING", "screenId": screen_id, "nodeId": node_id})
+                if selection.get("finalDecision") != control.get("strategy") or int(fit.get("boundedResolutionPasses") or 0) != 2:
+                    issues.append({"code": "CONTROL_FINAL_DECISION_INVALID", "screenId": screen_id, "nodeId": node_id})
             geometry = control.get("geometry") or {}
             insets = geometry.get("contentInsetsPt") or []
             if len(insets) != 4 or any(not isinstance(item, (int, float)) or item < 0 for item in insets):
