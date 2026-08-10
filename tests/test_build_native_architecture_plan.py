@@ -37,6 +37,51 @@ def make_ir(screen_id: str = "home") -> dict:
 
 
 class BuildNativeArchitecturePlanTests(unittest.TestCase):
+    def test_centered_single_track_artwork_grid_stays_static(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = make_ir("artwork")
+            screen = payload["screens"][0]
+            root_id = screen["rootNodeId"]
+            screen["nodes"][0].update({
+                "semanticType": "container",
+                "layout": {"scrollAxis": "none", "rect": {"x": 0, "y": 0, "width": 393, "height": 852}},
+            })
+            grid_id = "artwork.orb"
+            screen["nodes"].append({
+                "id": grid_id,
+                "parentId": root_id,
+                "semanticType": "grid",
+                "layout": {"scrollAxis": "none", "rect": {"x": 144, "y": 200, "width": 104, "height": 104}},
+                "style": {
+                    "display": "grid", "position": "relative",
+                    "gridTemplateColumns": "104px", "gridTemplateRows": "104px",
+                    "justifyItems": "center", "alignItems": "center",
+                },
+            })
+            screen["nodes"].append({
+                "id": "artwork.orb.icon", "parentId": grid_id, "semanticType": "icon",
+                "layout": {"rect": {"x": 175, "y": 231, "width": 42, "height": 42}},
+                "style": {"position": "static"},
+            })
+            for index in range(5):
+                screen["nodes"].append({
+                    "id": f"artwork.sparkle.{index}", "parentId": grid_id, "semanticType": "decoration",
+                    "layout": {"rect": {"x": 194, "y": 250, "width": 5, "height": 5}},
+                    "style": {"position": "absolute"},
+                })
+            ir_path = root / "ui-ir.json"
+            output = root / "plan.json"
+            ir_path.write_text(json.dumps(payload), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), "--ir", str(ir_path), "--out", str(output), "--ui-stack", "uikit",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            strategies = json.loads(output.read_text(encoding="utf-8"))["screens"][0]["layers"]["contentContainer"]["nodeStrategies"]
+            strategy = next(item for item in strategies if item["nodeId"] == grid_id)
+            self.assertEqual(strategy["kind"], "static-grid")
+            self.assertFalse(strategy["usesReuse"])
+
     def test_authored_percentage_width_remains_parent_filling(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

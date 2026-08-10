@@ -495,6 +495,28 @@ def content_container_plan(
     def measured_height(node: dict[str, Any]) -> float:
         return max(css_number(((node.get("layout") or {}).get("rect") or {}).get("height")), 0)
 
+    def presentational_grid(node: dict[str, Any]) -> bool:
+        if str(node.get("semanticType") or "") != "grid":
+            return False
+        node_id = str(node.get("id") or "")
+        direct_child_ids = children.get(node_id) or []
+        flow_child_ids = [
+            child_id for child_id in direct_child_ids
+            if str(((nodes.get(child_id) or {}).get("style") or {}).get("position") or "static")
+            not in {"absolute", "fixed"}
+        ]
+        style = node.get("style") or {}
+        return bool(
+            len(flow_child_ids) <= 1
+            and (
+                len(flow_child_ids) < len(direct_child_ids)
+                or (
+                    str(style.get("justifyItems") or "normal") == "center"
+                    and str(style.get("alignItems") or "normal") == "center"
+                )
+            )
+        )
+
     def reusable_candidate(node: dict[str, Any]) -> bool:
         node_id = str(node.get("id") or "")
         semantic = str(node.get("semanticType") or "")
@@ -502,7 +524,7 @@ def content_container_plan(
         repeated = bool(repeated_groups(node_id, nodes, children))
         return (
             semantic in {"carousel", "collection", "data-table"}
-            or semantic == "grid" and (item_count >= 4 or repeated)
+            or semantic == "grid" and not presentational_grid(node) and (item_count >= 4 or repeated)
             or semantic in {"list", "sectioned-list"} and (semantic == "sectioned-list" or item_count >= 5 or repeated)
         )
 
@@ -719,12 +741,21 @@ def content_container_plan(
         selected_native_owner = node_id == selected_node_id and kind in {
             "table-view", "collection-view", "compositional-collection",
         }
+        is_presentational_grid = bool(
+            semantic == "grid"
+            and not selected_native_owner
+            and presentational_grid(node)
+        )
         if semantic == "data-table":
             node_kind = "collection-view" if selected_native_owner or not has_vertical_scroll_ancestor else "static-grid"
         elif semantic in {"carousel", "collection"}:
             node_kind = "collection-view" if selected_native_owner or semantic == "carousel" or scroll_axis(node) == "horizontal" or not has_vertical_scroll_ancestor else "static-grid"
         elif semantic == "grid":
-            node_kind = "collection-view" if (selected_native_owner or not has_vertical_scroll_ancestor) and (item_count >= 4 or has_repeated_items) else "static-grid"
+            node_kind = "static-grid" if is_presentational_grid else (
+                "collection-view"
+                if (selected_native_owner or not has_vertical_scroll_ancestor) and (item_count >= 4 or has_repeated_items)
+                else "static-grid"
+            )
         elif semantic in {"list", "sectioned-list"}:
             node_kind = "table-view" if (selected_native_owner or not has_vertical_scroll_ancestor) and (semantic == "sectioned-list" or item_count >= 5 or has_repeated_items) else "static-list"
         elif semantic == "scroll":

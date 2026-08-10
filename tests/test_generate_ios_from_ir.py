@@ -1028,7 +1028,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             })
             orb["style"].update({
                 "display": "grid",
-                "backgroundImage": "radial-gradient(circle, rgb(155, 138, 255), rgb(58, 43, 204))",
+                "backgroundImage": "radial-gradient(circle at 35% 30%, rgb(155, 138, 255), rgb(58, 43, 204))",
                 "cornerRadii": ["50%"] * 4,
                 "gridTemplateColumns": "104px",
             })
@@ -1057,6 +1057,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             generated_label = generated_item["children"][0]
             generated_icon_box = generated_row["children"][0]
             generated_orb = next(child for child in generated_root["children"] if child["id"] == orb["id"])
+            self.assertEqual(generated_orb["style"]["gradientCenterX"], 0.35)
+            self.assertEqual(generated_orb["style"]["gradientCenterY"], 0.3)
 
             self.assertEqual(generated_rail["style"]["scrollAxis"], "horizontal")
             self.assertEqual(generated_item["style"]["fixedWidth"], 88)
@@ -1906,7 +1908,9 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("private struct HTMLToIOSMarginModifier: ViewModifier", swiftui_runtime)
             self.assertIn(".modifier(HTMLToIOSMarginModifier(style: spec.style))", swiftui_runtime)
             self.assertIn("endRadius: radialEndRadius(proxy.size)", swiftui_runtime)
-            self.assertIn("sqrt(size.width * size.width + size.height * size.height) / 2", swiftui_runtime)
+            self.assertIn("center: radialCenter", swiftui_runtime)
+            self.assertIn("let farthestX = max(centerX, 1 - centerX) * size.width", swiftui_runtime)
+            self.assertIn("sqrt(farthestX * farthestX + farthestY * farthestY)", swiftui_runtime)
             self.assertIn(".offset(x: style.offsetX ?? 0, y: style.offsetY ?? 0)", swiftui_runtime)
             self.assertIn("private struct HTMLToIOSMotionModifier: ViewModifier", swiftui_runtime)
             self.assertIn("HTMLToIOSLaunchConfiguration.motionProgress", swiftui_runtime)
@@ -1917,6 +1921,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn('let content = spec.axis == "grid" ? makeGrid(spec) : makeStack(spec, appliesPadding: false)', uikit_runtime)
             self.assertIn("stack.insetsLayoutMarginsFromSafeArea = false", uikit_runtime)
             self.assertIn("private func makeGrid(_ spec: HTMLToIOSNodeSpec) -> UIView", uikit_runtime)
+            self.assertIn("return makeOverlay(spec)", uikit_runtime)
             self.assertIn("HTMLToIOSGridPlacementView", uikit_runtime)
             self.assertIn("row.distribution = .fillEqually", uikit_runtime)
             self.assertIn("private func makeOverlay(_ spec: HTMLToIOSNodeSpec) -> UIView", uikit_runtime)
@@ -2548,6 +2553,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             uikit_navigation = (uikit_dir / NAVIGATION_FILE).read_text(encoding="utf-8")
             self.assertIn("CAGradientLayer", uikit_runtime)
+            self.assertIn("spec.style.gradientCenterX ?? 0.5", uikit_runtime)
             self.assertIn("let isGradientText = view is UILabel", uikit_runtime)
             self.assertIn("attributedText.addAttribute(.foregroundColor", uikit_runtime)
             self.assertIn("html-to-ios-border", uikit_runtime)

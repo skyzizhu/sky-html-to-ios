@@ -488,10 +488,12 @@ def gradient_spec(value: Any) -> dict[str, Any]:
     text = str(value or "").strip()
     match = re.search(r"(linear|radial)-gradient\((.*)\)", text, re.IGNORECASE)
     if not match:
-        return {"kind": None, "angle": None, "colors": [], "locations": []}
+        return {"kind": None, "angle": None, "centerX": None, "centerY": None, "colors": [], "locations": []}
     kind = match.group(1).lower()
     parts = split_css_commas(match.group(2))
     angle = 180.0
+    center_x = None
+    center_y = None
     if kind == "linear" and parts:
         direction = parts[0].lower()
         angle_match = re.fullmatch(r"(-?\d+(?:\.\d+)?)deg", direction)
@@ -507,6 +509,17 @@ def gradient_spec(value: Any) -> dict[str, Any]:
         elif direction in directions:
             angle = directions[direction]
             parts = parts[1:]
+    elif kind == "radial" and parts:
+        radial_preamble = parts[0].lower()
+        center_match = re.search(
+            r"\bat\s+(-?\d+(?:\.\d+)?)%\s+(-?\d+(?:\.\d+)?)%",
+            radial_preamble,
+        )
+        if center_match:
+            center_x = min(max(float(center_match.group(1)) / 100, 0), 1)
+            center_y = min(max(float(center_match.group(2)) / 100, 0), 1)
+        if not re.search(r"rgba?\(|hsla?\(|#[0-9a-fA-F]{3,8}\b", parts[0]):
+            parts = parts[1:]
     colors: list[str] = []
     locations: list[float | None] = []
     for part in parts:
@@ -516,7 +529,14 @@ def gradient_spec(value: Any) -> dict[str, Any]:
         colors.append(color_match.group(0))
         location_match = re.search(r"(-?\d+(?:\.\d+)?)%\s*$", part)
         locations.append(float(location_match.group(1)) / 100 if location_match else None)
-    return {"kind": kind, "angle": angle if kind == "linear" else None, "colors": colors[:8], "locations": locations[:8]}
+    return {
+        "kind": kind,
+        "angle": angle if kind == "linear" else None,
+        "centerX": center_x,
+        "centerY": center_y,
+        "colors": colors[:8],
+        "locations": locations[:8],
+    }
 
 
 def shadow_spec(value: Any, scale: float) -> dict[str, Any]:
@@ -2158,6 +2178,8 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "gradientLocations": gradient["locations"],
             "gradientKind": gradient["kind"],
             "gradientAngle": gradient["angle"],
+            "gradientCenterX": gradient["centerX"],
+            "gradientCenterY": gradient["centerY"],
             "cornerRadius": max(corner_radius, 0),
             "cornerRadii": [max(value, 0) for value in radius_values],
             "cornerRadiiY": [max(value, 0) for value in radius_y_values],
@@ -3692,6 +3714,8 @@ struct HTMLToIOSStyleSpec: Codable {{
     let gradientLocations: [Double?]?
     let gradientKind: String?
     let gradientAngle: Double?
+    let gradientCenterX: Double?
+    let gradientCenterY: Double?
     let cornerRadius: Double?
     let cornerRadii: [Double]?
     let cornerRadiiY: [Double]?
@@ -4338,7 +4362,7 @@ private struct HTMLToIOSBackgroundModifier: ViewModifier {
                         GeometryReader { proxy in
                             RadialGradient(
                                 gradient: Gradient(stops: stops),
-                                center: .center,
+                                center: radialCenter,
                                 startRadius: 0,
                                 endRadius: radialEndRadius(proxy.size)
                             )
@@ -4373,7 +4397,15 @@ private struct HTMLToIOSBackgroundModifier: ViewModifier {
     }
 
     private func radialEndRadius(_ size: CGSize) -> CGFloat {
-        max(sqrt(size.width * size.width + size.height * size.height) / 2, 1)
+        let centerX = CGFloat(style.gradientCenterX ?? 0.5)
+        let centerY = CGFloat(style.gradientCenterY ?? 0.5)
+        let farthestX = max(centerX, 1 - centerX) * size.width
+        let farthestY = max(centerY, 1 - centerY) * size.height
+        return max(sqrt(farthestX * farthestX + farthestY * farthestY), 1)
+    }
+
+    private var radialCenter: UnitPoint {
+        UnitPoint(x: style.gradientCenterX ?? 0.5, y: style.gradientCenterY ?? 0.5)
     }
 
     private var gradientVector: (CGFloat, CGFloat) {
@@ -5845,7 +5877,7 @@ struct HTMLToIOSNativeNodeView: View {
             HStack(alignment: verticalAlignment, spacing: contentSpacing) { dynamicOrDistributedContent }
                 .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: horizontalFrameAlignment)
         } else if spec.axis == "grid" {
-            if spec.children.isEmpty {
+            if spec.children.isEmpty || isSingleCenteredGrid {
                 ZStack(alignment: gridItemAlignment) { dynamicOrOrderedContent }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: gridItemAlignment)
             } else if hasExplicitGridPlacement {
@@ -6062,6 +6094,12 @@ struct HTMLToIOSNativeNodeView: View {
             $0.layoutContract.gridColumnStart != nil || $0.layoutContract.gridColumnSpan != nil
                 || $0.layoutContract.gridRowStart != nil || $0.layoutContract.gridRowSpan != nil
         }
+    }
+    private var isSingleCenteredGrid: Bool {
+        spec.children.count == 1
+            && max(spec.style.gridColumnCount ?? 1, 1) == 1
+            && spec.style.justifyItems == "center"
+            && spec.style.alignItems == "center"
     }
     private var gridPlacements: [HTMLToIOSGridPlacement] {
         spec.children.map {
@@ -8618,6 +8656,12 @@ final class HTMLToIOSNodeRenderer {
     }
 
     private func makeGrid(_ spec: HTMLToIOSNodeSpec) -> UIView {
+        if spec.children.count == 1,
+           max(spec.style.gridColumnCount ?? 1, 1) == 1,
+           spec.style.justifyItems == "center",
+           spec.style.alignItems == "center" {
+            return makeOverlay(spec)
+        }
         if spec.children.contains(where: {
             $0.layoutContract.gridColumnStart != nil || $0.layoutContract.gridColumnSpan != nil
                 || $0.layoutContract.gridRowStart != nil || $0.layoutContract.gridRowSpan != nil
@@ -9391,8 +9435,13 @@ final class HTMLToIOSNodeRenderer {
             }
             if spec.style.gradientKind == "radial" {
                 gradient.type = .radial
-                gradient.startPoint = CGPoint(x: 0.5, y: 0.5)
-                gradient.endPoint = CGPoint(x: 1, y: 1)
+                let centerX = CGFloat(spec.style.gradientCenterX ?? 0.5)
+                let centerY = CGFloat(spec.style.gradientCenterY ?? 0.5)
+                gradient.startPoint = CGPoint(x: centerX, y: centerY)
+                gradient.endPoint = CGPoint(
+                    x: centerX + max(centerX, 1 - centerX),
+                    y: centerY + max(centerY, 1 - centerY)
+                )
             } else {
                 let radians = (spec.style.gradientAngle ?? 180) * .pi / 180
                 let dx = CGFloat(sin(radians)); let dy = CGFloat(-cos(radians))
