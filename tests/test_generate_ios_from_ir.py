@@ -901,9 +901,73 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("state.contentOverrides[spec.id]", uikit_runtime)
             self.assertIn("state.sizeOverrides[spec.id]", uikit_runtime)
             self.assertIn("state.scrollAxisOverrides[spec.id]", uikit_runtime)
+            self.assertIn("spec.id != outerScrollOwnerNodeID", uikit_runtime)
+            self.assertIn("content.isUserInteractionEnabled = false", uikit_runtime)
+            self.assertIn("stack.isUserInteractionEnabled = false", uikit_runtime)
+            self.assertIn("view = actionHostedViewIfNeeded(view, spec: spec)", uikit_runtime)
+            self.assertIn("var view: UIView", uikit_runtime)
+            self.assertIn("view is UILabel || view is UIStackView || view is UIImageView", uikit_runtime)
+            self.assertIn("view.isUserInteractionEnabled = false", uikit_runtime)
             uikit_root = (uikit_dir / NAVIGATION_FILE).read_text(encoding="utf-8")
             self.assertIn("generatedState.perform(action)", uikit_root)
             self.assertIn("generatedState.sizeOverrides[presentation.node.id]?.height", uikit_root)
+
+    def test_layout_only_state_variant_updates_and_restores_native_geometry(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("expandable")
+            root_node = payload["screens"][0]["nodes"][0]
+            toggle = node("expandable.toggle", root_node["id"], "button", "Toggle")
+            panel = node("expandable.panel", root_node["id"], "container")
+            panel["layout"]["rect"] = {"x": 20, "y": 80, "width": 353, "height": 54}
+            panel["style"]["height"] = "54px"
+            payload["screens"][0]["nodes"].extend([toggle, panel])
+            payload["states"] = [{
+                "id": "panel-expanded",
+                "kind": "expansion",
+                "targetNodeIds": [panel["id"]],
+            }]
+            payload["interactions"] = [{
+                "id": "interaction.dynamic.expand",
+                "sourceNodeId": toggle["id"],
+                "sourceNodeIds": [toggle["id"]],
+                "automatic": False,
+                "action": "toggle-state",
+                "target": "panel-expanded",
+                "payload": {
+                    "transitions": [{
+                        "action": "toggle-state",
+                        "target": "panel-expanded",
+                        "targetScreenId": None,
+                        "targetStateId": "panel-expanded",
+                        "schedule": None,
+                    }],
+                    "contentVariants": [{
+                        "sourceNodeId": toggle["id"],
+                        "targetNodeId": panel["id"],
+                        "mode": "layout-only",
+                        "targetRectBeforeCssPx": {"x": 20, "y": 80, "width": 353, "height": 54},
+                        "targetRectAfterCssPx": {"x": 20, "y": 80, "width": 353, "height": 307},
+                        "scrollAxisAfter": "none",
+                        "items": [],
+                    }],
+                },
+            }]
+            path = root / "expandable.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            for stack in ("swiftui", "uikit"):
+                out_dir = root / stack
+                self.run_generator([path], out_dir, ui_stack=stack)
+                generated = json.loads((out_dir / PAYLOAD).read_text(encoding="utf-8"))
+                action = generated["screens"][0]["root"]["children"][0]["action"]
+                self.assertEqual(action["contentVariant"]["items"], [])
+                self.assertEqual(action["contentVariant"]["sizeOverrides"], [{
+                    "nodeID": panel["id"], "width": None, "height": 307.0,
+                }])
+                runtime = (out_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+                self.assertIn("let reversesVariant", runtime)
+                self.assertIn("sizeOverrides.removeValue(forKey: $0.nodeID)", runtime)
 
     def test_axis_isolation_intrinsic_item_width_and_compact_square_geometry(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1634,6 +1698,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertTrue(presentation["usesCustomOverlay"])
             self.assertEqual(presentation["coordinateSpace"], "app-root")
             self.assertEqual(presentation["sourceRect"], [24, 580, 345, 190])
+            self.assertEqual(presentation["panelRect"], [24, 580, 345, 190])
             self.assertEqual(presentation["node"]["style"]["opacity"], 1)
             self.assertEqual(presentation["node"]["style"]["fixedWidth"], 345)
             self.assertEqual(presentation["node"]["style"]["fixedHeight"], 190)
@@ -1655,6 +1720,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("sourceLeading.priority = .defaultHigh", uikit_root)
             self.assertIn("panel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor)", uikit_root)
             self.assertIn("panel.heightAnchor.constraint(equalToConstant: height)", uikit_root)
+            self.assertIn('catalog.presentation(stateID)?.node.id ?? "html-to-ios-presentation-\\(stateID)"', uikit_root)
             self.assertIn('spec.style.baselineAligned == true || spec.style.alignItems == "baseline"', uikit_runtime)
 
     def test_large_overlay_height_and_actionable_grid_are_preserved_for_both_stacks(self) -> None:

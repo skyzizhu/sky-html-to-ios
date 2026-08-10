@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.46.0"
+GENERATOR_VERSION = "1.47.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SUPPORTED_API_FALLBACKS = {
     "custom-overlay-container", "over-full-screen-container",
@@ -2416,12 +2416,13 @@ def build_screen(
     def native_content_variant(raw: dict[str, Any]) -> dict[str, Any] | None:
         target_node_id = str(raw.get("targetNodeId") or "")
         template_ids = children.get(target_node_id) or []
-        if not target_node_id or not template_ids:
+        if not target_node_id:
+            return None
+        raw_items = [item for item in raw.get("items") or [] if isinstance(item, dict)]
+        if raw_items and not template_ids:
             return None
         items = []
-        for index, item in enumerate(raw.get("items") or []):
-            if not isinstance(item, dict):
-                continue
+        for index, item in enumerate(raw_items):
             template_id = template_ids[index] if index < len(template_ids) else template_ids[0]
             leaf_ids = text_leaf_ids(template_id)
             values = [compact_text(value, 480) for value in (item.get("textLeaves") or []) if compact_text(value, 480)]
@@ -2435,8 +2436,6 @@ def build_screen(
                 "textByNodeID": {leaf_id: values[value_index] for value_index, leaf_id in enumerate(leaf_ids) if value_index < len(values)},
                 "textValues": values,
             })
-        if not items:
-            return None
         size_overrides = []
         before_rect = raw.get("targetRectBeforeCssPx") or {}
         after_rect = raw.get("targetRectAfterCssPx") or {}
@@ -2460,6 +2459,8 @@ def build_screen(
                         })
                     break
                 current = str((nodes.get(current) or {}).get("parentId") or "")
+        if not items and not size_overrides:
+            return None
         return {
             "targetNodeID": target_node_id,
             "items": items,
@@ -3023,6 +3024,7 @@ def build_screen(
                     "usesCustomOverlay": uses_custom_overlay,
                     "coordinateSpace": str((planned.get("anchor") or {}).get("coordinateSpace") or "app-root"),
                     "sourceRect": (planned.get("anchor") or {}).get("sourceRect") or source_rect,
+                    "panelRect": source_rect,
                     "permittedArrowDirections": (planned.get("anchor") or {}).get("permittedArrowDirections") or ["up", "down"],
                     "backdropColor": (planned.get("backdrop") or {}).get("color") or "#000000",
                     "backdropOpacity": number((planned.get("backdrop") or {}).get("opacity"), 0.32),
@@ -3303,6 +3305,7 @@ struct HTMLToIOSPresentationSpec: Codable, Identifiable {{
     let usesCustomOverlay: Bool
     let coordinateSpace: String
     let sourceRect: [Double]
+    let panelRect: [Double]
     let permittedArrowDirections: [String]
     let backdropColor: String
     let backdropOpacity: Double
@@ -4136,13 +4139,21 @@ final class HTMLToIOSGeneratedStore: ObservableObject {
 
     func perform(_ spec: HTMLToIOSActionSpec?) {
         guard let spec else { return }
+        let stateID = spec.targetStateID ?? spec.target
+        let reversesVariant = ["toggle-state", "toggle-expanded"].contains(spec.action)
+            && stateID.map { flags.contains($0) } == true
         if let variant = spec.contentVariant {
-            contentOverrides[variant.targetNodeID] = variant.items
-            for override in variant.sizeOverrides { sizeOverrides[override.nodeID] = override }
-            scrollAxisOverrides[variant.targetNodeID] = variant.scrollAxisOverride
+            if reversesVariant {
+                contentOverrides.removeValue(forKey: variant.targetNodeID)
+                variant.sizeOverrides.forEach { sizeOverrides.removeValue(forKey: $0.nodeID) }
+                scrollAxisOverrides.removeValue(forKey: variant.targetNodeID)
+            } else {
+                if !variant.items.isEmpty { contentOverrides[variant.targetNodeID] = variant.items }
+                for override in variant.sizeOverrides { sizeOverrides[override.nodeID] = override }
+                scrollAxisOverrides[variant.targetNodeID] = variant.scrollAxisOverride
+            }
         }
         let routeID = spec.targetScreenID ?? spec.target
-        let stateID = spec.targetStateID ?? spec.target
         if !spec.deltaRemoveNodeIDs.isEmpty {
             var nextHiddenNodeIDs = hiddenNodeIDs
             if spec.deltaRemoveNodeIDs.allSatisfy({ nextHiddenNodeIDs.contains($0) }) {
@@ -6703,7 +6714,7 @@ struct HTMLToIOSGeneratedRootView: View {
            let presentation = catalog.presentation(state.id),
            presentation.usesCustomOverlay {
             GeometryReader { proxy in
-                let rect = presentation.sourceRect
+                let rect = presentation.panelRect
                 let globalFrame = proxy.frame(in: .global)
                 let width = min(CGFloat(rect.indices.contains(2) ? rect[2] : 0), proxy.size.width)
                 let measuredHeight = store.sizeOverrides[presentation.node.id]?.height ?? (rect.indices.contains(3) ? rect[3] : 0)
@@ -7114,12 +7125,20 @@ final class HTMLToIOSUIKitState {
     }
 
     func perform(_ spec: HTMLToIOSActionSpec) {
-        if let variant = spec.contentVariant {
-            contentOverrides[variant.targetNodeID] = variant.items
-            for override in variant.sizeOverrides { sizeOverrides[override.nodeID] = override }
-            scrollAxisOverrides[variant.targetNodeID] = variant.scrollAxisOverride
-        }
         let stateID = spec.targetStateID ?? spec.target
+        let reversesVariant = ["toggle-state", "toggle-expanded"].contains(spec.action)
+            && stateID.map { flags.contains($0) } == true
+        if let variant = spec.contentVariant {
+            if reversesVariant {
+                contentOverrides.removeValue(forKey: variant.targetNodeID)
+                variant.sizeOverrides.forEach { sizeOverrides.removeValue(forKey: $0.nodeID) }
+                scrollAxisOverrides.removeValue(forKey: variant.targetNodeID)
+            } else {
+                if !variant.items.isEmpty { contentOverrides[variant.targetNodeID] = variant.items }
+                for override in variant.sizeOverrides { sizeOverrides[override.nodeID] = override }
+                scrollAxisOverrides[variant.targetNodeID] = variant.scrollAxisOverride
+            }
+        }
         if !spec.deltaRemoveNodeIDs.isEmpty {
             if spec.deltaRemoveNodeIDs.allSatisfy({ hiddenNodeIDs.contains($0) }) {
                 spec.deltaRemoveNodeIDs.forEach { hiddenNodeIDs.remove($0) }
@@ -7887,7 +7906,7 @@ final class HTMLToIOSNodeRenderer {
             if !suppressContextualActions { installContextualActions(spec.contextualActions, on: typedView) }
             return typedView
         }
-        let view: UIView
+        var view: UIView
         let effectiveScrollAxis = state.scrollAxisOverrides[spec.id] ?? spec.style.scrollAxis ?? "none"
         if spec.nativeContainerKind == "compositional-collection" {
             view = HTMLToIOSGeneratedCompositionalCollectionView(
@@ -7908,7 +7927,10 @@ final class HTMLToIOSNodeRenderer {
                 render: { [weak self] item in self?.makeView(item) ?? UIView() },
                 cellType: { [weak self] item in self?.typedCollectionCellTypes[item.id] ?? HTMLToIOSGeneratedCollectionCell.self }
             )
-        } else if effectiveScrollAxis != "none" && spec.semantic != "carousel" && spec.semantic != "scroll" {
+        } else if effectiveScrollAxis != "none"
+                    && spec.id != outerScrollOwnerNodeID
+                    && spec.semantic != "carousel"
+                    && spec.semantic != "scroll" {
             view = makeScrollContainer(spec)
         } else {
           switch spec.semantic {
@@ -7926,6 +7948,7 @@ final class HTMLToIOSNodeRenderer {
                 let control = HTMLToIOSStatefulControl()
                 control.isEnabled = spec.isEnabled
                 let content = spec.axis == "grid" ? makeGrid(spec) : makeStack(spec, appliesPadding: false)
+                content.isUserInteractionEnabled = false
                 content.translatesAutoresizingMaskIntoConstraints = false
                 control.addSubview(content)
                 let padding = spec.style.padding ?? [0, 0, 0, 0]
@@ -8291,12 +8314,25 @@ final class HTMLToIOSNodeRenderer {
                 stack = makeStack(spec)
             }
             if spec.action != nil {
-                stack.isUserInteractionEnabled = true
-                stack.addGestureRecognizer(HTMLToIOSClosureTapGestureRecognizer { [actionHandler] in actionHandler(spec.action) })
+                let control = HTMLToIOSStatefulControl()
+                control.isEnabled = spec.isEnabled
+                stack.isUserInteractionEnabled = false
+                stack.translatesAutoresizingMaskIntoConstraints = false
+                control.addSubview(stack)
+                NSLayoutConstraint.activate([
+                    stack.leadingAnchor.constraint(equalTo: control.leadingAnchor),
+                    stack.trailingAnchor.constraint(equalTo: control.trailingAnchor),
+                    stack.topAnchor.constraint(equalTo: control.topAnchor),
+                    stack.bottomAnchor.constraint(equalTo: control.bottomAnchor),
+                ])
+                control.addAction(UIAction { [actionHandler] _ in actionHandler(spec.action) }, for: .touchUpInside)
+                view = control
+            } else {
+                view = stack
             }
-            view = stack
           }
         }
+        view = actionHostedViewIfNeeded(view, spec: spec)
         let styledView = backgroundHostedTextViewIfNeeded(view, spec: spec)
         applyStyle(spec, to: styledView)
         applyNativeControlConfiguration(spec, to: styledView)
@@ -8311,6 +8347,25 @@ final class HTMLToIOSNodeRenderer {
         renderedView.accessibilityLabel = spec.accessibilityLabel ?? (spec.text.isEmpty ? nil : spec.text)
         if !suppressContextualActions { installContextualActions(spec.contextualActions, on: renderedView) }
         return renderedView
+    }
+
+    private func actionHostedViewIfNeeded(_ view: UIView, spec: HTMLToIOSNodeSpec) -> UIView {
+        guard spec.action != nil,
+              !(view is UIControl),
+              view is UILabel || view is UIStackView || view is UIImageView else { return view }
+        let control = HTMLToIOSStatefulControl()
+        control.isEnabled = spec.isEnabled
+        view.isUserInteractionEnabled = false
+        view.translatesAutoresizingMaskIntoConstraints = false
+        control.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: control.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: control.trailingAnchor),
+            view.topAnchor.constraint(equalTo: control.topAnchor),
+            view.bottomAnchor.constraint(equalTo: control.bottomAnchor),
+        ])
+        control.addAction(UIAction { [actionHandler] _ in actionHandler(spec.action) }, for: .touchUpInside)
+        return control
     }
 
     private func backgroundHostedTextViewIfNeeded(_ view: UIView, spec: HTMLToIOSNodeSpec) -> UIView {
@@ -9947,7 +10002,7 @@ final class HTMLToIOSGeneratedCustomOverlayController: UIViewController, UIGestu
             pan.delegate = self
             panel.addGestureRecognizer(pan)
         }
-        let rect = presentation.sourceRect
+        let rect = presentation.panelRect
         let width = CGFloat(rect.indices.contains(2) ? rect[2] : 0)
         let height = CGFloat(generatedState.sizeOverrides[presentation.node.id]?.height ?? (rect.indices.contains(3) ? rect[3] : 0))
         let sourceLeading = panel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: CGFloat(rect.indices.contains(0) ? rect[0] : 0))
@@ -10131,7 +10186,7 @@ final class HTMLToIOSGeneratedCoordinator: NSObject, UITabBarControllerDelegate 
     }
 
     private func presentationAccessibilityIdentifier(_ stateID: String) -> String {
-        "html-to-ios-presentation-\(stateID)"
+        catalog.presentation(stateID)?.node.id ?? "html-to-ios-presentation-\(stateID)"
     }
 
     private func isPresentationActive(_ stateID: String) -> Bool {

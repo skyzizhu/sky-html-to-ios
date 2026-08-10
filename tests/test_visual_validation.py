@@ -39,6 +39,8 @@ class VisualValidationTests(unittest.TestCase):
         self.assertIn("requireHittable: Bool = false", source)
         self.assertIn("matches.allElementsBoundByIndex.first(where: { $0.exists && $0.isHittable })", source)
         self.assertIn("requireHittable: true", source)
+        self.assertIn("app.swipeUp(velocity: .slow)", source)
+        self.assertIn("Missing accessibility identifier after native scroll reveal", source)
         self.assertIn('domain: "HTMLToIOSVisualValidation"', source)
         self.assertIn("captureGeometry(name:", source)
         self.assertIn('"-HTMLToIOSGeometryCapture", "1"', source)

@@ -143,17 +143,27 @@ swift = <<~SWIFT
 
       private func element(identifier: String, in app: XCUIApplication, requireHittable: Bool = false) throws -> XCUIElement {
           let matches = app.descendants(matching: .any).matching(identifier: identifier)
-          guard matches.firstMatch.waitForExistence(timeout: 5) else {
-              throw XCTSkip("Missing accessibility identifier: \\(identifier)")
+          if !requireHittable {
+              guard matches.firstMatch.waitForExistence(timeout: 5) else {
+                  throw XCTSkip("Missing accessibility identifier: \\(identifier)")
+              }
+              return matches.firstMatch
           }
-          guard requireHittable else { return matches.firstMatch }
           let deadline = Date().addingTimeInterval(5)
+          var scrollAttempts = 0
           repeat {
               if let candidate = matches.allElementsBoundByIndex.first(where: { $0.exists && $0.isHittable }) {
                   return candidate
               }
+              if scrollAttempts < 5 {
+                  app.swipeUp(velocity: .slow)
+                  scrollAttempts += 1
+              }
               RunLoop.current.run(until: Date().addingTimeInterval(0.1))
           } while Date() < deadline
+          guard matches.firstMatch.exists else {
+              throw XCTSkip("Missing accessibility identifier after native scroll reveal: \\(identifier)")
+          }
           throw NSError(
               domain: "HTMLToIOSVisualValidation",
               code: 1,

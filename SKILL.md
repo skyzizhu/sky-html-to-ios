@@ -73,6 +73,8 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 62. 系统 NavigationBar 接管后，系统 Safe Area 与状态栏 inset 是唯一顶部系统空间；不得继续叠加 HTML 模拟状态栏高度。来源导航栏底边到首个业务内容节点的实测间距可以保留为 `systemNavigationContentSpacing`，但不得包含已由系统栏消费的高度。宽容器填充、轴向对齐和 authored `aspect-ratio` 必须进入 UIKit/SwiftUI 共同的运行时能力门禁。
 63. 节点 `widthFraction` 必须相对直接父容器的内容宽度计算，不得相对整屏计算；接近父宽的普通流节点映射为父级填充，absolute/fixed、Overlay、横向滚动 item、动画节点和紧凑文字继续保留各自尺寸语义。只有一个直接文本/图标槽且无子 View 的 CSS Grid 是单槽对齐容器，SwiftUI 使用填满父级的 Stack/ZStack，禁止为了 `display:grid` 生成会按内容收缩的 Lazy Grid。
 64. 固定 border-box 只约束外框，不代表内部内容居中。盒内水平/垂直位置必须按容器 axis 联合消费 `justify-content`、`align-items`、Grid `justify-items`、文字 `text-align` 与复合槽位角色；可伸展文字槽必须在自身分配宽度内保持来源对齐。Screen Root 的实测高度只用于几何验收，Payload 必须清除根 `fixedHeight`，由内容 intrinsic height、Scroll owner 与 Screen Container 上界共同决定，禁止因 SwiftUI `.frame` 默认居中造成整页纵向漂移。
+65. JavaScript/CSS 状态切换造成的 width/height、滚动轴或内容变化必须从隔离浏览器 probe 的 before/after 证据生成可逆 State Variant，不能只切换无视觉消费方的布尔标记。若页面 Content Root 位于被裁出原生树的 HTML Scroll 祖先内，Scroll ownership 必须转交给 Screen Root；展开后的屏外控件由同一原生 Scroll owner 负责到达。Sheet/Popover/Overlay 的原生宿主必须暴露来源面板节点 ID，并保留内部状态 ID 防重入，使交互、无障碍与视觉验收共享同一身份契约。
+66. HTML 中带点击行为的 `span`、`div`、图片或组合文本即使视觉语义不是按钮，也必须由原生事件宿主承担点击，显示子视图不得截获触摸；原生控件、输入控件和滚动容器仍保留自身事件语义。弹层触发器的 anchor rect 与弹层自身 panel rect 必须分开保存：系统 popover 使用 anchor rect，自定义 overlay/popover 使用 panel rect 布局，禁止用触发器尺寸压缩弹层内容。
 
 ## 支持范围
 

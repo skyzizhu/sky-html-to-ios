@@ -896,20 +896,32 @@ def normalize_dynamic_contracts(
             "after": runtime_evidence.get("after"),
         }] if runtime_evidence.get("after") else [])
         content_variants = []
-        update_transitions = [item for item in transitions if item.get("action") == "update-value"]
         for variant_ordinal, runtime_variant in enumerate(runtime_variants):
             if not isinstance(runtime_variant, dict):
                 continue
             before_targets = ((runtime_variant.get("before") or {}).get("targets") or {})
             after_targets = ((runtime_variant.get("after") or {}).get("targets") or {})
-            for update_transition in update_transitions:
-                target_state = state_by_id.get(update_transition.get("targetStateId")) or {}
+            for state_transition in transitions:
+                target_state = state_by_id.get(state_transition.get("targetStateId")) or {}
                 target_selector = target_state.get("targetSelector")
                 before_target = before_targets.get(target_selector) if target_selector else None
                 after_target = after_targets.get(target_selector) if target_selector else None
+                if not target_selector or not isinstance(after_target, dict):
+                    continue
                 before_items = (before_target or {}).get("directChildren") or []
                 after_items = (after_target or {}).get("directChildren") or []
-                if not target_selector or not after_items or before_items == after_items:
+                before_rect = (before_target or {}).get("rect") or {}
+                after_rect = after_target.get("rect") or {}
+                changes_size = any(
+                    abs(float(after_rect.get(key) or 0) - float(before_rect.get(key) or 0)) > 0.5
+                    for key in ("width", "height")
+                )
+                replaces_children = (
+                    state_transition.get("action") == "update-value"
+                    and bool(after_items)
+                    and before_items != after_items
+                )
+                if not changes_size and not replaces_children:
                     continue
                 target_node_ids = selector_to_node_ids.get(target_selector, [])
                 after_scroll = (after_target or {}).get("scroll") or {}
@@ -924,12 +936,12 @@ def normalize_dynamic_contracts(
                 content_variants.append({
                     "sourceNodeId": node_ids[variant_ordinal] if variant_ordinal < len(node_ids) else (node_ids[0] if node_ids else None),
                     "sourceIndex": runtime_variant.get("sourceIndex"),
-                    "targetStateId": update_transition.get("targetStateId"),
+                    "targetStateId": state_transition.get("targetStateId"),
                     "targetSelector": target_selector,
                     "targetNodeId": target_node_ids[0] if target_node_ids else None,
-                    "mode": "replace-children",
-                    "targetRectBeforeCssPx": (before_target or {}).get("rect"),
-                    "targetRectAfterCssPx": (after_target or {}).get("rect"),
+                    "mode": "replace-children" if replaces_children else "layout-only",
+                    "targetRectBeforeCssPx": before_rect,
+                    "targetRectAfterCssPx": after_rect,
                     "scrollAxisAfter": "both" if vertical_scroll and horizontal_scroll else "vertical" if vertical_scroll else "horizontal" if horizontal_scroll else "none",
                     "items": [{
                         "text": item.get("text") or "",
@@ -937,7 +949,7 @@ def normalize_dynamic_contracts(
                         "sourceTag": item.get("tag"),
                         "sourceClasses": item.get("classes") or [],
                         "sourceRectCssPx": item.get("rect"),
-                    } for item in after_items if isinstance(item, dict)],
+                    } for item in after_items if isinstance(item, dict)] if replaces_children else [],
                 })
         interactions.append({
             "id": f"interaction.dynamic.{source.get('id')}",
@@ -2209,6 +2221,27 @@ def build_ir(data: dict, args) -> dict:
     ]
 
     root_native_id = id_map[root["runtimeId"]]
+    root_output = next((item for item in nodes_out if item.get("id") == root_native_id), None)
+    ancestor_scroll_owner = next((
+        item for item in screen_context.get("ancestorChain") or []
+        if str(((item.get("style") or {}).get("overflowY") or "")).lower() in {"auto", "scroll"}
+        or str(((item.get("style") or {}).get("overflowX") or "")).lower() in {"auto", "scroll"}
+    ), None)
+    if root_output and (root_output.get("layout") or {}).get("scrollAxis") == "none" and ancestor_scroll_owner:
+        owner_style = ancestor_scroll_owner.get("style") or {}
+        horizontal = str(owner_style.get("overflowX") or "").lower() in {"auto", "scroll"}
+        vertical = str(owner_style.get("overflowY") or "").lower() in {"auto", "scroll"}
+        inherited_axis = "both" if horizontal and vertical else "horizontal" if horizontal else "vertical"
+        root_output["layout"]["scrollAxis"] = inherited_axis
+        root_output["layout"]["overflowX"] = owner_style.get("overflowX")
+        root_output["layout"]["overflowY"] = owner_style.get("overflowY")
+        root_output["layout"]["scrollOwnershipSource"] = {
+            "kind": "excluded-ancestor",
+            "runtimeId": ancestor_scroll_owner.get("runtimeId"),
+            "selector": ancestor_scroll_owner.get("selector"),
+        }
+        root_output["style"]["overflowX"] = owner_style.get("overflowX")
+        root_output["style"]["overflowY"] = owner_style.get("overflowY")
     region_interactive_ids = {str(runtime_id) for runtime_id in interactions_by_runtime if runtime_id}
     presentation_node_ids = {
         str(node_id)

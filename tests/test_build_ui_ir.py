@@ -138,6 +138,11 @@ class BuildUIIRTests(unittest.TestCase):
                     "visualRootRect": visual["rect"],
                     "viewportBackground": {"backgroundColor": "rgb(13, 15, 28)", "backgroundImage": "none"},
                     "sharedRegions": [{"runtimeId": "bottom", "selector": "#bottom", "edge": "bottom"}],
+                    "ancestorChain": [{
+                        "runtimeId": "scroll-owner",
+                        "selector": ".content-scroll",
+                        "style": {"overflowX": "hidden", "overflowY": "auto"},
+                    }],
                 },
                 "nodes": [visual, content, positioned, bottom],
                 "interactions": [],
@@ -154,6 +159,11 @@ class BuildUIIRTests(unittest.TestCase):
             self.assertEqual(generated["source"]["layoutClassification"]["kind"], "fixed-mobile-artboard")
             by_runtime = {item["source"]["runtimeId"]: item for item in screen["nodes"]}
             self.assertEqual(by_runtime["content"]["style"]["backgroundColor"], "rgb(13, 15, 28)")
+            self.assertEqual(by_runtime["content"]["layout"]["scrollAxis"], "vertical")
+            self.assertEqual(
+                by_runtime["content"]["layout"]["scrollOwnershipSource"]["runtimeId"],
+                "scroll-owner",
+            )
             self.assertEqual(by_runtime["bottom"]["parentId"], screen["rootNodeId"])
             self.assertEqual(screen["regions"]["bottomBar"]["nodeId"], by_runtime["bottom"]["id"])
             self.assertEqual(by_runtime["floating"]["source"]["positioning"]["offsetParentNodeId"], by_runtime["content"]["id"])
@@ -290,6 +300,75 @@ class BuildUIIRTests(unittest.TestCase):
                 generated["interactions"][0]["payload"]["transitions"][0]["targetStateId"],
                 "home.menu.1",
             )
+
+    def test_runtime_state_geometry_becomes_layout_only_variant(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            app = render_node("app", None, "main", {"x": 0, "y": 0, "width": 393, "height": 852})
+            toggle = render_node("toggle", "app", "button", {"x": 20, "y": 20, "width": 120, "height": 44})
+            panel = render_node("panel", "app", "section", {"x": 20, "y": 72, "width": 353, "height": 54})
+            render_tree = {
+                "schemaVersion": "render-tree-1.2",
+                "source": {"kind": "html-file", "entry": "/tmp/example.html"},
+                "document": {"viewport": {"width": 393, "height": 852}},
+                "nodes": [app, toggle, panel],
+                "interactions": [],
+                "phoneCandidates": [],
+            }
+            interaction_graph = {
+                "schemaVersion": "interaction-state-graph-1.0",
+                "source": {"fingerprint": "fixture"},
+                "screens": [{"id": "home"}],
+                "states": [{
+                    "id": "home.panel.expanded",
+                    "ownerScreenId": "home",
+                    "kind": "expansion",
+                    "targetSelector": "#panel",
+                    "confidence": 0.94,
+                }],
+                "interactions": [{
+                    "id": "interaction-1",
+                    "sourceSelector": "#toggle",
+                    "sourceScreenId": "home",
+                    "trigger": "tap",
+                    "confidence": 0.94,
+                    "runtimeEvidence": {
+                        "sourceIndex": 0,
+                        "before": {"targets": {"#panel": {"rect": {"x": 20, "y": 72, "width": 353, "height": 54}}}},
+                        "after": {"targets": {"#panel": {"rect": {"x": 20, "y": 72, "width": 353, "height": 307}}}},
+                    },
+                }],
+                "transitions": [{
+                    "id": "transition-1",
+                    "interactionId": "interaction-1",
+                    "sourceScreenId": "home",
+                    "targetStateId": "home.panel.expanded",
+                    "trigger": "tap",
+                    "kind": "local-state",
+                    "recommendedNativeAction": "toggle-expanded",
+                    "confidence": 0.94,
+                    "requiresOverride": False,
+                }],
+                "unresolved": [],
+                "warnings": [],
+            }
+            source = root / "render-tree.json"
+            graph = root / "interaction-state-graph.json"
+            output = root / "ui-ir.json"
+            source.write_text(json.dumps(render_tree), encoding="utf-8")
+            graph.write_text(json.dumps(interaction_graph), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), str(source), "--out", str(output),
+                "--root-runtime-id", "app", "--screen-id", "home",
+                "--interaction-graph", str(graph),
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            generated = json.loads(output.read_text(encoding="utf-8"))
+            variant = generated["interactions"][0]["payload"]["contentVariants"][0]
+            self.assertEqual(variant["mode"], "layout-only")
+            self.assertEqual(variant["targetNodeId"], "home.panel")
+            self.assertEqual(variant["items"], [])
+            self.assertEqual(variant["targetRectAfterCssPx"]["height"], 307)
 
     def test_scroll_axis_text_lines_and_horizontal_carousel_survive_ir_conversion(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

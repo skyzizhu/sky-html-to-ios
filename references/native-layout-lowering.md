@@ -118,6 +118,10 @@ horizontal/vertical 容器必须逐项保留 `gapBeforePt`，整体 row/column g
 
 同页状态使用 `stateLayouts` 保存 insert/remove/replace 对应的目标父容器、生成节点布局和原节点基线布局。状态节点仍消费普通 Node Layout Contract；状态变化不得另建一套截图坐标或独立页面。
 
+没有重复状态画板时，JavaScript/CSS class toggle 仍可能改变目标节点几何。隔离浏览器 probe 的 before/after width、height 与 overflow 差异必须生成可逆的 layout-only State Variant；首次触发应用尺寸/滚动覆盖，再次触发恢复基线。内容没有变化时禁止用空 items 覆盖并删除原子树。若被选作 Screen Content Root 的节点位于 HTML 可滚动祖先内，而该祖先不进入原生内容树，则将其唯一纵向或横向 Scroll ownership 继承到 Screen Root，并保留来源 runtime ID/selector 证据。
+
+交互归属与视觉语义分开处理。可点击文本、图片或组合 Stack 必须由原生 Control 宿主接收事件，显示子视图关闭 hit testing；输入控件、系统 Control 和 Scroll 容器继续保留自身交互。Presentation 必须同时保存触发器 anchor rect 与内容 panel rect：系统 Popover 消费 anchor，自定义 Overlay/Popover 消费 panel 的位置和尺寸。
+
 系统导航栏显隐是 Application Container 的首帧职责。UIKit 在创建 `UINavigationController`、push 与 replace 前同步应用目标页面策略，不能只依赖被嵌入 child controller 的 `viewWillAppear`；SwiftUI 的 toolbar visibility 也必须与目标路由首帧一致。
 
 Screen Content Root 的宽度由 Screen Container 响应式约束持有，来源单次实测宽度不能继续作为根节点 fixed-width。非滚动静态页面从系统 Safe Area 顶部开始，保留内容的 intrinsic/measured height，并以底部 `lessThanOrEqual` 限制可用范围；不能同时保留固定根高度又用 top/bottom 等式把它强制拉满屏幕。滚动页面仍使用完整父 bounds 与系统自动 inset。
