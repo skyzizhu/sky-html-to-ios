@@ -794,7 +794,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("enforcesPreferredWidth: isNativeControl", runtime_text)
             self.assertIn("(enforcesPreferredWidth || style.resistsCompression == true)", runtime_text)
             self.assertIn(
-                "(style.flexGrow ?? 0) > 0 || (constrainsPreferredWidth && (style.widthFraction ?? 0) > 0.88)",
+                "(style.flexGrow ?? 0) > 0 || (style.widthFraction ?? 0) > 0.72",
                 runtime_text,
             )
             self.assertNotIn(".frame(minWidth: minWidth, idealWidth: idealWidth)\n            .frame(maxWidth:", runtime_text)
@@ -1002,6 +1002,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertEqual(generated_icon_box["style"]["fixedWidth"], 40)
             self.assertEqual(generated_icon_box["style"]["fixedHeight"], 40)
             self.assertEqual(generated_icon_box["style"]["aspectRatio"], 1)
+            self.assertAlmostEqual(generated_icon_box["style"]["widthFraction"], 40 / 353)
+            self.assertAlmostEqual(generated_label["style"]["widthFraction"], 72 / 88)
             self.assertEqual(generated_row["style"]["minHeight"], 72)
             self.assertEqual(generated_orb["style"]["fixedWidth"], 104)
             self.assertEqual(generated_orb["style"]["fixedHeight"], 104)
@@ -1017,6 +1019,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             )
             self.assertIn(".lineLimit(style.textLineLimit)", swiftui_runtime)
             self.assertIn("HTMLToIOSAspectRatioModifier", swiftui_runtime)
+            self.assertIn("if spec.children.isEmpty", swiftui_runtime)
+            self.assertIn("ZStack(alignment: gridItemAlignment)", swiftui_runtime)
             self.assertIn("style.fixedWidth.map { CGFloat($0) }", swiftui_runtime)
             self.assertIn("let typography = content", swiftui_runtime)
             self.assertNotIn("map(CGFloat.init)", swiftui_runtime)
@@ -2544,6 +2548,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             swiftui_dir = root / "swiftui"
             self.run_generator([path], swiftui_dir)
             swiftui_runtime = (swiftui_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn('case "search-bar":', swiftui_runtime)
+            self.assertIn('Image(systemName: "magnifyingglass")', swiftui_runtime)
             self.assertIn('case "text-field", "input", "search-field", "text-input", "search-input", "number-input":', swiftui_runtime)
             self.assertIn("TextEditor(text:", swiftui_runtime)
             self.assertIn(".textFieldStyle(.plain)", swiftui_runtime)

@@ -34,6 +34,8 @@
 
 SwiftUI 使用这些证据选择 Stack/Grid/Overlay、spacing、frame 和 layout priority。UIKit 使用相同证据配置 `UIStackView`、Auto Layout、Table/Collection item sizing 与 hugging/compression priority。禁止技术栈各自重排子节点。
 
+`widthFraction` 始终等于节点 border box 宽度除以直接父内容框宽度；只有 screen root 才使用目标 viewport 宽度。接近父宽的普通流节点优先生成父级填充约束，absolute/fixed、Overlay、横向滚动 item、动画节点和紧凑文字保留独立尺寸。CSS Grid 若没有子 View、只有一个直接文本或图标槽，只承担单槽对齐职责，SwiftUI/UIKit 使用填满父级的 Stack/ZStack/普通 View；不得创建会按内容收缩的 Lazy Grid 或 Collection。
+
 混合普通流与 positioned 子节点时，先用浏览器矩形判断实际重叠。若 positioned 子节点覆盖普通流内容且承担同一视觉层级，所有相关子节点按最终绘制顺序进入同一 Overlay/ZStack，并保留容器实测尺寸；若没有实质重叠，普通流继续参与 Stack/Grid 测量，positioned 子节点单独挂到 overlay 层。禁止把所有 absolute 节点一概移出后破坏前后层级。
 
 `orderedChildNodeIds` 与 `paintOrderNodeIds` 承担不同职责：前者用于 Stack/Grid、intrinsic size 和普通流测量，后者只决定重叠绘制的前后层级。关系图对直接子节点的真实矩形交叠生成 overlap-order 关系，并保存 paint group、stacking level 与 source order 证据；SwiftUI ZStack/overlay 和 UIKit overlay subviews 必须消费同一顺序。不得只比较 `z-index`，也不得为了层级正确而重排普通流测量顺序。

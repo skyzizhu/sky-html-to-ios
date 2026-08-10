@@ -419,6 +419,7 @@ designScale = targetWidthPt / sourceAppRootWidthCssPx
 
 - 区分系统导航栏与 HTML 自绘导航；
 - 标准标题、返回和 toolbar 默认使用系统导航；只有视觉适配门确认系统栏无法表达时才自绘；
+- 顶部出现返回或页面级操作按钮时，将其作为强导航语义提升到系统栏；来源栏移除后只保留系统可表达的外观及导航栏到业务内容的实测间距；
 - 主 Tab 在目标页面完整时默认使用 `TabView`/`UITabBarController`，不会为套系统栏虚构路由；
 - 区分固定底栏和随内容滚动的普通 footer；
 - viewport 级栏位由父容器宽度决定；
@@ -426,6 +427,8 @@ designScale = targetWidthPt / sourceAppRootWidthCssPx
 - `flex-grow` 子项可等分或按比例伸展；
 - 小图标、角标和文字仍保持自身尺寸；
 - 按轴统一映射 start/center/end/stretch/baseline，并逐项保存实测间距、CSS gap、相邻 margin 和残差；
+- 父宽填充、按轴对齐和 authored aspect-ratio 必须同时通过 SwiftUI/UIKit 运行时消费门禁；
+- 宽度比例以直接父容器内容框为参照；只有一个文字/图标槽的 CSS Grid 作为对齐容器处理，不误生成会收缩的集合容器；
 - 滚动消失、sticky、collapse、hide-on-scroll 通过真实滚动探测判断。
 
 ### 多尺寸验证

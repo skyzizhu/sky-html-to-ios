@@ -1422,7 +1422,11 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     rect = layout.get("rect") or {}
     width = number(rect.get("width"))
     height = number(rect.get("height"))
-    width_fraction = min(max(width / context.root_width, 0.0), 1.0) if context.root_width else 0.0
+    parent_width = number(
+        (((context.nodes.get(parent_id) or {}).get("layout") or {}).get("rect") or {}).get("width"),
+        context.root_width,
+    )
+    width_fraction = min(max(width / parent_width, 0.0), 1.0) if parent_width else 0.0
     mode = str(layout.get("mode") or "flow")
     display = str(style.get("display") or "").lower()
     flex_direction = str(style.get("flexDirection") or "row").lower()
@@ -1815,14 +1819,16 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     layout_width_policy = str(layout_sizing.get("widthPolicy") or "")
     layout_height_policy = str(layout_sizing.get("heightPolicy") or "")
     fixed_width = width if (
-        compact_visual_container
+        is_positioned
+        or compact_visual_container
         or measured_visual_leaf
         or compact_styled_inline_geometry
         or compact_overlay_geometry
         or (horizontal_scroll_item and semantic not in {"image", "icon"})
     ) else None
     fixed_height = height if (
-        compact_visual_container
+        is_positioned
+        or compact_visual_container
         or measured_visual_leaf
         or compact_styled_inline_geometry
         or compact_overlay_geometry
@@ -1837,7 +1843,23 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         fixed_width = number(content_geometry.get("sourceWidthPt"))
     if content_geometry.get("heightMode") == "fixed" and number(content_geometry.get("sourceHeightPt")) > 0:
         fixed_height = number(content_geometry.get("sourceHeightPt"))
-    if parent_id is None:
+    parent_container_axis = str((context.layout_containers.get(parent_id) or {}).get("axis") or "")
+    if (
+        width_fraction > 0.72
+        and semantic not in {"text", "label", "heading", "link"}
+        and not horizontal_scroll_item
+        and not is_positioned
+        and parent_container_axis != "overlay"
+        and not has_native_motion
+        and not overlay_child_payloads
+    ):
+        # Broad rows, cards, search fields, and section containers belong to the
+        # parent width. Computed flex-shrink/nowrap values must not collapse them
+        # to their intrinsic SwiftUI content width.
+        preserves_intrinsic_width = False
+        if layout_width_policy != "fixed" and not compact_overlay_geometry and not compact_visual_container:
+            fixed_width = None
+    if not parent_id:
         # The screen container owns responsive width. A measured HTML content-root
         # height may remain intrinsic, but pinning the root to one sampled width
         # conflicts with the native screen constraints on other devices.
@@ -1882,6 +1904,29 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
     node_state = node.get("state") or {}
     source_text_behavior = node.get("textBehavior")
     text_behavior = dict(source_text_behavior) if isinstance(source_text_behavior, dict) else None
+    if semantic == "search-bar" and str((node.get("source") or {}).get("tag") or "").lower() not in {"input", "textarea"}:
+        descendant_labels = []
+        pending_search_children = list(context.children.get(node_id) or [])
+        while pending_search_children:
+            descendant_id = pending_search_children.pop(0)
+            descendant = context.nodes.get(descendant_id) or {}
+            descendant_text = compact_text((descendant.get("content") or {}).get("text"), 120)
+            if descendant_text and descendant_text not in SYMBOL_SYSTEM_IMAGES:
+                descendant_labels.append(descendant_text)
+            pending_search_children.extend(context.children.get(descendant_id) or [])
+        inferred_prompt = compact_text(" ".join(dict.fromkeys(descendant_labels)), 120)
+        if inferred_prompt:
+            placeholder = placeholder or inferred_prompt
+        text = ""
+        if text_behavior is None:
+            text_behavior = {}
+        text_behavior.update({
+            "role": "input",
+            "nativeControl": "search-bar",
+            "initialValue": "",
+            "editable": True,
+            "readOnly": False,
+        })
     if text_behavior is not None:
         text_behavior.update({
             "initialValue": str(first_non_none(content.get("value"), node_state.get("value"), text) or ""),
@@ -2192,7 +2237,9 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "resistsCompression": str(style.get("flexShrink") or "1") == "0"
                 or bool(layout_sizing.get("resistsHorizontalCompression"))
                 or bool(content_geometry.get("resistsHorizontalCompression")),
-            "preservesIntrinsicWidth": preserves_intrinsic_width or layout_width_policy == "intrinsic",
+            "preservesIntrinsicWidth": preserves_intrinsic_width or (
+                layout_width_policy == "intrinsic" and width_fraction <= 0.72
+            ),
             "fixedWidth": min(max(fixed_width, 0), context.root_width) if fixed_width is not None else None,
             "fixedHeight": max(fixed_height, 0) if fixed_height is not None else None,
             "aspectRatio": number(content_geometry.get("aspectRatio"), ratio) if preserves_aspect_ratio else None,
@@ -2719,6 +2766,7 @@ def build_screen(
         "backButton": str(navigation_source.get("backButton") or "system"),
         "sourceNodeId": navigation_source.get("sourceNodeId"),
         "renderingDecision": navigation_source.get("renderingDecision"),
+        "appearance": navigation_source.get("appearance"),
         "toolbarItems": [],
     }
     for item in navigation_source.get("toolbarItems") or []:
@@ -2730,6 +2778,8 @@ def build_screen(
             "icon": item.get("icon"),
             "placement": str(item.get("placement") or "trailing"),
             "action": action,
+            "accessibilityLabel": compact_text(item.get("accessibilityLabel") or item.get("title"), 80),
+            "appearance": item.get("appearance"),
         })
     tab_container = screen.get("tabContainer") if isinstance(screen.get("tabContainer"), dict) else None
     top_bar_id = str(((regions.get("topBar") or {}).get("nodeId")) or "") or None
@@ -2772,6 +2822,28 @@ def build_screen(
             bottom_bar_id = max(edge_candidates["bottom"])[1]
     system_navigation_source_id = top_bar_id if navigation_style == "native" else None
     system_tab_source_id = bottom_bar_id if tab_container else None
+    system_navigation_content_spacing = 0.0
+    if system_navigation_source_id:
+        navigation_source_node = nodes.get(system_navigation_source_id) or {}
+        navigation_source_rect = (navigation_source_node.get("layout") or {}).get("rect") or {}
+        navigation_bottom = number(navigation_source_rect.get("y")) + number(navigation_source_rect.get("height"))
+        navigation_parent_id = str(navigation_source_node.get("parentId") or "")
+        following_edges = []
+        for candidate_id in children.get(navigation_parent_id) or []:
+            if (
+                candidate_id == system_navigation_source_id
+                or candidate_id == system_tab_source_id
+                or candidate_id in presentation_root_ids
+                or candidate_id in contextual_root_ids
+            ):
+                continue
+            candidate = nodes.get(candidate_id) or {}
+            candidate_rect = (candidate.get("layout") or {}).get("rect") or {}
+            candidate_y = number(candidate_rect.get("y"))
+            if candidate_y >= navigation_bottom - 0.5 and number(candidate_rect.get("height")) > 0:
+                following_edges.append(candidate_y)
+        if following_edges:
+            system_navigation_content_spacing = min(max(min(following_edges) - navigation_bottom, 0), 80)
     if navigation_style != "custom":
         top_bar_id = None
     if tab_container:
@@ -3008,7 +3080,8 @@ def build_screen(
             and top_padding >= 20
         )
     source_status_bar_anchor = (
-        0.0 if top_bar_includes_status_area
+        None if navigation_style == "native"
+        else 0.0 if top_bar_includes_status_area
         else visible_source_status_bar_height if aligns_to_source_status_bar
         else None
     )
@@ -3020,6 +3093,7 @@ def build_screen(
         "title": navigation["title"],
         "showsNavigationBar": navigation_style == "native",
         "sourceStatusBarHeight": source_status_bar_anchor,
+        "systemNavigationContentSpacing": system_navigation_content_spacing,
         "safeArea": safe_area_payload,
         "contentContainer": {
             "nodeId": str(content_container.get("nodeId") or root_id),
@@ -3073,6 +3147,7 @@ struct HTMLToIOSScreenSpec: Codable, Identifiable {{
     let title: String
     let showsNavigationBar: Bool
     let sourceStatusBarHeight: Double?
+    let systemNavigationContentSpacing: Double
     let safeArea: HTMLToIOSSafeAreaSpec
     let contentContainer: HTMLToIOSContentContainerSpec
     let navigation: HTMLToIOSNavigationSpec
@@ -3157,7 +3232,15 @@ struct HTMLToIOSNavigationSpec: Codable {{
     let titleMode: String
     let scrollEdgeAppearance: String
     let backButton: String
+    let appearance: HTMLToIOSNavigationAppearanceSpec?
     let toolbarItems: [HTMLToIOSToolbarItemSpec]
+}}
+
+struct HTMLToIOSNavigationAppearanceSpec: Codable {{
+    let background: String?
+    let titleColor: String?
+    let tint: String?
+    let shadowColor: String?
 }}
 
 struct HTMLToIOSToolbarItemSpec: Codable, Identifiable {{
@@ -3166,6 +3249,16 @@ struct HTMLToIOSToolbarItemSpec: Codable, Identifiable {{
     let icon: String?
     let placement: String
     let action: HTMLToIOSActionSpec?
+    let accessibilityLabel: String?
+    let appearance: HTMLToIOSToolbarItemAppearanceSpec?
+}}
+
+struct HTMLToIOSToolbarItemAppearanceSpec: Codable {{
+    let foreground: String?
+    let background: String?
+    let width: Double?
+    let height: Double?
+    let cornerRadius: Double?
 }}
 
 struct HTMLToIOSTabContainerSpec: Codable, Identifiable {{
@@ -3173,7 +3266,15 @@ struct HTMLToIOSTabContainerSpec: Codable, Identifiable {{
     let initialTabId: String
     let reselectBehavior: String
     let visibility: String
+    let appearance: HTMLToIOSTabBarAppearanceSpec?
     let items: [HTMLToIOSTabItemSpec]
+}}
+
+struct HTMLToIOSTabBarAppearanceSpec: Codable {{
+    let background: String?
+    let tint: String?
+    let unselectedTint: String?
+    let shadowColor: String?
 }}
 
 struct HTMLToIOSTabItemSpec: Codable, Identifiable {{
@@ -3922,6 +4023,7 @@ final class HTMLToIOSGeneratedStore: ObservableObject {
     @Published var numericValues: [String: Double] = [:]
     @Published var dateValues: [String: Date] = [:]
     @Published var colorValues: [String: Color] = [:]
+    @Published var booleanValues: [String: Bool] = [:]
     @Published var flags: Set<String> = []
     @Published var selectedByState: [String: String] = [:]
     @Published var selectionOverrides: [String: Bool] = [:]
@@ -3987,8 +4089,9 @@ final class HTMLToIOSGeneratedStore: ObservableObject {
         )
     }
 
-    func flagBinding(for nodeID: String) -> Binding<Bool> {
-        Binding(get: { self.flags.contains(nodeID) }, set: { enabled in
+    func flagBinding(for nodeID: String, initialValue: Bool = false) -> Binding<Bool> {
+        Binding(get: { self.booleanValues[nodeID] ?? initialValue }, set: { enabled in
+            self.booleanValues[nodeID] = enabled
             if enabled { self.flags.insert(nodeID) } else { self.flags.remove(nodeID) }
         })
     }
@@ -4595,7 +4698,7 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
         let preferredWidth = constrainsPreferredWidth ? CGFloat(style.preferredWidth ?? 0) : 0
         let measuredTextWidth = style.textMeasureWidth.map { CGFloat($0) }
         let inferredMaxWidth: CGFloat? = measuredTextWidth
-            ?? ((style.flexGrow ?? 0) > 0 || (constrainsPreferredWidth && (style.widthFraction ?? 0) > 0.88)
+            ?? ((style.flexGrow ?? 0) > 0 || (style.widthFraction ?? 0) > 0.72
                 ? .infinity
                 : nil)
         let maxWidth: CGFloat? = style.maxWidth.map { CGFloat($0) } ?? inferredMaxWidth
@@ -4650,7 +4753,6 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
             .padding(.trailing, padding.indices.contains(1) ? padding[1] : 0)
             .padding(.bottom, (padding.indices.contains(2) ? padding[2] : 0) + lineBoxLeading / 2)
             .padding(.leading, padding.indices.contains(3) ? padding[3] : 0)
-            .modifier(HTMLToIOSAspectRatioModifier(ratio: style.aspectRatio.map { CGFloat($0) }))
         let framedContent = insetContent
             .modifier(HTMLToIOSFrameModifier(
                 fixedWidth: fixedWidth,
@@ -4661,6 +4763,7 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
                 minHeight: minHeight,
                 maxHeight: maxHeight
             ))
+            .modifier(HTMLToIOSAspectRatioModifier(ratio: style.aspectRatio.map { CGFloat($0) }))
         return framedContent
             .modifier(HTMLToIOSBackgroundModifier(style: style, assetName: assetName, backgroundOverride: backgroundOverride, gradientOverride: gradientOverride))
             .modifier(HTMLToIOSClipModifier(style: style))
@@ -5250,6 +5353,35 @@ struct HTMLToIOSNativeNodeView: View {
             } else {
                 buttonContent
             }
+        case "search-bar":
+            HStack(spacing: spec.controlConfig?.itemSpacing ?? 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: max((spec.style.fontSize ?? 16) * 0.75, 11), weight: .medium))
+                    .foregroundStyle(Color(htmlToIOS: spec.style.foreground).opacity(0.72))
+                    .accessibilityHidden(true)
+                TextField(
+                    "",
+                    text: store.binding(
+                        for: spec.id,
+                        initialValue: spec.textBehavior?.initialValue ?? spec.text,
+                        maxLength: spec.textBehavior?.maxLength
+                    ),
+                    prompt: inputPrompt
+                )
+                .textFieldStyle(.plain)
+                .multilineTextAlignment(.leading)
+                .keyboardType(htmlToIOSKeyboardType(spec.textBehavior?.keyboardType))
+                .textContentType(htmlToIOSTextContentType(spec.textBehavior?.contentType))
+                .submitLabel(htmlToIOSSubmitLabel(spec.textBehavior?.returnKey ?? spec.textBehavior?.submitLabel))
+                .modifier(HTMLToIOSInputPolicyModifier(behavior: spec.textBehavior))
+                .focused($isInputFocused)
+                .onSubmit { store.perform(spec.action) }
+                .onAppear {
+                    if spec.textBehavior?.autofocus == true { isInputFocused = true }
+                }
+                .disabled(!spec.isEnabled || spec.textBehavior?.editable == false || spec.textBehavior?.enabled == false)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         case "text-field", "input", "search-field", "text-input", "search-input", "number-input":
             TextField(
                 "",
@@ -5316,13 +5448,13 @@ struct HTMLToIOSNativeNodeView: View {
                     .disabled(!spec.isEnabled || spec.textBehavior?.editable == false || spec.textBehavior?.enabled == false)
             }
         case "switch", "toggle":
-            Toggle(spec.text, isOn: store.flagBinding(for: spec.id))
+            Toggle(spec.text, isOn: store.flagBinding(for: spec.id, initialValue: spec.isInitiallySelected ?? false))
                 .modifier(HTMLToIOSOptionalTintModifier(value: nativeControlAppearance?.fillTint ?? spec.controlConfig?.fillTint ?? spec.controlConfig?.tint))
         case "checkbox":
-            Toggle(spec.text, isOn: store.flagBinding(for: spec.id))
+            Toggle(spec.text, isOn: store.flagBinding(for: spec.id, initialValue: spec.isInitiallySelected ?? false))
                 .toggleStyle(HTMLToIOSCheckboxToggleStyle())
         case "radio":
-            Toggle(spec.text, isOn: store.flagBinding(for: spec.id))
+            Toggle(spec.text, isOn: store.flagBinding(for: spec.id, initialValue: spec.isInitiallySelected ?? false))
                 .toggleStyle(HTMLToIOSRadioToggleStyle())
         case "slider":
             let config = spec.controlConfig
@@ -5496,7 +5628,7 @@ struct HTMLToIOSNativeNodeView: View {
                     .resizable()
                     .aspectRatio(contentMode: mediaContentMode)
                     .frame(width: mediaWidth, height: mediaHeight)
-                    .frame(maxWidth: (spec.style.widthFraction ?? 0) > 0.88 ? .infinity : nil)
+                    .frame(maxWidth: (spec.style.widthFraction ?? 0) > 0.72 ? .infinity : nil)
                     .clipped()
             } else {
                 Image(systemName: spec.systemImage ?? "photo")
@@ -5561,7 +5693,7 @@ struct HTMLToIOSNativeNodeView: View {
         return value.contains("cover") || value == "fill" ? .fill : .fit
     }
     private var mediaWidth: CGFloat? {
-        guard (spec.style.widthFraction ?? 0) <= 0.88, let value = spec.style.preferredWidth else { return nil }
+        guard (spec.style.widthFraction ?? 0) <= 0.72, let value = spec.style.preferredWidth else { return nil }
         return CGFloat(value)
     }
     private var mediaHeight: CGFloat? {
@@ -5629,9 +5761,9 @@ struct HTMLToIOSNativeNodeView: View {
         if spec.axis == "grid" {
             LazyVGrid(columns: gridColumns, spacing: spec.style.rowSpacing ?? spec.style.spacing ?? 0) { dynamicOrOrderedContent }
         } else if spec.axis == "vertical" {
-            VStack(alignment: .center, spacing: contentSpacing) { dynamicOrOrderedContent }
+            VStack(alignment: horizontalAlignment, spacing: contentSpacing) { dynamicOrOrderedContent }
         } else {
-            HStack(alignment: .center, spacing: contentSpacing) { dynamicOrOrderedContent }
+            HStack(alignment: verticalAlignment, spacing: contentSpacing) { dynamicOrOrderedContent }
         }
     }
 
@@ -5697,7 +5829,10 @@ struct HTMLToIOSNativeNodeView: View {
             HStack(alignment: verticalAlignment, spacing: contentSpacing) { dynamicOrDistributedContent }
                 .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: horizontalFrameAlignment)
         } else if spec.axis == "grid" {
-            if hasExplicitGridPlacement {
+            if spec.children.isEmpty {
+                ZStack(alignment: gridItemAlignment) { dynamicOrOrderedContent }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: gridItemAlignment)
+            } else if hasExplicitGridPlacement {
                 HTMLToIOSGridPlacementLayout(
                     columnWidths: spec.style.gridColumnWidths ?? [],
                     fallbackColumnCount: max(spec.style.gridColumnCount ?? 1, 1),
@@ -5847,7 +5982,7 @@ struct HTMLToIOSNativeNodeView: View {
         }
     }
 
-    private var fillsAvailableWidth: Bool { (spec.style.widthFraction ?? 0) > 0.88 }
+    private var fillsAvailableWidth: Bool { (spec.style.widthFraction ?? 0) > 0.72 }
     private var gridColumns: [GridItem] {
         let spacing = spec.style.columnSpacing ?? spec.style.spacing ?? 0
         if let widths = spec.style.gridColumnWidths, !widths.isEmpty {
@@ -6021,16 +6156,63 @@ struct HTMLToIOSGeneratedToolbarContent: ToolbarContent {
     @ViewBuilder private func buttons(for placement: String) -> some View {
         ForEach(items.filter { normalizedPlacement($0.placement) == placement }) { item in
             Button(action: { store.perform(item.action) }) {
-                if let icon = item.icon { Image(systemName: icon) }
-                else { Text(item.title) }
+                toolbarLabel(item)
             }
             .accessibilityIdentifier(item.id)
-            .accessibilityLabel(item.title)
+            .accessibilityLabel(item.accessibilityLabel ?? item.title)
         }
+    }
+
+    @ViewBuilder private func toolbarLabel(_ item: HTMLToIOSToolbarItemSpec) -> some View {
+        Group {
+            if let icon = item.icon { Image(systemName: icon) }
+            else { Text(item.title) }
+        }
+        .foregroundStyle(Color(htmlToIOS: item.appearance?.foreground))
+        .frame(
+            width: item.appearance?.width.map { CGFloat($0) },
+            height: item.appearance?.height.map { CGFloat($0) }
+        )
+        .background(Color(htmlToIOS: item.appearance?.background))
+        .clipShape(RoundedRectangle(
+            cornerRadius: CGFloat(item.appearance?.cornerRadius ?? 0),
+            style: .circular
+        ))
     }
 
     private func normalizedPlacement(_ value: String) -> String {
         ["leading", "principal", "primary"].contains(value) ? value : "trailing"
+    }
+}
+
+struct HTMLToIOSNavigationAppearanceModifier: ViewModifier {
+    let navigation: HTMLToIOSNavigationSpec
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if let background = navigation.appearance?.background,
+           navigation.scrollEdgeAppearance != "transparent" {
+            content
+                .toolbarBackground(Color(htmlToIOS: background), for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
+                .modifier(HTMLToIOSOptionalTintModifier(value: navigation.appearance?.tint))
+        } else {
+            content.modifier(HTMLToIOSOptionalTintModifier(value: navigation.appearance?.tint))
+        }
+    }
+}
+
+struct HTMLToIOSTabBarAppearanceModifier: ViewModifier {
+    let appearance: HTMLToIOSTabBarAppearanceSpec?
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if let background = appearance?.background {
+            content
+                .toolbarBackground(Color(htmlToIOS: background), for: .tabBar)
+                .toolbarBackground(.visible, for: .tabBar)
+                .modifier(HTMLToIOSOptionalTintModifier(value: appearance?.tint))
+        } else {
+            content.modifier(HTMLToIOSOptionalTintModifier(value: appearance?.tint))
+        }
     }
 }
 
@@ -6128,6 +6310,7 @@ struct HTMLToIOSGeneratedScreenView: View {
 
     private var navigationContent: some View {
         scrollContent
+        .padding(.top, CGFloat(screen.systemNavigationContentSpacing))
         .navigationTitle(screen.navigation.title)
         .navigationBarTitleDisplayMode(screen.navigation.titleMode == "large" ? .large : .inline)
         .navigationBarBackButtonHidden(screen.navigation.backButton == "hidden")
@@ -6137,6 +6320,7 @@ struct HTMLToIOSGeneratedScreenView: View {
         .toolbar {
             HTMLToIOSGeneratedToolbarContent(store: store, items: screen.navigation.toolbarItems)
         }
+        .modifier(HTMLToIOSNavigationAppearanceModifier(navigation: screen.navigation))
     }
 
     @ViewBuilder private var chromeAlignedNavigationContent: some View {
@@ -6409,6 +6593,7 @@ struct HTMLToIOSGeneratedRootView: View {
             )) {
                 ForEach(tabs.items) { item in tabRoot(item, container: tabs) }
             }
+            .modifier(HTMLToIOSTabBarAppearanceModifier(appearance: tabs.appearance))
             .task {
                 store.configureTabs(tabs)
                 if let route = HTMLToIOSLaunchConfiguration.initialRoute,
@@ -6823,7 +7008,7 @@ private final class HTMLToIOSGridPlacementView: UIView {
     }
 }
 
-private extension UIColor {
+extension UIColor {
     convenience init?(htmlToIOS value: String?) {
         guard let value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -9436,6 +9621,7 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController, UIScrollViewDele
                         + (screen.topBarPlacement == "viewport-overlay"
                             ? CGFloat(screen.topBar?.style.preferredHeight ?? 0)
                             : 0)
+                        + CGFloat(screen.systemNavigationContentSpacing)
                 ),
                 content.bottomAnchor.constraint(
                     lessThanOrEqualTo: screen.safeArea.owner == "system" ? view.safeAreaLayoutGuide.bottomAnchor : view.bottomAnchor
@@ -9472,7 +9658,7 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController, UIScrollViewDele
                 content.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
                 content.topAnchor.constraint(
                     equalTo: scroll.contentLayoutGuide.topAnchor,
-                    constant: authoredTopBarOffset
+                    constant: authoredTopBarOffset + CGFloat(screen.systemNavigationContentSpacing)
                 ),
                 content.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
                 content.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor)
@@ -9588,7 +9774,28 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController, UIScrollViewDele
         navigationController?.navigationBar.prefersLargeTitles = screen.navigation.titleMode == "large"
         navigationItem.largeTitleDisplayMode = screen.navigation.titleMode == "large" ? .always : .never
         navigationItem.hidesBackButton = screen.navigation.backButton == "hidden"
-        if screen.navigation.scrollEdgeAppearance == "transparent" {
+        if screen.showsNavigationBar {
+            let appearance = UINavigationBarAppearance()
+            if screen.navigation.scrollEdgeAppearance == "transparent" {
+                appearance.configureWithTransparentBackground()
+            } else if let background = UIColor(htmlToIOS: screen.navigation.appearance?.background) {
+                appearance.configureWithOpaqueBackground()
+                appearance.backgroundColor = background
+            } else {
+                appearance.configureWithDefaultBackground()
+            }
+            if let titleColor = UIColor(htmlToIOS: screen.navigation.appearance?.titleColor) {
+                appearance.titleTextAttributes[.foregroundColor] = titleColor
+                appearance.largeTitleTextAttributes[.foregroundColor] = titleColor
+            }
+            if let shadowColor = UIColor(htmlToIOS: screen.navigation.appearance?.shadowColor) {
+                appearance.shadowColor = shadowColor
+            }
+            navigationItem.standardAppearance = appearance
+            navigationItem.compactAppearance = appearance
+            navigationItem.scrollEdgeAppearance = appearance
+            navigationController?.navigationBar.tintColor = UIColor(htmlToIOS: screen.navigation.appearance?.tint)
+        } else if screen.navigation.scrollEdgeAppearance == "transparent" {
             let appearance = UINavigationBarAppearance()
             appearance.configureWithTransparentBackground()
             navigationItem.standardAppearance = appearance
@@ -9612,10 +9819,28 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController, UIScrollViewDele
         let barItem: UIBarButtonItem
         if let icon = item.icon, let image = UIImage(systemName: icon) {
             barItem = UIBarButtonItem(image: image, primaryAction: action)
+        } else if let appearance = item.appearance,
+                  appearance.background != nil || appearance.width != nil || appearance.height != nil {
+            let label = UILabel()
+            label.text = item.title
+            label.textAlignment = .center
+            label.textColor = UIColor(htmlToIOS: appearance.foreground) ?? .label
+            label.backgroundColor = UIColor(htmlToIOS: appearance.background)
+            label.layer.cornerRadius = CGFloat(appearance.cornerRadius ?? 0)
+            label.layer.masksToBounds = true
+            label.frame.size = CGSize(
+                width: CGFloat(appearance.width ?? 32),
+                height: CGFloat(appearance.height ?? 32)
+            )
+            let tap = HTMLToIOSClosureTapGestureRecognizer { [weak self] in self?.actionHandler(item.action) }
+            label.isUserInteractionEnabled = true
+            label.addGestureRecognizer(tap)
+            barItem = UIBarButtonItem(customView: label)
         } else {
             barItem = UIBarButtonItem(title: item.title, primaryAction: action)
         }
         barItem.accessibilityIdentifier = item.id
+        barItem.accessibilityLabel = item.accessibilityLabel ?? item.title
         return barItem
     }
 }
@@ -9771,6 +9996,20 @@ final class HTMLToIOSGeneratedCoordinator: NSObject, UITabBarControllerDelegate 
         if let tabs = catalog.tabContainer {
             let tabController = UITabBarController()
             tabController.delegate = self
+            if let tabAppearance = tabs.appearance {
+                let appearance = UITabBarAppearance()
+                if let background = UIColor(htmlToIOS: tabAppearance.background) {
+                    appearance.configureWithOpaqueBackground()
+                    appearance.backgroundColor = background
+                } else {
+                    appearance.configureWithDefaultBackground()
+                }
+                appearance.shadowColor = UIColor(htmlToIOS: tabAppearance.shadowColor)
+                tabController.tabBar.standardAppearance = appearance
+                tabController.tabBar.scrollEdgeAppearance = appearance
+                tabController.tabBar.tintColor = UIColor(htmlToIOS: tabAppearance.tint)
+                tabController.tabBar.unselectedItemTintColor = UIColor(htmlToIOS: tabAppearance.unselectedTint)
+            }
             tabController.viewControllers = tabs.items.compactMap { item in
                 guard let route = HTMLToIOSGeneratedRoute(rawValue: item.targetScreenId), let controller = makeScreen(route) else { return nil }
                 let navigation = UINavigationController(rootViewController: controller)
@@ -9963,9 +10202,10 @@ final class HTMLToIOSGeneratedCoordinator: NSObject, UITabBarControllerDelegate 
                     title: "",
                     showsNavigationBar: false,
                     sourceStatusBarHeight: nil,
+                    systemNavigationContentSpacing: 0,
                     safeArea: HTMLToIOSSafeAreaSpec(owner: "system", contentInsetAdjustment: "automatic", containerWidthPolicy: "full-parent-bounds", containerHeightPolicy: "full-parent-bounds", subtractFromContainerDimensions: false),
                     contentContainer: HTMLToIOSContentContainerSpec(nodeId: presentation.node.id, kind: "static-view", scrollAxis: "none", usesCellReuse: false),
-                    navigation: HTMLToIOSNavigationSpec(style: "hidden", title: "", titleMode: "inline", scrollEdgeAppearance: "automatic", backButton: "system", toolbarItems: []),
+                    navigation: HTMLToIOSNavigationSpec(style: "hidden", title: "", titleMode: "inline", scrollEdgeAppearance: "automatic", backButton: "system", appearance: nil, toolbarItems: []),
                     root: presentation.node,
                     topBar: nil,
                     bottomBar: nil,
@@ -11438,6 +11678,35 @@ def build_native_structure_manifest(
                 if ui_stack == "swiftui" else "html-to-ios-border-edge" in runtime_text
             ),
         },
+        "axisAwareCrossAlignment": {
+            "required": True,
+            "consumed": (
+                "VStack(alignment: horizontalAlignment" in runtime_text
+                and "HStack(alignment: verticalAlignment" in runtime_text
+                if ui_stack == "swiftui"
+                else "switch spec.style.alignItems" in runtime_text
+                and "stack.alignment = .leading" in runtime_text
+                and "stack.alignment = .trailing" in runtime_text
+            ),
+        },
+        "parentWidthStretch": {
+            "required": True,
+            "consumed": (
+                "(style.widthFraction ?? 0) > 0.72" in runtime_text
+                and ".frame(maxWidth: fillsAvailableWidth ? .infinity : nil" in runtime_text
+                if ui_stack == "swiftui"
+                else "content.leadingAnchor.constraint(equalTo: view.leadingAnchor)" in runtime_text
+                and "content.trailingAnchor.constraint(equalTo: view.trailingAnchor)" in runtime_text
+            ),
+        },
+        "authoredAspectRatio": {
+            "required": True,
+            "consumed": (
+                "HTMLToIOSAspectRatioModifier" in runtime_text
+                if ui_stack == "swiftui"
+                else "view.widthAnchor.constraint(equalTo: view.heightAnchor, multiplier: ratio)" in runtime_text
+            ),
+        },
     }
     ir_by_screen = {
         str((ir.get("screens") or [{}])[0].get("id") or ""): ir
@@ -11706,6 +11975,7 @@ def build_native_structure_manifest(
                 "checks": checks,
             })
         node_layout_consumption = []
+        screen_root_id = str((payload_screen.get("root") or {}).get("id") or "")
         for node_plan in native_layout.get("nodes") or []:
             node_id = str(node_plan.get("nodeId") or "")
             payload_node = payload_nodes.get(node_id) or {}
@@ -11737,6 +12007,11 @@ def build_native_structure_manifest(
                 ),
                 "contentWidth": (
                     content_geometry.get("widthMode") != "fixed"
+                    or (
+                        node_id == screen_root_id
+                        and number(generated_style.get("widthFraction")) >= 0.99
+                        and generated_style.get("fixedWidth") is None
+                    )
                     or abs(number(generated_style.get("fixedWidth")) - number(content_geometry.get("sourceWidthPt"))) <= 0.01
                 ),
                 "contentHeight": (

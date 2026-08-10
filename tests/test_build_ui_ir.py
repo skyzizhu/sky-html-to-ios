@@ -457,6 +457,8 @@ class BuildUIIRTests(unittest.TestCase):
             self.assertEqual(screen["regions"]["bottomBar"]["kind"], "tab-bar")
             self.assertEqual(screen["tabContainer"]["initialTabId"], "home-tab")
             self.assertEqual([item["targetScreenId"] for item in screen["tabContainer"]["items"]], ["home", "profile"])
+            self.assertEqual(screen["tabContainer"]["rendering"], "system")
+            self.assertIn("appearance", screen["tabContainer"])
 
     def test_explicit_semantic_component_maps_to_native_control_and_preserves_hints(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -591,6 +593,8 @@ class BuildUIIRTests(unittest.TestCase):
             self.assertTrue(screen["navigation"]["renderingDecision"]["compatible"])
             self.assertEqual(screen["navigation"]["toolbarItems"][0]["id"], "home.back")
             self.assertTrue(screen["navigation"]["toolbarItems"][0]["hasAction"])
+            self.assertTrue(screen["navigation"]["renderingDecision"]["hasTopActions"])
+            self.assertEqual(screen["navigation"]["renderingDecision"]["topActionCount"], 1)
 
     def test_complex_search_header_remains_custom_navigation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

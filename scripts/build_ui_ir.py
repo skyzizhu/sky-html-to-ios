@@ -1556,11 +1556,16 @@ def build_bar_contracts(
         semantic = str(candidate.get("semanticType") or "")
         font_size = numeric((candidate.get("style") or {}).get("fontSize"), 16)
         priority = 3 if semantic == "heading" else 2 if semantic in {"label", "text"} else 1
-        title_candidates.append((priority, font_size, text))
-    detected_title = max(title_candidates, default=(0, 0, ""), key=lambda item: (item[0], item[1]))
+        title_candidates.append((priority, font_size, text, node_id))
+    detected_title = max(title_candidates, default=(0, 0, "", ""), key=lambda item: (item[0], item[1]))
     title_mode = str(top_hints.get("title-mode") or root_attrs.get("data-ios-title-mode") or "")
     if not title_mode:
-        title_mode = "large" if detected_title[1] >= 26 else "inline"
+        # Font size alone is not large-title evidence. Many HTML prototypes draw
+        # a 26-30pt title inside a conventional single-row navigation bar.
+        title_mode = "inline"
+    top_style = top_node.get("style") or {}
+    top_border_widths = top_style.get("borderWidths") or []
+    top_border_colors = top_style.get("borderColors") or []
     navigation = {
         "style": style,
         "title": str(root_attrs.get("data-ios-screen-title") or detected_title[2] or screen_name),
@@ -1573,6 +1578,18 @@ def build_bar_contracts(
             "declaredStyle": declared_style or None,
             "forceCustom": force_custom,
             **navigation_fit,
+        },
+        "appearance": {
+            "background": top_style.get("backgroundColor"),
+            "titleColor": ((node_by_id.get(detected_title[3]) or {}).get("style") or {}).get("color"),
+            "tint": None,
+            "shadowColor": (
+                top_border_colors[2]
+                if len(top_border_widths) > 2
+                and len(top_border_colors) > 2
+                and numeric(top_border_widths[2]) > 0
+                else top_style.get("borderBottomColor")
+            ),
         },
         "toolbarItems": [],
     }
@@ -1587,14 +1604,20 @@ def build_bar_contracts(
         hints = source.get("iosHints") or {}
         content = source.get("content") or {}
         rect = (source.get("layout") or {}).get("rect") or {}
-        label = str(content.get("accessibilityLabel") or content.get("text") or "").strip()
+        visible_title = re.sub(r"\s+", " ", str(content.get("text") or "")).strip()
+        accessibility_label = str(content.get("accessibilityLabel") or visible_title).strip()
+        label = visible_title or accessibility_label
         action_name = str((interaction or {}).get("action") or "")
         placement = str(hints.get("toolbar-placement") or "")
         if not placement:
             placement = "leading" if action_name in {"back", "pop", "dismiss"} or float(rect.get("x") or 0) < float((root.get("rect") or {}).get("width") or 393) / 2 else "trailing"
         icon = hints.get("icon")
-        if not icon and (action_name in {"back", "pop"} or label in {"返回", "Back", "‹", "←"}):
+        if not icon and (action_name in {"back", "pop"} or accessibility_label in {"返回", "Back"} or label in {"‹", "←"}):
             icon = "chevron.left"
+        if not icon and re.search(r"购物袋|购物车|bag|cart", accessibility_label, re.IGNORECASE):
+            icon = "bag"
+        source_style = source.get("style") or {}
+        source_rect = (source.get("layout") or {}).get("rect") or {}
         navigation["toolbarItems"].append({
             "id": source_id,
             "title": label[:80],
@@ -1602,6 +1625,14 @@ def build_bar_contracts(
             "placement": placement,
             "sourceNodeId": source_id,
             "hasAction": interaction is not None,
+            "accessibilityLabel": accessibility_label[:80],
+            "appearance": {
+                "foreground": source_style.get("color"),
+                "background": source_style.get("backgroundColor"),
+                "width": numeric(source_rect.get("width")) or None,
+                "height": numeric(source_rect.get("height")) or None,
+                "cornerRadius": max((numeric(value) for value in source_style.get("cornerRadii") or []), default=0) or None,
+            },
         })
         toolbar_source_ids.add(source_id)
 
@@ -1615,6 +1646,31 @@ def build_bar_contracts(
             source = node_by_id.get(source_id) or {}
             if str(source.get("semanticType") or "") in {"button", "icon-button", "link", "menu-item"}:
                 append_toolbar_item(source_id)
+        top_id = str(top_region.get("nodeId") or "")
+        for source_id in children.get(top_id, []):
+            source = node_by_id.get(source_id) or {}
+            source_rect = (source.get("layout") or {}).get("rect") or {}
+            content = source.get("content") or {}
+            visible_title = re.sub(r"\s+", " ", str(content.get("text") or "")).strip()
+            semantic = str(source.get("semanticType") or "")
+            if (
+                source_id not in toolbar_source_ids
+                and semantic not in {"heading", "label", "text"}
+                and 0 < numeric(source_rect.get("width")) <= 60
+                and 0 < numeric(source_rect.get("height")) <= 60
+                and 0 < len(visible_title) <= 4
+            ):
+                append_toolbar_item(source_id)
+    navigation["appearance"]["tint"] = next(
+        (
+            ((node_by_id.get(item.get("sourceNodeId")) or {}).get("style") or {}).get("color")
+            for item in navigation["toolbarItems"]
+            if ((node_by_id.get(item.get("sourceNodeId")) or {}).get("style") or {}).get("color")
+        ),
+        navigation["appearance"]["titleColor"],
+    )
+    navigation["renderingDecision"]["topActionCount"] = len(navigation["toolbarItems"])
+    navigation["renderingDecision"]["hasTopActions"] = bool(navigation["toolbarItems"])
 
     bottom = regions.get("bottomBar") or {}
     bottom_id = str(bottom.get("nodeId") or "") or None
@@ -1675,6 +1731,16 @@ def build_bar_contracts(
     if force_custom_tab or tab_divergences:
         bottom["kind"] = "bottom-action-bar"
         return navigation, None
+    selected_item = next((item for item in items if item["selected"]), items[0])
+    selected_source = node_by_id.get(str(selected_item.get("sourceNodeId") or "")) or {}
+    unselected_source = next(
+        (
+            node_by_id.get(str(item.get("sourceNodeId") or "")) or {}
+            for item in items
+            if not item["selected"]
+        ),
+        {},
+    )
     return navigation, {
         "id": str(bottom_hints.get("tab-id") or f"{items[0]['targetScreenId']}.main-tabs"),
         "sourceNodeId": bottom_id,
@@ -1682,6 +1748,22 @@ def build_bar_contracts(
         "initialTabId": next((item["id"] for item in items if item["selected"]), items[0]["id"]),
         "reselectBehavior": str(bottom_hints.get("reselect") or "keep"),
         "visibility": str(bottom_hints.get("tab-visibility") or "automatic"),
+        "appearance": {
+            "background": bottom_style.get("backgroundColor"),
+            "tint": (selected_source.get("style") or {}).get("color"),
+            "unselectedTint": (unselected_source.get("style") or {}).get("color"),
+            "shadowColor": next(
+                (
+                    color
+                    for width, color in zip(
+                        bottom_style.get("borderWidths") or [],
+                        bottom_style.get("borderColors") or [],
+                    )
+                    if numeric(width) > 0 and color
+                ),
+                None,
+            ),
+        },
         "rendering": "system",
         "renderingDecision": {
             "policy": "system-first-visual-fit-gated",

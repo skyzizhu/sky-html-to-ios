@@ -453,6 +453,8 @@ def content_geometry_contract(
     width_mode = dimension_mode(width_contract, horizontal=True)
     height_mode = dimension_mode(height_contract, horizontal=False)
     ratio = measured["width"] / measured["height"] if measured["width"] > 0 and measured["height"] > 0 else None
+    authored_aspect_ratio = str(style.get("aspectRatio") or "").strip().lower()
+    has_authored_aspect_ratio = authored_aspect_ratio not in {"", "auto", "none", "normal"} and ratio is not None
     lines = int(number(content.get("lines"), 0))
     explicit_single_line = str(style.get("whiteSpace") or "").lower() == "nowrap"
     single_line = bool(
@@ -475,7 +477,7 @@ def content_geometry_contract(
         "sourceHeightPt": measured["height"],
         "widthMode": width_mode,
         "heightMode": height_mode,
-        "aspectRatio": ratio if is_media or compact_visual else None,
+        "aspectRatio": ratio if is_media or compact_visual or has_authored_aspect_ratio else None,
         "singleLine": single_line,
         "lineCount": lines or None,
         "preservesIntrinsicWidth": preserves_intrinsic,

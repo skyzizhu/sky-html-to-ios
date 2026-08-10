@@ -68,8 +68,10 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 57. 文字视觉行必须按字符 Range 的垂直重叠归并。光标、下划线、徽标背景和不同字号 inline fragment 不得单独制造新行；只有固定画板且逐行文字与完整渲染文本校验一致时，才把浏览器软换行固化到原生富文本，响应式来源继续由 Auto Layout 在运行宽度重排。
 58. `native-layout-plan.json` 的间距字段 `gapPt`、`rowGapPt`、`columnGapPt` 和 `gapBeforePt` 必须统一为目标 iOS 点值：浏览器实测矩形差值直接使用，来源 CSS px 在计划层只换算一次。生成器及结构消费门禁必须按原值消费，禁止再次乘 `designScale`，避免纵向和横向间距逐段累计漂移。
 59. 已成功提取并接入的来源 SVG/图片拥有图标外观的唯一所有权，此时不得同时生成近似 SF Symbol 作为静默运行时替代。SF Symbol 只用于无来源资源且轮廓、粗细、填充和语义通过适配门禁的节点；源资源接入失败必须显式失败或降级报告。
-60. NavigationBar 与 App 级 TabBar 必须执行 system-first 视觉适配门禁。标准标题、返回、少量 toolbar item 和稳定主 Tab 默认映射为 `NavigationStack`/`UINavigationController` 与 `TabView`/`UITabBarController`；HTML 的自绘声明只描述来源实现，不能单独迫使原生端自绘。只有搜索、多行复杂内容、异形/品牌背景、系统栏无法表达的布局或显式 `data-ios-force-custom-navigation|tab-bar=true` 才允许自定义。系统容器接管后，来源栏及全部后代必须从页面内容树剥离，并在原生消费清单中记录 `system-chrome-merged`，禁止双栏和重复 Safe Area。
+60. NavigationBar 与 App 级 TabBar 必须执行 system-first 视觉适配门禁。页面顶部出现返回按钮或页面级操作按钮时，默认直接映射为系统 NavigationBar 的 back/leading/trailing/primary item；标准标题、返回、少量 toolbar item 和稳定主 Tab 默认映射为 `NavigationStack`/`UINavigationController` 与 `TabView`/`UITabBarController`。HTML 的自绘声明只描述来源实现，不能单独迫使原生端自绘。只有页面没有导航语义，或搜索、多行复杂内容、异形/品牌背景、系统栏无法表达的布局及显式 `data-ios-force-custom-navigation|tab-bar=true` 才允许隐藏或自定义。系统容器接管后，来源栏及全部后代必须从页面内容树剥离，并在原生消费清单中记录 `system-chrome-merged`，禁止双栏和重复 Safe Area。
 61. 对齐与间距必须先归一化再由两套原生栈共同消费。`flex-start/start/left/top`、`flex-end/end/right/bottom`、center、baseline、stretch 按容器轴映射，文本 `text-align` 不得覆盖父容器交叉轴对齐。每个相邻子项保存 signed 实测 border-box gap、CSS gap、前项尾 margin、当前项首 margin、残差和 fixed/flexible/overlap 模式；实测间距是首次生成的权威值，margin 只消费一次，`space-between/around/evenly` 不得退化成等量固定空白 View。
+62. 系统 NavigationBar 接管后，系统 Safe Area 与状态栏 inset 是唯一顶部系统空间；不得继续叠加 HTML 模拟状态栏高度。来源导航栏底边到首个业务内容节点的实测间距可以保留为 `systemNavigationContentSpacing`，但不得包含已由系统栏消费的高度。宽容器填充、轴向对齐和 authored `aspect-ratio` 必须进入 UIKit/SwiftUI 共同的运行时能力门禁。
+63. 节点 `widthFraction` 必须相对直接父容器的内容宽度计算，不得相对整屏计算；接近父宽的普通流节点映射为父级填充，absolute/fixed、Overlay、横向滚动 item、动画节点和紧凑文字继续保留各自尺寸语义。只有一个直接文本/图标槽且无子 View 的 CSS Grid 是单槽对齐容器，SwiftUI 使用填满父级的 Stack/ZStack，禁止为了 `display:grid` 生成会按内容收缩的 Lazy Grid。
 
 ## 支持范围
 

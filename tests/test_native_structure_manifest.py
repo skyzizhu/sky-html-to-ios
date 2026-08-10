@@ -556,6 +556,9 @@ class NativeStructureManifestTests(unittest.TestCase):
                 self.assertTrue(manifest["runtimeCapabilities"]["relativeConstraints"]["consumed"])
                 self.assertTrue(manifest["runtimeCapabilities"]["gridPlacement"]["consumed"])
                 self.assertTrue(manifest["runtimeCapabilities"]["stateReflow"]["consumed"])
+                self.assertTrue(manifest["runtimeCapabilities"]["axisAwareCrossAlignment"]["consumed"])
+                self.assertTrue(manifest["runtimeCapabilities"]["parentWidthStretch"]["consumed"])
+                self.assertTrue(manifest["runtimeCapabilities"]["authoredAspectRatio"]["consumed"])
 
     def test_collection_sizing_and_sticky_supplementary_execute_in_both_stacks(self) -> None:
         for ui_stack in ("swiftui", "uikit"):

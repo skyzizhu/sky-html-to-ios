@@ -336,12 +336,15 @@ The IR represents edges, centers, intrinsic/fixed/min/max dimensions, aspect rat
 
 - Distinguishes native navigation from custom HTML navigation.
 - Uses system navigation for standard titles, back actions, and toolbar items unless the visual-fit gate proves a native bar cannot represent the source.
+- Treats top back or page-level action buttons as strong navigation evidence, removes the source bar after promotion, and preserves only system-expressible appearance plus the measured gap before business content.
 - Uses `TabView`/`UITabBarController` for complete main-tab routes and never invents destinations merely to obtain a system Tab Bar.
 - Separates fixed bottom bars from scrolling footers.
 - Sizes viewport bars from the parent width.
 - Prevents child button widths from expanding the page.
 - Preserves `flex-grow` distribution and measured icon/badge/label sizes.
 - Normalizes axis-aware start/center/end/stretch/baseline alignment and records measured gaps, authored CSS gaps, adjacent margins, and residual spacing per item.
+- Gates parent-width stretch, axis-aware alignment, and authored aspect ratios in both SwiftUI and UIKit runtimes.
+- Computes width fractions from the immediate parent content box and lowers single-slot CSS Grid alignment without creating a shrinking collection container.
 - Uses scroll probes to identify sticky, collapsing, and hide-on-scroll behavior.
 
 ### Multi-size validation
