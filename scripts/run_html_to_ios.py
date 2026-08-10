@@ -151,13 +151,28 @@ def find_node(explicit: Path | None) -> tuple[Path | None, dict[str, str]]:
     if found:
         candidates.append(Path(found))
     candidates.extend(Path.home().glob(".cache/codex-runtimes/*/dependencies/node/bin/node"))
+    fallback: tuple[Path, dict[str, str]] | None = None
     for candidate in candidates:
         if candidate.is_file() and os.access(candidate, os.X_OK):
             environment = os.environ.copy()
             node_modules = candidate.parent.parent / "node_modules"
-            if node_modules.is_dir() and not environment.get("NODE_PATH"):
-                environment["NODE_PATH"] = str(node_modules)
-            return candidate.resolve(), environment
+            if node_modules.is_dir():
+                existing = environment.get("NODE_PATH")
+                environment["NODE_PATH"] = str(node_modules) + (os.pathsep + existing if existing else "")
+            resolved = candidate.resolve()
+            if fallback is None:
+                fallback = resolved, environment
+            probe = subprocess.run(
+                [str(resolved), "-e", "require.resolve('playwright')"],
+                env=environment,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            if probe.returncode == 0:
+                return resolved, environment
+    if fallback:
+        return fallback
     return None, os.environ.copy()
 
 
@@ -175,6 +190,7 @@ class Orchestrator:
         self.managed_project = False
         self.managed_project_info: dict[str, Any] = {}
         self.entry_wired = False
+        self.source_layout_report_by_screen: dict[str, Path] = {}
         self.node, self.node_environment = find_node(args.node)
         self.report: dict[str, Any] = {
             "schemaVersion": SCHEMA_VERSION,
@@ -729,16 +745,19 @@ class Orchestrator:
             raise OrchestrationError("discover-html-routes", "No native-conversion screens were discovered.")
         source_layout_reports = []
         classified_scopes = set()
+        layout_report_by_scope: dict[tuple[str, str], Path] = {}
         for screen in screens:
-            container_selector = str(screen.get("containerSelector") or "")
+            container_selector = str(screen.get("visualRootSelector") or screen.get("containerSelector") or "")
             activation = screen.get("activation") or {}
             activation_selectors = activation.get("selectors") or []
             activation_selector = str(activation_selectors[0]) if activation.get("type") == "click" and activation_selectors else ""
             scope_key = (container_selector, activation_selector)
             if scope_key in classified_scopes:
+                self.source_layout_report_by_screen[str(screen.get("id") or "screen")] = layout_report_by_scope[scope_key]
                 continue
             classified_scopes.add(scope_key)
             layout_report = self.report_dir / "source-layout" / f"{safe_app_name(str(screen.get('id') or 'screen')).lower()}.json"
+            layout_report_by_scope[scope_key] = layout_report
             command: list[str | Path] = [
                 self.node,
                 self.scripts / "analyze_responsive_layout.cjs",
@@ -760,6 +779,7 @@ class Orchestrator:
                 parse_json=False,
             )
             source_layout_reports.append(str(layout_report))
+            self.source_layout_report_by_screen[str(screen.get("id") or "screen")] = layout_report
             if not layout_report.is_file():
                 continue
             layout_data = json.loads(layout_report.read_text(encoding="utf-8"))
@@ -830,9 +850,12 @@ class Orchestrator:
             ]
             if visual_validation and not self.args.skip_visual_baselines:
                 extract.extend(["--screenshot", screen_dir / "html-baseline.png"])
-            container_selector = screen.get("containerSelector")
+            container_selector = screen.get("visualRootSelector") or screen.get("containerSelector")
             if container_selector:
                 extract.extend(["--selector", str(container_selector)])
+            content_root_selector = screen.get("contentRootSelector") or screen.get("rootSelector")
+            if content_root_selector:
+                extract.extend(["--content-selector", str(content_root_selector)])
             activation = screen.get("activation") or {}
             selectors = activation.get("selectors") or []
             if activation.get("type") == "click" and selectors:
@@ -844,6 +867,7 @@ class Orchestrator:
                 "--out", ir_path,
                 "--screen-id", screen_id,
                 "--screen-name", str(screen.get("title") or screen_id),
+                "--root-selector", str(content_root_selector or ""),
                 "--ui-stack", ui_stack,
                 "--route-graph", route_graph,
                 "--interaction-graph", interaction_graph,
@@ -855,6 +879,9 @@ class Orchestrator:
                 "--device", self.args.device,
                 "--appearance", self.args.appearance,
             ]
+            source_layout_report = self.source_layout_report_by_screen.get(screen_id)
+            if source_layout_report and source_layout_report.is_file():
+                build_command.extend(["--source-layout-report", source_layout_report])
             self.run_command(f"build-ui-ir-{screen_id}", build_command)
             merge_states: list[str] = []
             for state in visual_states_by_owner.get(screen_id, []):
@@ -2026,12 +2053,21 @@ struct ContentView: View {
         return self.report
 
 
+def emit_report(report: dict[str, Any]) -> None:
+    try:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    except BrokenPipeError:
+        # The canonical report is already persisted by the orchestrator. A
+        # closed terminal consumer must not rewrite a successful run as failed.
+        return
+
+
 def main() -> int:
     args = parse_args()
     orchestrator = Orchestrator(args)
     try:
         report = orchestrator.execute()
-        print(json.dumps(report, ensure_ascii=False, indent=2))
+        emit_report(report)
         return 0
     except OrchestrationError as error:
         orchestrator.report.update({
@@ -2042,7 +2078,7 @@ def main() -> int:
             "entryWired": orchestrator.entry_wired,
         })
         orchestrator.write_report()
-        print(json.dumps(orchestrator.report, ensure_ascii=False, indent=2))
+        emit_report(orchestrator.report)
         return 2 if error.status == "needs-input" else 1
     except Exception as error:  # pragma: no cover - last-resort structured failure report
         orchestrator.report.update({
@@ -2052,7 +2088,7 @@ def main() -> int:
             "traceback": traceback.format_exc(),
         })
         orchestrator.write_report()
-        print(json.dumps(orchestrator.report, ensure_ascii=False, indent=2))
+        emit_report(orchestrator.report)
         return 1
 
 

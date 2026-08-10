@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard list benchmark</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+    body { background: #d9dde5; color: #17191f; }
+    .phone { position: relative; width: 393px; height: 852px; overflow: hidden; background: #f4f5f7; }
+    .status { height: 59px; padding: 18px 25px 0; display: flex; justify-content: space-between; font-size: 15px; font-weight: 650; }
+    .signals { display: flex; gap: 6px; color: #2b2e36; }
+    .nav { height: 58px; padding: 5px 20px 10px; display: flex; align-items: center; justify-content: space-between; background: #f4f5f7; }
+    .nav h1 { margin: 0; font-size: 28px; line-height: 36px; }
+    .avatar { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; color: white; font-weight: 700; background: #3568d4; }
+    .content { height: 652px; overflow-y: auto; padding: 4px 18px 94px; }
+    .summary { padding: 20px; border-radius: 18px; color: white; background: #202a45; box-shadow: 0 12px 26px rgba(22, 31, 54, .17); }
+    .summary-label { color: #b8c4df; font-size: 13px; }
+    .summary-value { margin-top: 5px; font-size: 34px; line-height: 42px; font-weight: 750; }
+    .summary-row { margin-top: 17px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .metric { padding: 10px; border-radius: 10px; background: rgba(255,255,255,.08); }
+    .metric b { display: block; font-size: 16px; }
+    .metric span { color: #b8c4df; font-size: 11px; }
+    .section-title { margin: 24px 2px 10px; display: flex; justify-content: space-between; align-items: center; }
+    .section-title h2 { margin: 0; font-size: 18px; }
+    .section-title span { color: #647087; font-size: 13px; }
+    .list { display: grid; gap: 10px; }
+    .row { min-height: 72px; padding: 12px 14px; display: grid; grid-template-columns: 44px 1fr auto; align-items: center; gap: 12px; border: 1px solid #e4e6eb; border-radius: 14px; background: white; }
+    .icon { width: 44px; aspect-ratio: 1; display: grid; place-items: center; border-radius: 12px; font-size: 20px; background: #edf3ff; }
+    .row h3 { margin: 0 0 4px; font-size: 15px; }
+    .row p { margin: 0; color: #778094; font-size: 12px; }
+    .amount { font-size: 14px; font-weight: 700; white-space: nowrap; }
+    .tabbar { position: absolute; left: 0; right: 0; bottom: 0; height: 83px; padding: 11px 26px 24px; display: flex; justify-content: space-between; border-top: 1px solid #e4e6eb; background: rgba(255,255,255,.96); }
+    .tab { width: 58px; display: grid; justify-items: center; gap: 3px; color: #80889a; font-size: 10px; }
+    .tab i { width: 24px; height: 24px; display: grid; place-items: center; font-style: normal; font-size: 18px; }
+    .tab.active { color: #2f63d2; font-weight: 650; }
+  </style>
+</head>
+<body>
+<main class="phone" data-ios-app-root="true" data-ios-screen="dashboard" data-ios-screen-initial>
+  <div class="status"><span>9:41</span><span class="signals">▮▮▮ ◉ ▰</span></div>
+  <header class="nav" data-ios-component="navigation-bar" data-ios-navigation-style="custom">
+    <h1>概览</h1><div class="avatar">林</div>
+  </header>
+  <section class="content" data-ios-scroll-root="vertical">
+    <article class="summary">
+      <span class="summary-label">本月可用余额</span>
+      <div class="summary-value">¥ 28,640</div>
+      <div class="summary-row">
+        <div class="metric"><b>¥ 8,320</b><span>收入</span></div>
+        <div class="metric"><b>¥ 3,180</b><span>支出</span></div>
+        <div class="metric"><b>12.8%</b><span>储蓄率</span></div>
+      </div>
+    </article>
+    <div class="section-title"><h2>最近记录</h2><span>查看全部</span></div>
+    <div class="list" data-ios-component="list">
+      <article class="row"><div class="icon">☕</div><div><h3>晨光咖啡</h3><p>今天 08:25 · 餐饮</p></div><b class="amount">- ¥ 32</b></article>
+      <article class="row"><div class="icon">⌂</div><div><h3>房屋租金</h3><p>8月8日 · 居住</p></div><b class="amount">- ¥ 4,800</b></article>
+      <article class="row"><div class="icon">↗</div><div><h3>项目回款</h3><p>8月6日 · 收入</p></div><b class="amount">+ ¥ 12,000</b></article>
+      <article class="row"><div class="icon">♫</div><div><h3>音乐会员</h3><p>8月3日 · 娱乐</p></div><b class="amount">- ¥ 18</b></article>
+    </div>
+  </section>
+  <nav class="tabbar" data-ios-component="tab-bar" data-ios-region="bottom-bar">
+    <div class="tab active"><i>⌂</i><span>概览</span></div>
+    <div class="tab"><i>▤</i><span>账单</span></div>
+    <div class="tab"><i>◎</i><span>统计</span></div>
+    <div class="tab"><i>⚙</i><span>设置</span></div>
+  </nav>
+</main>
+</body>
+</html>

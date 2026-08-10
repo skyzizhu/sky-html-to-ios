@@ -37,6 +37,40 @@ def make_ir(screen_id: str = "home") -> dict:
 
 
 class BuildNativeArchitecturePlanTests(unittest.TestCase):
+    def test_authored_percentage_width_remains_parent_filling(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = make_ir("compose")
+            screen = payload["screens"][0]
+            root_id = screen["rootNodeId"]
+            screen["nodes"][0].update({
+                "layout": {"mode": "flow", "scrollAxis": "none"},
+                "style": {"display": "block"},
+            })
+            screen["nodes"].append({
+                "id": "compose.cta", "parentId": root_id, "semanticType": "button",
+                "layout": {"rect": {"x": 18, "y": 700, "width": 357, "height": 52}},
+                "style": {
+                    "display": "flex", "width": "357px", "height": "52px",
+                    "authoredLayout": {
+                        "width": {"value": "100%", "source": "stylesheet"},
+                        "height": {"value": "52px", "source": "stylesheet"},
+                    },
+                },
+            })
+            ir_path = root / "ui-ir.json"
+            output = root / "plan.json"
+            ir_path.write_text(json.dumps(payload), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), "--ir", str(ir_path), "--out", str(output), "--ui-stack", "uikit",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            relations = json.loads(output.read_text(encoding="utf-8"))["screens"][0]["layers"]["contentContainer"]["layoutRelations"]
+            root_relation = next(item for item in relations if item["containerNodeId"] == root_id)
+            sizing = next(item for item in root_relation["childSizing"] if item["nodeId"] == "compose.cta")
+            self.assertEqual(sizing["widthPolicy"], "flexible")
+            self.assertEqual(sizing["heightPolicy"], "fixed")
+
     def test_block_container_ignores_computed_flex_direction_default(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -70,6 +104,9 @@ class BuildNativeArchitecturePlanTests(unittest.TestCase):
             root_relation = next(item for item in relations if item["containerNodeId"] == root_id)
             self.assertEqual(root_relation["axis"], "vertical")
             self.assertEqual(root_relation["orderedChildNodeIds"], ["article.heading", "article.body"])
+            body_sizing = next(item for item in root_relation["childSizing"] if item["nodeId"] == "article.body")
+            self.assertEqual(body_sizing["gapBeforePt"], 20)
+            self.assertFalse(body_sizing["flexibleGapBefore"])
 
     def test_block_rich_text_stays_inline_and_positioned_decoration_stays_out_of_flow(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -262,6 +299,72 @@ class BuildNativeArchitecturePlanTests(unittest.TestCase):
             heading = next(item for item in sections if item["sourceNodeId"] == "dashboard.heading")
             self.assertTrue(heading["rendersSourceAsItem"])
             self.assertEqual(heading["itemNodeIds"], ["dashboard.heading"])
+
+    def test_nested_collections_do_not_promote_a_static_page_to_compositional_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = make_ir("editor")
+            payload["target"]["viewportPt"] = {"width": 393, "height": 852}
+            screen = payload["screens"][0]
+            root_id = screen["rootNodeId"]
+            screen["nodes"][0].update({
+                "semanticType": "container",
+                "layout": {"scrollAxis": "none", "rect": {"x": 0, "y": 0, "width": 393, "height": 700}},
+            })
+            card_id = "editor.card"
+            screen["nodes"].append({
+                "id": card_id, "parentId": root_id, "semanticType": "container",
+                "layout": {"rect": {"x": 16, "y": 80, "width": 361, "height": 500}},
+            })
+            for section_index in range(2):
+                section_id = f"{card_id}.grid.{section_index}"
+                screen["nodes"].append({
+                    "id": section_id, "parentId": card_id, "semanticType": "grid",
+                    "layout": {"scrollAxis": "none"},
+                })
+                for item_index in range(4):
+                    screen["nodes"].append({
+                        "id": f"{section_id}.item.{item_index}", "parentId": section_id,
+                        "semanticType": "container",
+                    })
+            ir_path = root / "ui-ir.json"
+            output = root / "plan.json"
+            ir_path.write_text(json.dumps(payload), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), "--ir", str(ir_path), "--out", str(output), "--ui-stack", "uikit",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            content = json.loads(output.read_text(encoding="utf-8"))["screens"][0]["layers"]["contentContainer"]
+            self.assertEqual(content["nodeId"], root_id)
+            self.assertEqual(content["kind"], "static-view")
+
+    def test_tall_artboard_infers_one_vertical_scroll_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = make_ir("results")
+            payload["target"]["viewportPt"] = {"width": 393, "height": 852}
+            screen = payload["screens"][0]
+            root_id = screen["rootNodeId"]
+            screen["nodes"][0].update({
+                "semanticType": "container",
+                "layout": {"scrollAxis": "none", "rect": {"x": 0, "y": 0, "width": 393, "height": 1400}},
+            })
+            screen["nodes"].append({
+                "id": "results.filters", "parentId": root_id, "semanticType": "carousel",
+                "layout": {"scrollAxis": "horizontal", "rect": {"x": 16, "y": 300, "width": 361, "height": 44}},
+            })
+            ir_path = root / "ui-ir.json"
+            output = root / "plan.json"
+            ir_path.write_text(json.dumps(payload), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), "--ir", str(ir_path), "--out", str(output), "--ui-stack", "uikit",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            content = json.loads(output.read_text(encoding="utf-8"))["screens"][0]["layers"]["contentContainer"]
+            self.assertEqual(content["nodeId"], root_id)
+            self.assertEqual(content["kind"], "scroll-view")
+            filters = next(item for item in content["nodeStrategies"] if item["nodeId"] == "results.filters")
+            self.assertEqual(filters["kind"], "collection-view")
 
     def test_six_layers_classify_reusable_content_and_leaf_components(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

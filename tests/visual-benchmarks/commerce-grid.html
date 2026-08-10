@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Commerce grid benchmark</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+    body { background: #eef0f2; color: #171717; }
+    .app { position: relative; width: min(100vw, 430px); min-height: 100vh; margin: auto; overflow: hidden; background: #fff; }
+    .top { padding: 54px 18px 12px; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 14px; }
+    .brand { font-size: 25px; font-weight: 800; }
+    .bag { width: 40px; height: 40px; display: grid; place-items: center; border: 1px solid #dfdfdf; border-radius: 12px; background: white; }
+    .search { margin: 0 18px 16px; height: 44px; padding: 0 14px; display: flex; align-items: center; gap: 9px; border-radius: 12px; color: #727272; background: #f2f3f5; }
+    .content { height: calc(100vh - 126px); overflow-y: auto; padding-bottom: 90px; }
+    .hero { height: 176px; margin: 0 18px; padding: 22px; display: flex; align-items: flex-end; border-radius: 16px; color: white; background: linear-gradient(120deg, #14665b, #39a07c 56%, #d5e26d); }
+    .hero h1 { width: 230px; margin: 0; font-size: 28px; line-height: 34px; }
+    .chips { padding: 18px; display: flex; gap: 8px; overflow-x: auto; }
+    .chip { flex: 0 0 auto; padding: 8px 13px; border: 1px solid #dedede; border-radius: 999px; font-size: 13px; white-space: nowrap; }
+    .chip.active { color: white; border-color: #171717; background: #171717; }
+    .title { margin: 2px 18px 12px; display: flex; align-items: baseline; justify-content: space-between; }
+    .title h2 { margin: 0; font-size: 20px; }
+    .title span { color: #7c7c7c; font-size: 12px; }
+    .grid { padding: 0 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .product { overflow: hidden; border: 1px solid #e7e7e7; border-radius: 14px; background: #fff; }
+    .photo { position: relative; width: 100%; aspect-ratio: 1; display: grid; place-items: center; font-size: 52px; background: #edf0e7; }
+    .product:nth-child(2) .photo { background: #efe9e4; }
+    .product:nth-child(3) .photo { background: #e7edf2; }
+    .product:nth-child(4) .photo { background: #f3e9de; }
+    .badge { position: absolute; top: 10px; left: 10px; padding: 4px 7px; border-radius: 6px; color: white; background: #d94a3d; font-size: 10px; }
+    .info { padding: 11px; }
+    .info h3 { margin: 0 0 6px; font-size: 14px; line-height: 19px; }
+    .price { display: flex; align-items: center; justify-content: space-between; }
+    .price b { font-size: 16px; }
+    .add { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 50%; color: white; background: #171717; }
+    .bottom { position: absolute; left: 0; right: 0; bottom: 0; height: 82px; padding: 11px 32px 23px; display: flex; justify-content: space-around; border-top: 1px solid #e6e6e6; background: rgba(255,255,255,.97); }
+    .bottom span { width: 54px; text-align: center; color: #777; font-size: 11px; }
+    .bottom b { display: block; margin-bottom: 4px; color: #191919; font-size: 18px; }
+  </style>
+</head>
+<body>
+<main class="app" data-ios-app-root="true" data-ios-screen="shop" data-ios-screen-initial>
+  <header class="top"><div class="brand">COMMON GOODS</div><button class="bag" aria-label="购物袋">▢</button></header>
+  <div class="search" role="searchbox" data-ios-component="search-bar">⌕ <span>搜索家居好物</span></div>
+  <section class="content" data-ios-scroll-root="vertical">
+    <article class="hero"><h1>让日常物件回到简单与耐用</h1></article>
+    <div class="chips" data-ios-component="collection" data-ios-scroll-axis="horizontal">
+      <span class="chip active">本周精选</span><span class="chip">桌面</span><span class="chip">厨房</span><span class="chip">收纳</span><span class="chip">照明</span>
+    </div>
+    <div class="title"><h2>编辑推荐</h2><span>共 24 件</span></div>
+    <section class="grid" data-ios-component="collection">
+      <article class="product"><div class="photo"><span class="badge">NEW</span>◒</div><div class="info"><h3>手工玻璃水杯</h3><div class="price"><b>¥ 89</b><span class="add">＋</span></div></div></article>
+      <article class="product"><div class="photo">▰</div><div class="info"><h3>亚麻桌面收纳盘</h3><div class="price"><b>¥ 129</b><span class="add">＋</span></div></div></article>
+      <article class="product"><div class="photo">◫</div><div class="info"><h3>便携阅读灯</h3><div class="price"><b>¥ 199</b><span class="add">＋</span></div></div></article>
+      <article class="product"><div class="photo">◉</div><div class="info"><h3>陶瓷香氛托盘</h3><div class="price"><b>¥ 76</b><span class="add">＋</span></div></div></article>
+    </section>
+  </section>
+  <nav class="bottom" data-ios-component="tab-bar" data-ios-region="bottom-bar"><span><b>⌂</b>首页</span><span><b>◇</b>分类</span><span><b>♡</b>收藏</span><span><b>○</b>我的</span></nav>
+</main>
+</body>
+</html>

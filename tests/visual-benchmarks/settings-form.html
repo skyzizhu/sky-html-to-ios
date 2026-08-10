@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Settings form benchmark</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+    body { padding: 20px; background: #cfd4da; color: #20232b; }
+    .screen { position: relative; width: 375px; height: 812px; overflow: hidden; border-radius: 28px; background: #f7f8fa; }
+    .status { height: 48px; padding: 14px 22px 0; display: flex; justify-content: space-between; font-size: 14px; font-weight: 650; }
+    .nav { height: 54px; padding: 4px 16px 10px; display: grid; grid-template-columns: 42px 1fr 42px; align-items: center; text-align: center; }
+    .nav h1 { margin: 0; font-size: 18px; }
+    .back { width: 36px; height: 36px; border: 0; border-radius: 10px; background: white; font-size: 22px; }
+    .form-scroll { height: 710px; overflow-y: auto; padding: 8px 16px 110px; }
+    .profile { padding: 16px; display: grid; grid-template-columns: 56px 1fr auto; align-items: center; gap: 12px; border-radius: 14px; background: #202a45; color: white; }
+    .portrait { width: 56px; aspect-ratio: 1; display: grid; place-items: center; border-radius: 18px; background: #f0b65f; font-size: 24px; font-weight: 800; }
+    .profile h2 { margin: 0 0 4px; font-size: 17px; }
+    .profile p { margin: 0; color: #c7cede; font-size: 12px; }
+    .section-label { margin: 22px 4px 8px; color: #7a8190; font-size: 12px; font-weight: 650; }
+    .group { overflow: hidden; border: 1px solid #e5e7ec; border-radius: 14px; background: white; }
+    .field { min-height: 58px; padding: 10px 14px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #eceef2; }
+    .field:last-child { border-bottom: 0; }
+    .field label { flex: 1; font-size: 14px; font-weight: 600; }
+    .field small { display: block; margin-top: 3px; color: #8a91a0; font-size: 11px; font-weight: 400; }
+    input[type="text"], select { width: 145px; height: 36px; padding: 0 10px; border: 1px solid #d8dbe2; border-radius: 9px; background: #fafbfc; color: #333842; text-align: right; }
+    .switch { position: relative; width: 48px; height: 28px; border-radius: 999px; background: #306bd9; }
+    .switch::after { content: ""; position: absolute; top: 3px; right: 3px; width: 22px; height: 22px; border-radius: 50%; background: white; box-shadow: 0 2px 5px rgba(0,0,0,.2); }
+    .segments { width: 166px; height: 34px; padding: 3px; display: grid; grid-template-columns: repeat(3, 1fr); border-radius: 9px; background: #edf0f5; }
+    .segments span { display: grid; place-items: center; border-radius: 7px; color: #737b8b; font-size: 11px; }
+    .segments .selected { color: #20232b; background: white; box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+    .range { width: 150px; accent-color: #306bd9; }
+    .savebar { position: absolute; left: 0; right: 0; bottom: 0; height: 92px; padding: 12px 16px 26px; background: linear-gradient(180deg, rgba(247,248,250,0), #f7f8fa 24%); }
+    .save { width: 100%; height: 52px; border: 0; border-radius: 13px; color: white; background: #306bd9; font-size: 16px; font-weight: 700; }
+  </style>
+</head>
+<body>
+<main class="screen" data-ios-app-root="true" data-ios-screen="settings" data-ios-screen-initial>
+  <div class="status"><span>9:41</span><span>● ◒ ▰</span></div>
+  <header class="nav" data-ios-component="navigation-bar" data-ios-navigation-style="custom"><button class="back" aria-label="返回">‹</button><h1>账户设置</h1><span></span></header>
+  <section class="form-scroll" data-ios-scroll-root="vertical">
+    <article class="profile"><div class="portrait">L</div><div><h2>林晓晨</h2><p>lin@example.com</p></div><span>›</span></article>
+    <div class="section-label">个人资料</div>
+    <div class="group">
+      <div class="field"><label for="nickname">昵称</label><input id="nickname" type="text" value="林晓晨"></div>
+      <div class="field"><label for="language">语言</label><select id="language"><option>简体中文</option></select></div>
+    </div>
+    <div class="section-label">偏好设置</div>
+    <div class="group">
+      <div class="field"><label>消息通知<small>接收任务和系统提醒</small></label><div class="switch" role="switch" aria-checked="true"></div></div>
+      <div class="field"><label>外观模式</label><div class="segments" data-ios-component="segmented-control"><span>浅色</span><span class="selected">自动</span><span>深色</span></div></div>
+      <div class="field"><label for="density">内容密度</label><input class="range" id="density" type="range" min="0" max="100" value="62"></div>
+    </div>
+    <div class="section-label">安全</div>
+    <div class="group">
+      <div class="field"><label>面容 ID<small>用于快速解锁应用</small></label><div class="switch" role="switch" aria-checked="true"></div></div>
+      <div class="field"><label>修改密码</label><span>›</span></div>
+    </div>
+  </section>
+  <footer class="savebar" data-ios-region="bottom-bar"><button class="save">保存更改</button></footer>
+</main>
+</body>
+</html>

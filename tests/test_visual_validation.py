@@ -89,6 +89,57 @@ class VisualValidationTests(unittest.TestCase):
                 ["home.root", "home.title"],
             )
 
+    def test_fixed_artboard_regions_use_visual_root_browser_coordinates(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            screen_root = node("home.root", None, "container", [0, 0, 393, 640])
+            screen_root["layout"]["sourceRectCssPx"] = {
+                "x": 40, "y": 242, "width": 318, "height": 520,
+            }
+            bottom = node("home.bottom", "home.root", "button", [0, 712, 393, 99], "Continue")
+            bottom["layout"]["sourceRectCssPx"] = {
+                "x": 40, "y": 818, "width": 318, "height": 80,
+            }
+            payload = {
+                "schemaVersion": "1.2",
+                "source": {
+                    "entry": str(root / "prototype.html"),
+                    "viewport": {"width": 393, "height": 852},
+                    "screenContext": {
+                        "visualRootRect": {"x": 40, "y": 200, "width": 318, "height": 698},
+                        "contentRootRect": {"x": 40, "y": 242, "width": 318, "height": 520},
+                    },
+                },
+                "target": {
+                    "viewportPt": {"width": 393, "height": 852},
+                    "scale": 393 / 318,
+                },
+                "screens": [{
+                    "id": "home",
+                    "rootNodeId": "home.root",
+                    "sourceSelector": "#home",
+                    "systemChrome": {},
+                    "regions": {"bottomBar": {"nodeId": "home.bottom"}},
+                    "nodes": [screen_root, bottom],
+                }],
+                "interactions": [],
+                "visualStates": [{"id": "initial", "required": True}],
+            }
+            source, output = root / "ui-ir.json", root / "manifest.json"
+            source.write_text(json.dumps(payload), encoding="utf-8")
+            subprocess.run(
+                [sys.executable, str(MANIFEST_SCRIPT), str(source), "--out", str(output)],
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            manifest = json.loads(output.read_text(encoding="utf-8"))
+            regions = {item["id"]: item for item in manifest["validationRegions"]}
+            # The bottom bar is 618 CSS px below the Visual Root, not 576 px
+            # below the Content Root. Cover normalization then crops 5 pt.
+            self.assertEqual(regions["screen.bottom-bar"]["rect"], [0, 758, 393, 94])
+            self.assertEqual(regions["node.home.bottom"]["geometryRect"], [0, 758, 393, 94])
+
     def test_node_geometry_report_exposes_vertical_accumulation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -412,6 +463,55 @@ class VisualValidationTests(unittest.TestCase):
                     "native-home-indicator-is-system-owned",
                 },
             )
+
+    def test_manifest_uses_visual_root_for_capture_and_scroll_owner_for_actions(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = {
+                "schemaVersion": "1.2",
+                "source": {
+                    "entry": str(root / "prototype.html"),
+                    "viewport": {"width": 393, "height": 852},
+                    "screenContext": {
+                        "visualRootSelector": "#phone-screen",
+                        "contentRootSelector": "#page-results",
+                        "ancestorChain": [
+                            {
+                                "selector": "#phone-screen",
+                                "style": {"overflowY": "hidden"},
+                            },
+                            {
+                                "selector": "#content-scroll",
+                                "style": {"overflowY": "auto"},
+                            },
+                        ],
+                    },
+                },
+                "target": {"viewportPt": {"width": 393, "height": 852}},
+                "screens": [{
+                    "id": "results",
+                    "rootNodeId": "results.root",
+                    "sourceSelector": "#page-results",
+                    "systemChrome": {},
+                    "regions": {},
+                    "nodes": [node("results.root", None, "container", [0, 0, 393, 852])],
+                }],
+                "interactions": [],
+                "visualStates": [{"id": "initial", "required": True, "scroll": "top"}],
+            }
+            source, output = root / "ui-ir.json", root / "visual-manifest.json"
+            source.write_text(json.dumps(payload), encoding="utf-8")
+            subprocess.run(
+                [sys.executable, str(MANIFEST_SCRIPT), str(source), "--out", str(output)],
+                text=True, capture_output=True, check=True,
+            )
+            manifest = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["rootSelector"], "#phone-screen")
+            self.assertEqual(manifest["states"][0]["htmlActions"][0], {
+                "type": "scroll",
+                "selector": "#content-scroll",
+                "position": "top",
+            })
 
     def test_manifest_excludes_descendants_of_initially_hidden_nodes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -15,6 +15,40 @@ VALIDATE = ROOT / "scripts" / "validate_native_interaction_motion_plan.py"
 
 
 class NativeInteractionMotionPlanTests(unittest.TestCase):
+    def test_flow_state_targeting_another_screen_uses_navigation_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            ir = root / "ui-ir.json"
+            application = root / "application.json"
+            presentation = root / "presentation.json"
+            plan = root / "interaction.json"
+            ir.write_text(json.dumps({
+                "schemaVersion": "1.2", "screens": [{"id": "step1"}],
+                "interactions": [{
+                    "id": "advance", "sourceNodeId": "step1.button",
+                    "payload": {"transitions": [{"action": "set-flow-state", "targetScreenId": "step2"}]},
+                }],
+            }), encoding="utf-8")
+            application.write_text(json.dumps({
+                "schemaVersion": "native-application-plan-1.0",
+                "screenMemberships": [{
+                    "screenId": "step1", "applicationContainerId": "main-application",
+                    "navigationStackId": "main-navigation",
+                }],
+            }), encoding="utf-8")
+            presentation.write_text(json.dumps({
+                "schemaVersion": "native-presentation-plan-1.0",
+                "screens": [{"screenId": "step1", "presentations": []}],
+            }), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(BUILD), "--ir", str(ir), "--application-plan", str(application),
+                "--presentation-plan", str(presentation), "--out", str(plan),
+            ], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            action = json.loads(plan.read_text(encoding="utf-8"))["screens"][0]["actions"][0]
+            self.assertEqual(action["owner"], "navigation-stack")
+            self.assertEqual(action["executor"], "native-navigation")
+
     def test_nested_transitions_receive_native_owners_and_motion_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -61,6 +95,7 @@ class NativeInteractionMotionPlanTests(unittest.TestCase):
                 "python3", str(VALIDATE), "--plan", str(plan), "--out", str(report),
             ], text=True, capture_output=True)
             self.assertEqual(validated.returncode, 0, validated.stderr or validated.stdout)
+            self.assertEqual(json.loads(validated.stdout)["status"], "passed")
 
 
 if __name__ == "__main__":

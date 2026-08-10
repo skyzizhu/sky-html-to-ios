@@ -77,6 +77,8 @@ Wrapping stack 在 SwiftUI 中使用原生 `Layout` 协议实现，在 UIKit 中
 
 百分比、`calc()` 和相对单位不得被正则截断成错误常量。只含 `%` 与 `px` 的表达式必须降级为 `parent * affineMultiplier + affineConstantPt`，由 SwiftUI `Layout` 或 UIKit Auto Layout 相对父容器执行；无法确定性求解的 viewport/font 相对表达式才进入 measured fallback，并保留原表达式和 reference axis。
 
+子项尺寸策略必须优先读取获胜的 authored declaration。浏览器 computed `width`/`height` 通常都会解析成 px，它只代表当前采样结果；只有 authored 固定长度才能生成 required fixed constraint。authored 百分比、`width:100%`、含百分比的 `calc()` 和 fill-available 类语义必须保持 parent-filling/flexible，由父内容框和 Auto Layout/SwiftUI Layout 决定最终尺寸。
+
 原生运行时必须消费可确定的 min/max、padding、border、margin 和 compression 证据。transform 只改变视觉绘制时，不得反向污染正常流尺寸。
 
 ## 叶子内容几何
@@ -84,11 +86,17 @@ Wrapping stack 在 SwiftUI 中使用原生 `Layout` 协议实现，在 UIKit 中
 `native-layout-plan.json` 的每个节点必须包含 `contentGeometry`。它不替代盒模型，而是描述边框盒内部最终原生内容如何保持浏览器度量：
 
 - `sourceWidthPt`、`sourceHeightPt` 和槽位 `gapBeforePt` 使用 UI IR 已归一化的目标 pt，不得再次乘 `designScale`；CSS padding、margin、字号等来源样式 token 仍按既有规则只缩放一次；
+- `boxModel` 中的 border/content box 与 min/max `*Pt` 字段同样已经归一化为目标 pt，Payload 生成不得二次缩放。百分比子项相对父内容框解析；UIKit 父级以 layout margins 表达 padding 时，约束必须指向 `layoutMarginsGuide`，不能指向外层 bounds 后再额外保留 padding。
+- padding 必须只有一个原生 owner。普通 Stack 容器可用 layout margins 表达；复合 `UIControl`/Button wrapper 若已用四边约束把内容 Stack inset 到 content box，内层 Stack 必须关闭自身 padding 消费。禁止 wrapper insets 与 Stack layout margins 叠加两次。
+- 圆角背景/渐变与外阴影必须分层消费：宿主层保留不裁剪以绘制阴影，背景图或 `CAGradientLayer` 自身应用统一 corner radius 或逐角 mask。禁止为了保留阴影而让渐变恢复成矩形，也禁止裁剪宿主层导致阴影消失。
 - `widthMode` / `heightMode` 区分 fixed、intrinsic、flexible 与 parent-relative；
 - 图标、图片和紧凑视觉包装保存来源宽高与宽高比，防止 Stack/Grid 拉伸成错误形状；
 - 单行文字、徽标和图标保存 compression resistance 与 intrinsic-width 所有权；
 - 媒体保存 object-fit/object-position 对应的 content mode 和位置；
 - 普通响应式大图不得仅因浏览器测得一个宽度就降级成固定宽度。
+- 横向复合槽位用浏览器实测高度、行高和 `white-space` 共同判断单行。测得的文字宽度是 intrinsic/ideal 证据，不自动生成 required 固定宽度；否则原生字体略宽时会被裁切。
+- `normal`/`flex-start` 容器的未占用宽度由尾部弹性 Spacer 吸收，不能拉伸首个文字槽并把相邻 Badge 或图标推到末端。
+- CSS 重叠圆角在目标盒子归一化后缩减；父控件状态色不得覆盖具有独立计算色或富文本 run 的后代。
 
 复合控件的 `orderedSlots` 在视觉顺序之外还必须保存每个槽位的 `contentGeometry`、`gapBeforePt` 和 `flexibleGapBefore`。普通 gap 使用实测固定间距；`space-between` 或明确的 auto margin 使用弹性 Spacer。生成器消费槽位契约后，必须清除已经由父布局消费的对应 margin，避免重复占宽。
 
@@ -98,7 +106,19 @@ Wrapping stack 在 SwiftUI 中使用原生 `Layout` 协议实现，在 UIKit 中
 
 每个节点保存 static、relative、absolute、fixed 或 sticky 定位方案。absolute 使用最近的 positioned ancestor，fixed 使用 viewport，sticky 使用最近 scroll owner；同时保存 containing block、相对偏移、insets、z-index、transform 和 transform origin。定位节点不得默认相对屏幕居中，也不得改变普通流兄弟节点的尺寸分配。
 
+浏览器提取的 `offsetParentRuntimeId`、`scrollAncestorRuntimeId` 与对应 rect 是定位所有权的首选证据。只有这些节点不在当前 Screen 闭包内时，才允许按 CSS positioned ancestor/scroll ancestor 规则回退。生成 Payload 时定位节点必须重挂到 `nativeOwnerNodeId`，偏移也必须在同一 owner 坐标系计算。
+
+horizontal/vertical 容器必须逐项保留 `gapBeforePt`，整体 row/column gap 只作为缺失几何时的 fallback。逐项 gap 表示相邻 border box 之间的最终可见距离；这些 `*Pt` 已经处于目标坐标系，生成器不得再次乘设计倍率。原生端消费后必须清除相邻主轴 margin，防止 CSS margin 与 Spacer 被重复计算。
+
 同页状态使用 `stateLayouts` 保存 insert/remove/replace 对应的目标父容器、生成节点布局和原节点基线布局。状态节点仍消费普通 Node Layout Contract；状态变化不得另建一套截图坐标或独立页面。
+
+系统导航栏显隐是 Application Container 的首帧职责。UIKit 在创建 `UINavigationController`、push 与 replace 前同步应用目标页面策略，不能只依赖被嵌入 child controller 的 `viewWillAppear`；SwiftUI 的 toolbar visibility 也必须与目标路由首帧一致。
+
+Screen Content Root 的宽度由 Screen Container 响应式约束持有，来源单次实测宽度不能继续作为根节点 fixed-width。非滚动静态页面从系统 Safe Area 顶部开始，保留内容的 intrinsic/measured height，并以底部 `lessThanOrEqual` 限制可用范围；不能同时保留固定根高度又用 top/bottom 等式把它强制拉满屏幕。滚动页面仍使用完整父 bounds 与系统自动 inset。
+
+UIKit 页面级 typed wrapper 和模块 ContentView 必须在加入 Screen Container 前设置 `translatesAutoresizingMaskIntoConstraints = false`。结构清单不能只证明文件和类型存在，还要保证根 wrapper 由 Auto Layout 接管；运行时根 frame 为零而子树依靠 unclipped overflow 显示属于硬失败。
+
+透明文字颜色配合 CSS 渐变和 `background-clip:text` 时，渐变边界是字形，不是节点 border box。原生优先使用文字遮罩；无法精确遮罩时，使用首个有效渐变色作为稳定文字前景，禁止把渐变层绘制成 UILabel 或文本 View 的矩形背景。
 
 ## 复合控件
 
@@ -114,6 +134,8 @@ Wrapping stack 在 SwiftUI 中使用原生 `Layout` 协议实现，在 UIKit 中
 - `content`。
 
 生成器必须把相同顺序写入 Payload `compoundLayout` 与 `contentItems`。系统控件内部布局无法满足时，保留系统交互语义并使用原生内容容器包装；不得把整个控件退化成无语义截图或普通 View 手势。
+
+固定 Visual Root 使用 cover 归一化时，布局契约保存居中裁切 inset。viewport-fixed chrome 按对应边补偿锚点；普通内容仍由 Auto Layout/SwiftUI Layout 与系统 Safe Area 管理。
 
 ## 硬门禁
 

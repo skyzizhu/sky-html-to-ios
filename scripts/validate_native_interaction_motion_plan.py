@@ -38,6 +38,15 @@ def main() -> int:
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps({
+        "out": str(args.out.resolve()),
+        "status": report["status"],
+        "screenCount": len(plan.get("screens") or []),
+        "behaviorCount": sum(
+            len(screen.get("actions") or []) + len(screen.get("motions") or [])
+            for screen in plan.get("screens") or []
+        ),
+    }, ensure_ascii=False, indent=2))
     if issues:
         print("Native interaction and motion plan gate failed.", file=sys.stderr)
     return 0 if not issues else 1

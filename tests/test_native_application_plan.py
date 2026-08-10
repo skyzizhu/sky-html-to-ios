@@ -15,6 +15,31 @@ VALIDATE = ROOT / "scripts" / "validate_native_application_plan.py"
 
 
 class NativeApplicationPlanTests(unittest.TestCase):
+    def test_flow_state_screen_transition_is_an_application_route(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = []
+            for screen_id, target in (("step1", "step2"), ("step2", None)):
+                payload = {
+                    "schemaVersion": "1.2", "screens": [{"id": screen_id}],
+                    "interactions": ([{
+                        "id": "advance", "sourceNodeId": "step1.button",
+                        "payload": {"transitions": [{"action": "set-flow-state", "targetScreenId": target}]},
+                    }] if target else []),
+                }
+                path = root / f"{screen_id}.json"
+                path.write_text(json.dumps(payload), encoding="utf-8")
+                inputs.extend(["--ir", str(path)])
+            plan = root / "plan.json"
+            result = subprocess.run(
+                ["python3", str(BUILD), *inputs, "--ui-stack", "uikit", "--out", str(plan)],
+                text=True, capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            route = json.loads(plan.read_text(encoding="utf-8"))["routes"][0]
+            self.assertEqual(route["action"], "set-flow-state")
+            self.assertEqual(route["targetScreenId"], "step2")
+
     def test_global_tab_and_navigation_ownership_is_unique(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -60,6 +85,7 @@ class NativeApplicationPlanTests(unittest.TestCase):
                 text=True, capture_output=True,
             )
             self.assertEqual(validated.returncode, 0, validated.stderr or validated.stdout)
+            self.assertEqual(json.loads(validated.stdout)["status"], "passed")
 
 
 if __name__ == "__main__":

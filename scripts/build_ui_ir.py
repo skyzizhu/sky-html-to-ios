@@ -18,7 +18,7 @@ EXPLICIT_COMPONENTS = {
     "alert": ("alert", "alert", "UIAlertController"),
     "button": ("button", "Button", "UIButton"),
     "checkbox": ("checkbox", "Toggle with checkbox style", "Custom UIControl"),
-    "collection": ("collection", "LazyVGrid/LazyHGrid", "UICollectionView"),
+    "collection": ("grid", "LazyVGrid/LazyHGrid", "UICollectionView"),
     "color-picker": ("color-picker", "ColorPicker", "UIColorWell"),
     "calendar-view": ("calendar-view", "UICalendarView representable", "UICalendarView"),
     "context-menu": ("context-menu", "contextMenu", "UIContextMenuInteraction"),
@@ -241,6 +241,16 @@ def semantic_mapping(node: dict, has_interaction: bool) -> dict:
         if node.get("text"):
             return result("decoration", "Text/Shape overlay", "UILabel/CALayer overlay", 0.72, "native-fallback", "native-fallback")
         return result("decoration", "Shape/Image overlay", "CALayer/UIImageView overlay", 0.68, "native-fallback", "native-fallback")
+
+    if explicit_component == "collection":
+        reasons.append("explicit-ios-component:collection")
+        display = str(style.get("display") or "").lower()
+        scroll = scroll_contract(node)
+        if display in {"grid", "inline-grid"}:
+            return result("grid", "LazyVGrid/LazyHGrid", "UICollectionView", 1.0)
+        if scroll.get("axis") == "horizontal":
+            return result("carousel", "ScrollView + LazyHStack", "UICollectionView", 1.0)
+        return result("list", "List/LazyVStack", "UICollectionView", 1.0)
 
     if explicit_component in EXPLICIT_COMPONENTS:
         reasons.append(f"explicit-ios-component:{explicit_component}")
@@ -1007,6 +1017,26 @@ def select_root(data: dict, root_runtime_id: str | None, root_selector: str | No
         match = next((node for node in nodes if node.get("runtimeId") == root_runtime_id), None)
     elif root_selector:
         match = next((node for node in nodes if node.get("selector") == root_selector), None)
+        screen_context = data.get("screenContext") or {}
+        if match is None:
+            context_pairs = (
+                (screen_context.get("visualRootSelector"), screen_context.get("visualRootRuntimeId")),
+                (screen_context.get("contentRootSelector"), screen_context.get("contentRootRuntimeId")),
+            )
+            context_runtime_id = next(
+                (runtime_id for selector, runtime_id in context_pairs if selector == root_selector and runtime_id),
+                None,
+            )
+            match = next(
+                (node for node in nodes if node.get("runtimeId") == context_runtime_id),
+                None,
+            )
+        if match is None:
+            node_by_runtime = {str(node.get("runtimeId") or ""): node for node in nodes}
+            match = next(
+                (node for node in nodes if matches_descendant_selector(node, root_selector, node_by_runtime)),
+                None,
+            )
     else:
         candidates = sorted(
             (candidate for candidate in data.get("phoneCandidates", []) if candidate.get("isPrimary", True)),
@@ -1233,6 +1263,7 @@ def infer_screen_regions(
     id_map: dict[str, str],
     interactive_runtime_ids: set[str],
     excluded_node_ids: set[str],
+    frame_rect: dict | None = None,
 ) -> dict:
     """Infer persistent app chrome from geometry and behavior, not CSS names alone."""
     node_by_id = {str(node.get("runtimeId")): node for node in selected}
@@ -1276,7 +1307,7 @@ def infer_screen_regions(
             is_candidate = False
         return True
 
-    root_rect = root.get("rect") or {}
+    root_rect = frame_rect or root.get("rect") or {}
     root_x = float(root_rect.get("x") or 0)
     root_y = float(root_rect.get("y") or 0)
     root_width = max(float(root_rect.get("width") or 0), 1)
@@ -1582,8 +1613,26 @@ def build_ir(data: dict, args) -> dict:
     root = select_root(data, args.root_runtime_id, args.root_selector)
     all_nodes = data.get("nodes") or []
     root_subtree = descendants(all_nodes, root["runtimeId"])
+    screen_context = data.get("screenContext") or {}
+    shared_region_roots = {
+        str(item.get("runtimeId") or "")
+        for item in screen_context.get("sharedRegions") or []
+        if item.get("runtimeId")
+    }
+    shared_runtime_ids = {
+        str(node.get("runtimeId") or "")
+        for runtime_id in shared_region_roots
+        for node in descendants(all_nodes, runtime_id)
+    }
+    scoped_runtime_ids = {
+        str(node.get("runtimeId") or "") for node in root_subtree
+    } | shared_runtime_ids
+    scoped_nodes = [
+        node for node in all_nodes
+        if str(node.get("runtimeId") or "") in scoped_runtime_ids
+    ]
     route_scoped = filter_other_route_screens(
-        all_nodes, root_subtree, args.route_graph_data, args.screen_id
+        all_nodes, scoped_nodes, args.route_graph_data, args.screen_id
     )
     selected = route_scoped
     selected = [
@@ -1595,6 +1644,7 @@ def build_ir(data: dict, args) -> dict:
     selected_ids = {node.get("runtimeId") for node in selected}
     source_coverage = {
         "rootSubtreeNodeCount": len(root_subtree),
+        "sharedRegionNodeCount": len(shared_runtime_ids),
         "routeScopedNodeCount": len(route_scoped),
         "mappedNodeCount": len(selected),
         "excludedByRouteCount": sum(
@@ -1715,6 +1765,8 @@ def build_ir(data: dict, args) -> dict:
     for node in selected:
         runtime_id = node.get("runtimeId")
         parent_runtime = node.get("parentRuntimeId")
+        if runtime_id in shared_region_roots:
+            parent_runtime = root.get("runtimeId")
         while parent_runtime and parent_runtime not in id_map:
             parent_runtime = (node_by_runtime.get(parent_runtime) or {}).get("parentRuntimeId")
         node_interactions = interactions_by_runtime.get(runtime_id, [])
@@ -1728,7 +1780,15 @@ def build_ir(data: dict, args) -> dict:
         rect = node.get("rect") or {}
         attrs = node.get("attributes") or {}
         properties = node.get("properties") or {}
-        style = node.get("style") or {}
+        style = dict(node.get("style") or {})
+        if runtime_id == root.get("runtimeId"):
+            viewport_style = screen_context.get("viewportBackground") or {}
+            source_background = str(style.get("backgroundColor") or "")
+            if source_background in {"", "transparent", "rgba(0, 0, 0, 0)"}:
+                if viewport_style.get("backgroundColor"):
+                    style["backgroundColor"] = viewport_style.get("backgroundColor")
+                if viewport_style.get("backgroundImage") not in {None, "", "none"}:
+                    style["backgroundImage"] = viewport_style.get("backgroundImage")
         asset_ref = None
         asset_source = node.get("asset")
         if asset_source:
@@ -1796,6 +1856,15 @@ def build_ir(data: dict, args) -> dict:
                 "tag": node.get("tag"),
                 "domId": node.get("domId"),
                 "runtimeId": runtime_id,
+                "positioning": {
+                    "offsetParentNodeId": id_map.get((node.get("positioning") or {}).get("offsetParentRuntimeId")),
+                    "offsetParentRuntimeId": (node.get("positioning") or {}).get("offsetParentRuntimeId"),
+                    "offsetParentSelector": (node.get("positioning") or {}).get("offsetParentSelector"),
+                    "offsetParentRectCssPx": (node.get("positioning") or {}).get("offsetParentRect"),
+                    "scrollAncestorNodeId": id_map.get((node.get("positioning") or {}).get("scrollAncestorRuntimeId")),
+                    "scrollAncestorRuntimeId": (node.get("positioning") or {}).get("scrollAncestorRuntimeId"),
+                    "scrollAncestorSelector": (node.get("positioning") or {}).get("scrollAncestorSelector"),
+                },
                 "synthetic": node.get("synthetic"),
                 "encapsulation": node.get("encapsulation"),
                 "ios": {
@@ -1933,7 +2002,14 @@ def build_ir(data: dict, args) -> dict:
         if str(state.get("kind") or "") in {"sheet", "full-screen", "fullscreen", "full-screen-overlay", "popover", "popover-overlay", "overlay", "dialog"}
         for node_id in state.get("targetNodeIds") or []
     }
-    regions = infer_screen_regions(selected, root, id_map, region_interactive_ids, presentation_node_ids)
+    regions = infer_screen_regions(
+        selected,
+        root,
+        id_map,
+        region_interactive_ids,
+        presentation_node_ids,
+        screen_context.get("visualRootRect"),
+    )
     route_screen = next((
         screen for screen in (args.route_graph_data or {}).get("screens") or []
         if isinstance(screen, dict) and screen.get("id") == args.screen_id
@@ -1960,6 +2036,11 @@ def build_ir(data: dict, args) -> dict:
             "interactionOverrides": str(args.interaction_overrides.resolve()) if args.interaction_overrides else None,
             "interactionFingerprint": ((args.interaction_graph_data or {}).get("source") or {}).get("fingerprint"),
             "screenActivation": screen_activation or None,
+            "screenContext": screen_context or None,
+            "layoutClassification": (
+                (getattr(args, "source_layout_report_data", None) or {}).get("sourceClassification")
+                if getattr(args, "source_layout_report_data", None) else None
+            ),
         },
         "target": {
             "platform": "ios",
@@ -1978,6 +2059,8 @@ def build_ir(data: dict, args) -> dict:
             "rootNodeId": root_native_id,
             "sourceSelector": root.get("selector"),
             "sourceRuntimeId": root.get("runtimeId"),
+            "visualRootSelector": screen_context.get("visualRootSelector"),
+            "visualRootRuntimeId": screen_context.get("visualRootRuntimeId"),
             "systemChrome": {
                 "statusBar": "native",
                 "navigationBar": "none" if navigation["style"] == "hidden" else navigation["style"],
@@ -2016,6 +2099,7 @@ def main() -> int:
     parser.add_argument("--route-graph", type=Path, help="JSON graph generated by discover_html_routes.cjs")
     parser.add_argument("--interaction-graph", type=Path, help="JSON graph generated by discover_html_interactions.cjs")
     parser.add_argument("--interaction-overrides", type=Path, help="Optional ambiguity resolutions for --interaction-graph")
+    parser.add_argument("--source-layout-report", type=Path, help="Responsive/fixed-artboard classification generated before extraction")
     parser.add_argument("--orientation", choices=("portrait", "landscape"), default="portrait")
     parser.add_argument("--appearance", choices=("light", "dark"), default="light")
     args = parser.parse_args()
@@ -2030,6 +2114,9 @@ def main() -> int:
         if args.interaction_graph_data and args.interaction_graph_data.get("schemaVersion") != "interaction-state-graph-1.0":
             raise ValueError("--interaction-graph must use schemaVersion interaction-state-graph-1.0")
         args.interaction_overrides_data = json.loads(args.interaction_overrides.read_text(encoding="utf-8")) if args.interaction_overrides else None
+        args.source_layout_report_data = json.loads(args.source_layout_report.read_text(encoding="utf-8")) if args.source_layout_report else None
+        if args.source_layout_report_data and args.source_layout_report_data.get("schemaVersion") != "responsive-layout-analysis-1.0":
+            raise ValueError("--source-layout-report must use schemaVersion responsive-layout-analysis-1.0")
         if args.interaction_overrides_data and args.interaction_overrides_data.get("schemaVersion") != "html-to-ios-overrides-1.0":
             raise ValueError("--interaction-overrides must use schemaVersion html-to-ios-overrides-1.0")
         if args.interaction_overrides_data and not args.interaction_graph_data:

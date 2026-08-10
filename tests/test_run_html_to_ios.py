@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import MethodType, SimpleNamespace
+from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "run_html_to_ios.py"
@@ -21,6 +22,10 @@ SPEC.loader.exec_module(RUN_MODULE)
 
 
 class RunHTMLToIOSTests(unittest.TestCase):
+    def test_emit_report_ignores_closed_stdout_pipe(self) -> None:
+        with patch("builtins.print", side_effect=BrokenPipeError):
+            RUN_MODULE.emit_report({"status": "completed"})
+
     def invoke(self, workspace: Path, ir: Path, *extra: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["python3", str(SCRIPT), "--workspace", str(workspace), "--ir", str(ir), *extra],
@@ -28,6 +33,19 @@ class RunHTMLToIOSTests(unittest.TestCase):
             capture_output=True,
             check=False,
         )
+
+    def test_find_node_skips_candidate_without_playwright(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            unavailable = root / "node"
+            unavailable.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            unavailable.chmod(0o755)
+            available = root / "node-with-playwright"
+            available.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            available.chmod(0o755)
+            with patch.object(RUN_MODULE.shutil, "which", return_value=str(available)):
+                selected, _ = RUN_MODULE.find_node(unavailable)
+            self.assertEqual(selected, available.resolve())
 
     def test_empty_workspace_dry_run_plans_project_creation_without_writing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

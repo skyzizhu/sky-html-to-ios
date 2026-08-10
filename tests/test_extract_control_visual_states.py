@@ -48,6 +48,7 @@ class ExtractControlVisualStatesTests(unittest.TestCase):
             ], text=True, capture_output=True, check=False, env=environment)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertTrue(payload["captureConfiguration"]["controlSamplingViewportRestored"])
             card = next(item for item in payload["nodes"] if item.get("domId") == "card")
             content = next(item for item in payload["nodes"] if item.get("domId") == "content")
             before = next(item for item in payload["nodes"] if item.get("tag") == "::before")

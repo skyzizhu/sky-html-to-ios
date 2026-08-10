@@ -70,6 +70,94 @@ def render_node(
 
 
 class BuildUIIRTests(unittest.TestCase):
+    def test_semantic_root_selector_resolves_extracted_context_runtime_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            app = render_node("app", None, "main", {"x": 0, "y": 0, "width": 393, "height": 852})
+            app["selector"] = "body > main.phone"
+            app["attributes"].update({"data-ios-app-root": "true", "data-ios-screen": "dashboard"})
+            source = root / "render-tree.json"
+            output = root / "ui-ir.json"
+            source.write_text(json.dumps({
+                "schemaVersion": "render-tree-1.2",
+                "source": {"kind": "html-file", "entry": "/tmp/example.html"},
+                "document": {"viewport": {"width": 393, "height": 852}},
+                "screenContext": {
+                    "visualRootSelector": 'main[data-ios-screen="dashboard"]',
+                    "contentRootSelector": 'main[data-ios-screen="dashboard"]',
+                    "visualRootRuntimeId": "app",
+                    "contentRootRuntimeId": "app",
+                    "visualRootRect": app["rect"],
+                },
+                "nodes": [app],
+                "interactions": [],
+                "phoneCandidates": [],
+            }), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), str(source), "--out", str(output),
+                "--root-selector", 'main[data-ios-screen="dashboard"]', "--screen-id", "dashboard",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            generated = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(generated["screens"][0]["nodes"][0]["source"]["runtimeId"], "app")
+
+    def test_content_root_inherits_visual_envelope_and_shared_bottom_region(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            visual = render_node("visual", None, "main", {"x": 0, "y": 0, "width": 393, "height": 852}, dom_id="phone")
+            visual["style"]["backgroundColor"] = "rgb(13, 15, 28)"
+            content = render_node("content", "visual", "section", {"x": 0, "y": 44, "width": 393, "height": 1000}, dom_id="page")
+            positioned = render_node("floating", "content", "div", {"x": 20, "y": 120, "width": 80, "height": 40}, position="absolute")
+            positioned["positioning"] = {
+                "offsetParentRuntimeId": "content",
+                "offsetParentSelector": "#page",
+                "offsetParentRect": {"x": 0, "y": 44, "width": 393, "height": 1000},
+            }
+            bottom = render_node("bottom", "visual", "footer", {"x": 0, "y": 778, "width": 393, "height": 74}, position="fixed", dom_id="bottom")
+            bottom["attributes"]["data-ios-component"] = "bottom-action-bar"
+            source = root / "render-tree.json"
+            output = root / "ui-ir.json"
+            layout_report = root / "source-layout.json"
+            layout_report.write_text(json.dumps({
+                "schemaVersion": "responsive-layout-analysis-1.0",
+                "sourceClassification": {
+                    "kind": "fixed-mobile-artboard",
+                    "conversionStatus": "automatic",
+                    "reasons": ["fixed fixture"],
+                },
+            }), encoding="utf-8")
+            source.write_text(json.dumps({
+                "schemaVersion": "render-tree-1.2",
+                "source": {"kind": "html-file", "entry": "/tmp/example.html"},
+                "document": {"viewport": {"width": 393, "height": 852}},
+                "screenContext": {
+                    "visualRootSelector": "#phone",
+                    "contentRootSelector": "#page",
+                    "visualRootRuntimeId": "visual",
+                    "contentRootRuntimeId": "content",
+                    "visualRootRect": visual["rect"],
+                    "viewportBackground": {"backgroundColor": "rgb(13, 15, 28)", "backgroundImage": "none"},
+                    "sharedRegions": [{"runtimeId": "bottom", "selector": "#bottom", "edge": "bottom"}],
+                },
+                "nodes": [visual, content, positioned, bottom],
+                "interactions": [],
+                "phoneCandidates": [],
+            }), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), str(source), "--out", str(output),
+                "--root-runtime-id", "content", "--screen-id", "home",
+                "--source-layout-report", str(layout_report),
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            generated = json.loads(output.read_text(encoding="utf-8"))
+            screen = generated["screens"][0]
+            self.assertEqual(generated["source"]["layoutClassification"]["kind"], "fixed-mobile-artboard")
+            by_runtime = {item["source"]["runtimeId"]: item for item in screen["nodes"]}
+            self.assertEqual(by_runtime["content"]["style"]["backgroundColor"], "rgb(13, 15, 28)")
+            self.assertEqual(by_runtime["bottom"]["parentId"], screen["rootNodeId"])
+            self.assertEqual(screen["regions"]["bottomBar"]["nodeId"], by_runtime["bottom"]["id"])
+            self.assertEqual(by_runtime["floating"]["source"]["positioning"]["offsetParentNodeId"], by_runtime["content"]["id"])
+
     def test_explicit_apple_system_controls_map_to_native_semantics(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -41,8 +41,33 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 30. 叶子节点和复合控件必须由 `native-layout-plan.json` 中统一的内容几何契约驱动。图标、图片、紧凑标签、数量徽标和单行文字要保存来源宽高、fixed/intrinsic/flexible/parent-relative 模式、宽高比、单行、抗压缩、媒体适配和对齐；复合控件还必须保存每个槽位的实测间距与弹性间距。SwiftUI/UIKit 不得分别重新推断这些属性。
 31. 首次生成的视觉外观必须由计算样式直接形成可执行契约，不能等待截图纠偏。四角圆角必须分别保存水平/垂直半径，四边边框必须分别保存宽度、颜色和线型；禁止用最大值或单一代表值统一化。CSS 圆角使用圆弧/椭圆几何，不得默认替换为 Apple continuous corner；背景、透明度与后代裁剪也必须由同一节点契约驱动。截图和多模态只用于生成后的可选验收。
 32. 六层只负责原生节点的所有权与包含关系，不新增“视觉属性层”。全局应用壳由 `native-application-plan.json` 唯一确定；布局、外观、系统控件配置、Presentation、交互与动画分别通过横向契约附着到六层节点，禁止同一事实在多个计划中各自推断。
-33. 控件选择分为语义候选、上下文角色、系统候选、几何适配和最终决策。几何适配最多进行两轮有界解析；保留系统语义的 wrapper 不得改变控件的交互、状态机和无障碍所有权。
-34. `native-appearance-plan.json` 负责节点外观，文字占位尺寸仍由 `native-layout-plan.json` 负责；`native-interaction-motion-plan.json` 负责每个动作和动画的唯一 owner 与 executor。生成器必须消费这些计划并在结构清单中记录哈希与消费状态。
+33. 页面提取必须区分 Visual Root 与 Content Root。Visual Root 提供主题背景、祖先状态、共享导航/底栏和 viewport 几何；Content Root 决定当前业务页面及滚动内容。两者不得被压成一个 selector，也不得因为只截取 Content Root 而丢失外层深色主题、固定操作栏或全局浮层。
+34. absolute/fixed/sticky 的定位参照必须来自浏览器事实。提取器记录 `offsetParent`、最近 scroll ancestor 及其矩形，UI IR 转换为稳定 Node ID，Native Layout Plan 再决定原生 owner；生成器禁止继续使用 DOM parent、零尺寸包装层或屏幕中心作为兜底参照。
+35. 线性容器除整体 gap 外必须逐子项保存浏览器实测 `gapBeforePt`。UIKit/SwiftUI 以该契约还原不等距分组，并清除已经被间距契约消费的相邻主轴 margin；文字和动态内容继续使用 intrinsic/min-height，禁止为了消除纵向漂移固定整页高度。
+36. 系统 Safe Area 只能应用一次。HTML 中模拟的状态栏/Home Indicator 被移除后，不得再把来源状态栏高度叠加到系统 safeArea、scroll contentInset 或容器 frame；来源 chrome 高度仅在明确的 immersive/custom chrome 所有权下使用。
+37. 单行文字默认保持来源字号、字重和 tracking。HTML 的 nowrap/overflow 映射为原生单行、裁剪或省略，不得用 `minimumScaleFactor`/`adjustsFontSizeToFitWidth` 静默缩小字体。动画必须从页面出现后的零相位计时，不得用系统绝对时间随机进入中间关键帧。
+38. 系统导航栏显隐必须由 Application Container 在创建、push 和 replace 时立即应用，不能只等待页面 `viewWillAppear` 或 SwiftUI 子视图生命周期。页面声明隐藏导航栏时，首帧不得短暂或永久出现系统标题、返回按钮和额外顶部高度。
+39. CSS `background-clip:text` 或透明前景配合渐变背景属于文字填充，不属于 View 背景。原生不能把它绘制成文字外接矩形；若当前栈无法精确实现渐变字形遮罩，允许稳定降级为首个渐变色的文字，但不得生成色块或丢失文字。
+40. 控件 focused/pressed/checked 状态采样不得污染页面基准状态。提取器在采样前记录 window 与全部可滚动祖先的 offset，采样后必须恢复并校验；恢复失败时禁止继续输出基线截图。
+41. Screen Content Root 的响应式宽度由 Screen Container 持有，不能把浏览器单次采样宽度继续生成为根节点 fixed-width。非滚动静态内容以 Safe Area 顶部为起点并保留 intrinsic/measured height，底部只设上界；禁止同时固定根高度又把 top/bottom 强制等距钉满屏幕。滚动容器仍使用父容器完整 bounds 和系统自动 inset。
+42. UIKit 的页面级 typed wrapper、模块 ContentView 和 section wrapper 必须显式关闭 autoresizing-mask constraints，再交给 Screen Container 约束。生成后首屏根 wrapper 的运行 frame 不得为零；禁止让内部固定尺寸子树在 `0×0` 根 View 外部依靠 overflow 偶然显示。
+43. 子项固定尺寸只来自 authored 固定长度或明确的紧凑视觉契约。computed style 中解析后的 px 只是单次测量；authored `width:100%`、百分比和相对父容器的 `calc()` 必须生成填充/比例约束，禁止再叠加固定宽度与父级 leading/trailing 约束。
+44. UI IR/Native Layout Plan 中带 `Pt` 的 border/content box、min/max 和槽位几何已经完成设计画板归一化，Payload 不得再次乘 `designScale`。百分比子项以父内容框为参照；UIKit 父 Stack 用 layout margins 表达 padding 时必须约束到 `layoutMarginsGuide`。
+45. 一个语义文本节点包含普通 Text Node 与非交互 inline span 时，必须合成为同一个 `NSAttributedString`/`AttributedString`，按浏览器 content run 顺序保留颜色、背景、字体和行高；不能把 inline span 降成纵向 Stack 子 View，也不能让父级富文本在匿名 Text Item 中重复渲染。纵向 Stack 还必须消费父级 center/end 对齐，避免 intrinsic 胶囊和紧凑标签被 `.fill` 拉满。
+46. 控件选择分为语义候选、上下文角色、系统候选、几何适配和最终决策。几何适配最多进行两轮有界解析；保留系统语义的 wrapper 不得改变控件的交互、状态机和无障碍所有权。
+47. `native-appearance-plan.json` 负责节点外观，文字占位尺寸仍由 `native-layout-plan.json` 负责；`native-interaction-motion-plan.json` 负责每个动作和动画的唯一 owner 与 executor。生成器必须消费这些计划并在结构清单中记录哈希与消费状态。
+48. 总控先原子化写入 canonical orchestration report，再向 stdout 输出摘要。stdout/日志消费者提前关闭导致的 `BrokenPipeError` 只能停止终端输出，禁止把已通过的转换和构建状态覆盖成 failed。
+49. CSS padding 在原生层只能有一个 owner：普通容器由 Stack layout margins 消费；复合 `UIControl` 若 wrapper 已用边缘约束 inset 内容 Stack，内层 Stack 不得再次应用同一 padding。生成后出现图标/文字宽高被压成零属于硬失败。
+50. 节点外观与系统控件状态外观必须使用独立契约和变量。控件 tint/track/thumb 等配置不得覆盖节点的背景、渐变、圆角、边框、阴影或 `clipsDescendants`；渐变控件有圆角且来源 overflow hidden/clip 时，渐变层必须随节点圆角裁剪。
+51. 圆角背景/渐变与外阴影分层渲染：宿主 CALayer 保留阴影可见，背景资源或 `CAGradientLayer` 自身应用统一 corner radius 或逐角 mask。不得通过关闭全部裁剪留下矩形渐变，也不得裁剪宿主层吞掉外阴影。
+52. 控件 normal/pressed/selected/disabled 状态新建的渐变层必须继承节点基础渐变的圆角和逐角 mask；状态切换不得用矩形状态层覆盖已经正确的圆角背景。
+53. CSS 四角半径在原生 lowering 前必须执行重叠圆角缩减算法。`999px` 等胶囊写法按最终盒子宽高归一化，不能把超大半径原值直接交给 `CALayer`。
+54. 父级系统控件的状态前景色只归父控件所有，不得递归覆盖具有独立计算色或富文本 run 的子节点。UIKit 渐变背景文字使用背景宿主层，富文本颜色在样式与状态安装完成后按节点所有权恢复。
+55. 横向复合内容的单行判定同时使用浏览器实测槽位高度、字体行高和 `white-space`。单行文字保留 intrinsic size 与抗压缩优先级，不把一次测量宽度写成硬约束；`normal/flex-start` 的剩余宽度由尾部弹性槽吸收，不能拉伸文字并把相邻徽标推到末端。
+56. 固定画板按 cover 归一化时必须保存 Visual Root 的上下/左右裁切量。viewport-fixed 顶栏、底栏和浮层按对应裁切量补偿锚点；视觉验证区域也必须使用 Visual Root 浏览器坐标，不能使用 Content Root 相对坐标。
+57. 文字视觉行必须按字符 Range 的垂直重叠归并。光标、下划线、徽标背景和不同字号 inline fragment 不得单独制造新行；只有固定画板且逐行文字与完整渲染文本校验一致时，才把浏览器软换行固化到原生富文本，响应式来源继续由 Auto Layout 在运行宽度重排。
+58. `native-layout-plan.json` 的间距字段 `gapPt`、`rowGapPt`、`columnGapPt` 和 `gapBeforePt` 必须统一为目标 iOS 点值：浏览器实测矩形差值直接使用，来源 CSS px 在计划层只换算一次。生成器及结构消费门禁必须按原值消费，禁止再次乘 `designScale`，避免纵向和横向间距逐段累计漂移。
+59. 已成功提取并接入的来源 SVG/图片拥有图标外观的唯一所有权，此时不得同时生成近似 SF Symbol 作为静默运行时替代。SF Symbol 只用于无来源资源且轮廓、粗细、填充和语义通过适配门禁的节点；源资源接入失败必须显式失败或降级报告。
 
 ## 支持范围
 

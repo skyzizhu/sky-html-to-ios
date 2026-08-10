@@ -18,6 +18,7 @@
 - 需要动态填色的简单 path 可以转换为 Shape/CAShapeLayer。
 - 复杂 SVG 优先保持为矢量资源，不手工近似绘制。
 - SF Symbols 只有在轮廓、粗细、填充方式和语义都足够接近时才能替换。
+- 内联 SVG、本地图片或已转换资源成功进入 Asset Catalog 后，该资源成为节点的唯一视觉来源；不得同时保留近似 SF Symbol 作为静默 fallback。若 target membership 或运行时加载失败，应由资源门禁报错或进入明确降级报告。
 - 自定义品牌图标、Logo 和产品图标不得擅自替换。
 
 ## 背景图和 CSS 图像

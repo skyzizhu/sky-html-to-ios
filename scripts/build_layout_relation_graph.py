@@ -161,7 +161,7 @@ def build_screen_graph(screen: dict[str, Any]) -> dict[str, Any]:
                 group = [seed_id]
                 remaining = []
                 for candidate_id, candidate_rect in pending:
-                    if close(seed_rect[dimension], candidate_rect[dimension]):
+                    if abs(seed_rect[dimension] - candidate_rect[dimension]) <= TOLERANCE_PT:
                         group.append(candidate_id)
                     else:
                         remaining.append((candidate_id, candidate_rect))

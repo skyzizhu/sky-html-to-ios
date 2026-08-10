@@ -47,6 +47,11 @@ def px(value: Any) -> float | None:
     return None
 
 
+def css_px_to_target_pt(value: Any, design_scale: float) -> float | None:
+    parsed = px(value)
+    return parsed * design_scale if parsed is not None else None
+
+
 def split_css_tokens(value: Any) -> list[str]:
     raw = str(value or "").strip()
     tokens: list[str] = []
@@ -472,6 +477,7 @@ def compound_slots(
     child_ids: list[str],
     nodes: dict[str, dict[str, Any]],
     axis: str,
+    design_scale: float,
 ) -> list[dict[str, Any]]:
     content = node.get("content") or {}
     text = re.sub(r"\s+", " ", str(content.get("text") or "")).strip()
@@ -483,6 +489,10 @@ def compound_slots(
         child = nodes.get(child_id) or {}
         tag = str((child.get("source") or {}).get("tag") or "").lower()
         if tag in {"br", "wbr"}:
+            return False
+        if str(child.get("semanticType") or "") in {"decoration", "spacer"}:
+            return False
+        if bool((child.get("content") or {}).get("isDecorative")):
             return False
         return True
 
@@ -550,12 +560,23 @@ def compound_slots(
                 slot["kind"] = "leadingIcon" if index < title_index else "trailingIcon"
     parent_style = node.get("style") or {}
     parent_rect = rect(node)
-    default_gap = max(number(parent_style.get("gap")), 0)
+    default_gap = max(number(parent_style.get("gap")) * design_scale, 0)
     distribution = str(parent_style.get("justifyContent") or "normal").lower()
     main_origin = "x" if axis == "horizontal" else "y"
     main_extent = "width" if axis == "horizontal" else "height"
     for index, slot in enumerate(slots):
         child = nodes.get(str(slot.get("nodeId") or ""))
+        slot_rect = slot.get("rect") or {}
+        parent_font_size = number(parent_style.get("fontSize"), 16)
+        parent_line_height = number(parent_style.get("lineHeight")) or parent_font_size * 1.2
+        measured_single_line = bool(
+            number(slot_rect.get("height")) > 0
+            and number(slot_rect.get("height")) <= max(parent_line_height * 1.35, parent_font_size * 1.8)
+        )
+        fallback_single_line = (
+            str(parent_style.get("whiteSpace") or "").lower() == "nowrap"
+            or measured_single_line
+        )
         geometry = content_geometry_contract(child, node, has_children=False) if child else {
             "role": "text",
             "sourceWidthPt": number((slot.get("rect") or {}).get("width")),
@@ -563,10 +584,10 @@ def compound_slots(
             "widthMode": "intrinsic",
             "heightMode": "intrinsic",
             "aspectRatio": None,
-            "singleLine": str(parent_style.get("whiteSpace") or "").lower() == "nowrap",
+            "singleLine": fallback_single_line,
             "lineCount": 1,
-            "preservesIntrinsicWidth": str(parent_style.get("whiteSpace") or "").lower() == "nowrap",
-            "resistsHorizontalCompression": str(parent_style.get("whiteSpace") or "").lower() == "nowrap",
+            "preservesIntrinsicWidth": fallback_single_line,
+            "resistsHorizontalCompression": fallback_single_line,
             "horizontalAlignment": str(parent_style.get("textAlign") or "start"),
             "verticalAlignment": str(parent_style.get("alignItems") or "center"),
             "mediaContentMode": None,
@@ -602,6 +623,7 @@ def build_screen(
     graph: dict[str, Any],
     states: list[dict[str, Any]],
     responsive: dict[str, Any] | None = None,
+    design_scale: float = 1.0,
 ) -> dict[str, Any]:
     screen_id = str(screen.get("id") or "")
     nodes = {str(item.get("id") or ""): item for item in screen.get("nodes") or [] if item.get("id")}
@@ -630,10 +652,14 @@ def build_screen(
     root_node_id = str(screen.get("rootNodeId") or "")
 
     def containing_block(node_id: str, position: str) -> tuple[str | None, str]:
+        source_positioning = ((nodes.get(node_id) or {}).get("source") or {}).get("positioning") or {}
         if position == "fixed":
             return None, "viewport"
         current = str((nodes.get(node_id) or {}).get("parentId") or "")
         if position == "sticky":
+            extracted_scroll_owner = str(source_positioning.get("scrollAncestorNodeId") or "")
+            if extracted_scroll_owner in nodes:
+                return extracted_scroll_owner, "scroll-container"
             while current:
                 current_node = nodes.get(current) or {}
                 if str((current_node.get("layout") or {}).get("scrollAxis") or "none") != "none":
@@ -641,6 +667,9 @@ def build_screen(
                 current = str(current_node.get("parentId") or "")
             return root_node_id or None, "viewport-scroll-root"
         if position == "absolute":
+            extracted_offset_parent = str(source_positioning.get("offsetParentNodeId") or "")
+            if extracted_offset_parent in nodes:
+                return extracted_offset_parent, "positioned-ancestor"
             current = str((nodes.get(node_id) or {}).get("parentId") or "")
             while current:
                 current_node = nodes.get(current) or {}
@@ -658,8 +687,8 @@ def build_screen(
         container_style = (nodes.get(container_id) or {}).get("style") or {}
         axis = str(relation.get("axis") or graph_container.get("axis") or "vertical")
         flex_direction = str(container_style.get("flexDirection") or "column")
-        row_gap = px(container_style.get("rowGap"))
-        column_gap = px(container_style.get("columnGap"))
+        row_gap = css_px_to_target_pt(container_style.get("rowGap"), design_scale)
+        column_gap = css_px_to_target_pt(container_style.get("columnGap"), design_scale)
         measured_gap = max(number(relation.get("gap")), 0)
         layout_algorithm = {
             "grid": "grid",
@@ -716,10 +745,17 @@ def build_screen(
             max_height = max_height + vertical_insets if max_height is not None else None
         position = str(style.get("position") or (node.get("layout") or {}).get("position") or "static")
         containing_block_id, coordinate_space = containing_block(node_id, position)
+        source_positioning = (node.get("source") or {}).get("positioning") or {}
+        extracted_containing_rect = source_positioning.get("offsetParentRectCssPx") or {}
         containing_rect = rect(nodes.get(containing_block_id) or {}) if containing_block_id else {
             "x": 0, "y": 0, "width": rect(nodes.get(root_node_id) or {}).get("width", 0),
             "height": rect(nodes.get(root_node_id) or {}).get("height", 0),
         }
+        if position == "absolute" and not containing_block_id and extracted_containing_rect:
+            containing_rect = {
+                key: number(extracted_containing_rect.get(key))
+                for key in ("x", "y", "width", "height")
+            }
         position_offset = {
             "x": measured["x"] - containing_rect["x"],
             "y": measured["y"] - containing_rect["y"],
@@ -806,7 +842,7 @@ def build_screen(
         if not child_ids or (semantic not in CONTROL_SEMANTICS and not text):
             continue
         axis = str((container_by_id.get(node_id) or {}).get("axis") or "vertical")
-        slots = compound_slots(node, child_ids, nodes, axis)
+        slots = compound_slots(node, child_ids, nodes, axis, design_scale)
         if len(slots) < 2:
             continue
         compounds.append({
@@ -1087,6 +1123,7 @@ def main() -> int:
                 graph_screens[screen_id],
                 screen_states,
                 responsive_payloads[responsive_cursor] if responsive_cursor < len(responsive_payloads) else None,
+                max(number((payload.get("target") or {}).get("scale"), 1), 0.01),
             ))
             responsive_cursor += 1
     result = {

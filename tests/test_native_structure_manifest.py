@@ -212,10 +212,22 @@ class NativeStructureManifestTests(unittest.TestCase):
             root = Path(temporary)
             payload = make_ir("swiftui")
             payload["target"]["scale"] = 1.25
+            payload["screens"][0]["nodes"][0]["style"].update({
+                "rowGap": "8px",
+                "columnGap": "10px",
+            })
             outputs = self.build_chain(root, "swiftui", payload)
             _, report = self.validate_chain(root, *outputs)
             self.assertEqual(report["status"], "passed")
+            layout = json.loads(outputs[2].read_text(encoding="utf-8"))["screens"][0]
+            root_layout = next(
+                item for item in layout["containers"] if item["containerNodeId"] == "home.root"
+            )
+            self.assertEqual(root_layout["rowGapPt"], 10)
+            self.assertEqual(root_layout["columnGapPt"], 12.5)
             generated = json.loads((outputs[4] / "Resources/Payload/HTMLToIOSGeneratedPayload.json").read_text(encoding="utf-8"))
+            self.assertEqual(generated["screens"][0]["root"]["style"]["rowSpacing"], 10)
+            self.assertEqual(generated["screens"][0]["root"]["style"]["columnSpacing"], 12.5)
 
             def find(value: object, node_id: str) -> dict | None:
                 if isinstance(value, dict):
@@ -370,7 +382,7 @@ class NativeStructureManifestTests(unittest.TestCase):
                     "maxWidth": "361px",
                     "padding": ["4px", "8px", "4px", "8px"],
                     "borderWidths": ["1px", "1px", "1px", "1px"],
-                    "whiteSpace": "nowrap",
+                    "whiteSpace": "normal",
                 })
                 toolbar["content"] = {
                     "text": "Pending 3",
@@ -408,6 +420,7 @@ class NativeStructureManifestTests(unittest.TestCase):
                 self.assertTrue(icon_slot["contentGeometry"]["resistsHorizontalCompression"])
                 self.assertEqual(title_slot["gapBeforePt"], 12)
                 self.assertEqual(title_slot["contentGeometry"]["sourceWidthPt"], 88)
+                self.assertTrue(title_slot["contentGeometry"]["singleLine"])
                 self.assertEqual(badge_slot["gapBeforePt"], 74)
                 self.assertEqual(badge_slot["contentGeometry"]["widthMode"], "fixed")
                 layout_nodes = {item["nodeId"]: item for item in layout_plan["screens"][0]["nodes"]}

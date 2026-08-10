@@ -58,11 +58,11 @@ SwiftUI 多行文字的额外间距按 `CSS line-height - native UIFont.lineHeig
 
 复合文字内容不能只保留拼接后的字符串。直接文本节点、内联 span 和视觉子 View 应保留浏览器中的顺序、Range 宽高与前置间距。来源中明确为单行的独立片段可以在实测宽度内使用 `lineLimit(1)` 与有限 `minimumScaleFactor`；多行正文和富文本只把实测宽度作为可收缩上限，禁止为了匹配基准截图造成根页面横向溢出。
 
-`Range.getClientRects()` 的矩形数量不等于视觉行数；数字、单位、上下标等不同字号 run 可能在同一行产生多个不同高度的矩形。应按垂直重叠和中心线距离合并视觉行，单行多字号内容在 SwiftUI 使用 `firstTextBaseline`、在 UIKit 使用 first-baseline 约束，不能因 DOM 容器是 `display:block` 就改成纵向堆叠。
+`Range.getClientRects()` 的矩形数量不等于视觉行数；数字、单位、上下标、光标、下划线和内联装饰可能在同一行产生多个不同高度的矩形。应按垂直重叠和中心线距离合并视觉行，不能只比较 `top` 坐标；单行多字号内容在 SwiftUI 使用 `firstTextBaseline`、在 UIKit 使用 first-baseline 约束，不能因 DOM 容器是 `display:block` 就改成纵向堆叠。
 
 UI IR 必须保留 `firstBaselineY`、`lastBaselineY` 和浏览器字体 ascent/descent。生成 payload 时将绝对 baseline 转为节点顶部相对偏移，作为结构化验收目标。水平复合内容只有在浏览器确认同属一条视觉行、所有参与项都有真实文本且不存在图标/装饰占位时，才启用 first-baseline 对齐；图标加文字、状态圆点和空样式 span 继续服从来源 `align-items`。
 
-浏览器逐字符 Range 可以进一步形成 `lineTexts`，用于保留真实换行位置，但它不是无条件的硬换行来源。只有字符归属能够与完整渲染文本校验一致，并且 `lineTexts` 数量与合并后的视觉行数一致时，生成器才可在富文本 run 中插入换行；否则必须保留 run 顺序并交给原生排版。这样可以防止数字和较小单位因 baseline 不同被误拆为两行，同时保留中文长句在浏览器中的真实断行。
+浏览器逐字符 Range 可以进一步形成 `lineTexts`，用于保留真实换行位置，但它不是无条件的硬换行来源。只有字符归属能够与完整渲染文本校验一致、`lineTexts` 数量与合并后的视觉行数一致且来源是固定移动画板时，生成器才可在富文本 run 中插入换行；响应式文档必须保留 run 顺序并交给原生排版，使 320/375/393/430pt 继续自然重排。这样可以防止数字和较小单位因 baseline 不同被误拆为两行，也避免把单次采样宽度永久写进响应式页面。
 
 ## 对比
 

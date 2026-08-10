@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "html-to-ios-visual-benchmark-suite-1.0",
+  "target": {
+    "width": 393,
+    "height": 852,
+    "device": "iPhone 16",
+    "minimumIOS": "16.0"
+  },
+  "cases": [
+    {
+      "id": "dashboard-list",
+      "html": "dashboard-list.html",
+      "coverage": ["custom-navigation", "table-view", "square-icons", "summary-card", "tab-bar", "vertical-scroll"]
+    },
+    {
+      "id": "commerce-grid",
+      "html": "commerce-grid.html",
+      "coverage": ["responsive-root", "search-bar", "horizontal-collection", "grid-collection", "aspect-ratio", "tab-bar"]
+    },
+    {
+      "id": "settings-form",
+      "html": "settings-form.html",
+      "coverage": ["fixed-artboard", "custom-navigation", "text-field", "select", "switch", "segmented-control", "slider", "fixed-action-bar"]
+    }
+  ]
+}

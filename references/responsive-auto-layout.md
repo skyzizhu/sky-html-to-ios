@@ -66,6 +66,7 @@ CSS Grid 解析覆盖 `repeat()`、`minmax()`、`auto-fit`、`auto-fill`、`fr`�
 架构规划器必须将有意义容器的关系写入 `contentContainer.layoutRelations`：source/visual child order、axis、alignment、distribution、wrap、gap，以及每个子项的 fixed/intrinsic/flexible 策略、实测宽高、宽高比、flex grow/shrink 和 compression resistance。生成 `<Screen>LayoutContract.swift` 供强类型组件、视觉校准和差异定位使用。该契约表达约束关系，不允许退化成逐节点页面绝对 frame；实测宽高是基准证据，响应式父容器仍由 Auto Layout/SwiftUI Layout 决定最终尺寸。
 
 - leading、trailing 在各宽度基本不变，width 随父宽同比变化：双边 pin，不设固定宽度。
+- authored `width: 100%`、百分比宽度或含百分比的 `calc()` 表示相对父内容框填充；computed style 即使返回 px 也只能作为当前样本证据，不能升级为固定宽度。父容器的 padding/layout margins 只消费一次，子 View 不得同时持有固定宽度和 leading/trailing 填充约束。
 - leading 不变且 width 不变：leading + 固定/intrinsic width。
 - trailing 不变且 width 不变：trailing + 固定/intrinsic width。
 - center offset 不变且 width 不变：centerX + 固定/intrinsic width。
@@ -101,6 +102,7 @@ CSS Grid 解析覆盖 `repeat()`、`minmax()`、`auto-fit`、`auto-fill`、`fr`�
 ## 滚动轴隔离
 
 - 页面主滚动轴来自根容器 computed overflow、scroll/client 度量和实际拖动 probe。普通手机长页默认只能 vertical，不以内容越界自动推导 horizontal。
+- 页面 Visual Root 与业务 Content Root 分开归一化：宽度比例以 Content Root 的设计宽度换算，viewport 背景、共享固定区域和边缘命中以 Visual Root 的可见矩形判断。系统 Safe Area 不参与该比例，也不从目标宽高预扣。
 - nested carousel、标签条或横向卡片列表单独拥有 horizontal；它们的高度与父布局约束，内容宽度由 item 累加形成。
 - 二维滚动只用于来源明确的画布、地图、缩放内容或双向数据表。不能把 `both` 当作约束冲突的逃生口。
 - 多宽度验证若出现根横向 overflow，应先定位超宽子节点、错误 fixed width、padding 重复或 compression priority，而不是打开根横向滚动。
@@ -115,6 +117,8 @@ baselineInset = 18 × 1.23585 ≈ 22.25pt
 ```
 
 iOS 基准使用约 22.25pt 的 leading/trailing constraint。到 320、375、430pt 宽度时 inset 保持不变，内容宽度自动变为 `containerWidth - leading - trailing`。只有多宽度采样证明 margin/width 比例稳定时，才用比例边距。
+
+浏览器控件状态采样可能因 `focus()` 或 `boundingBox()` 改变 window/scroll container 的 offset。提取器必须在采样前记录所有可滚动节点的位置，采样后恢复并校验，之后才能截取 HTML 基线；不得拿被状态探针滚动过的页面作为首屏参考。
 
 ## 验证矩阵
 

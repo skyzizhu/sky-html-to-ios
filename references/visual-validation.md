@@ -2,6 +2,8 @@
 
 本文件描述可选的生成后验收链路，不是 HTML/CSS/JavaScript 转原生 UI 的核心输入或前置条件。核心转换依赖浏览器计算样式、DOM/Render Tree、脚本交互、UI IR 和原生生成；只有 verification 为 `visual` 时才读取本文件并创建截图、像素差异与纠偏产物。多模态能力只用于解释差异，缺失时确定性比较仍可运行，也可以完全停留在 `build` 模式。
 
+Skill 自身的回归开发不得只使用单个业务 HTML。运行 `scripts/run_visual_benchmark_suite.py` 对 `tests/visual-benchmarks/suite.json` 中的固定画板、响应式页面、列表、网格、表单、系统控件、横向集合、导航和底栏进行首次生成评测。任何通用规则修改都应报告每个 case 与全套平均值；单个样本提升但基准平均值下降时视为回归，禁止用页面 ID、文案、特定 selector 或资源名写定向补丁。
+
 视觉验收必须在对应逻辑 viewport、方向、外观和稳定数据状态下进行。HTML 位于固定展示板时允许源 viewport 与目标 viewport 不同，但归一化过程必须显式记录。
 
 同一业务页面的状态画板必须逐状态验收。manifest 中每个状态保留自己的 `htmlRootSelector`、`activeStateId`、`geometryNodes` 和 `validationRegions`；当状态画板本身是确定性静态表示时，HTML 截图直接裁切该画板，不再重复执行可能不存在的网页交互。iOS 侧仍执行 tap、swipe、dismiss 等原生动作并验证目标 accessibility identifier。
@@ -93,6 +95,10 @@ Review bundle 同时输出 `fidelityPercent`、`targetFidelityPercent=100` 和 `
 ## 固定画板归一化
 
 响应式页面通常使用目标 viewport 直接截图。固定手机画板位于大展示板中时，浏览器使用提取时的 source viewport 执行动作，再将选定 app root 以 preserve-aspect `cover` 方式归一化到 target viewport。captures report 必须保存 `originalSize`、`outputSize`、`normalized` 和 `normalization`。
+
+截图根必须使用 `source.screenContext.visualRootSelector`；仅当旧版 UI IR 不含该字段时，才允许回退到 Screen 的 `sourceSelector`。状态清单中的滚动动作必须命中 `ancestorChain` 中 computed `overflow-y: auto|scroll` 的真实滚动宿主，而不是默认命中 Content Root。Visual Root 负责完整设备画板和固定区域，scroll owner 只负责改变内容 offset，两者不能互相替代。
+
+验证区域优先使用浏览器 `sourceRectCssPx` 并相对 Visual Root 归一化；Content Root 相对 UI IR 坐标只作为旧数据 fallback。共享导航、固定底栏和全局浮层不得按 Content Root 计算区域。
 
 归一化只用于建立同尺寸视觉参考，不允许成为原生运行时缩放方案。若 source 与 target 的宽高比差异明显，必须先复核画板根节点、system chrome 和目标设备，不得依靠裁剪掩盖布局错误。
 

@@ -14,10 +14,13 @@ def load(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def owner(action: str) -> tuple[str, str]:
+def owner(action: str, target_screen_id: str | None = None) -> tuple[str, str]:
     if action == "switch-tab":
         return "application", "tab-container"
-    if action in {"push", "pop", "pop-to-root", "replace-stack", "back"}:
+    if action in {
+        "push", "pop", "pop-to-root", "replace-stack", "replace-root",
+        "replace-flow-state", "back",
+    } or (action == "set-flow-state" and target_screen_id):
         return "navigation-stack", "native-navigation"
     if action.startswith("present") or action in {"dismiss", "overlay"}:
         return "screen-host", "native-presentation"
@@ -76,7 +79,8 @@ def main() -> int:
             base_id = str(item.get("id") or f"{screen_id}.interaction.{index + 1}")
             for transition_index, transition in enumerate(transitions):
                 action = str(transition.get("action") or item.get("action") or "none")
-                owner_kind, executor = owner(action)
+                target_screen_id = transition.get("targetScreenId")
+                owner_kind, executor = owner(action, str(target_screen_id or "") or None)
                 schedule = transition.get("schedule") or {}
                 actions.append({
                     "id": base_id if len(transitions) == 1 else f"{base_id}.transition.{transition_index + 1}",
@@ -85,7 +89,7 @@ def main() -> int:
                     "sourceNodeId": item.get("sourceNodeId"),
                     "trigger": str(transition.get("trigger") or item.get("trigger") or "tap"),
                     "action": action,
-                    "targetScreenId": transition.get("targetScreenId"),
+                    "targetScreenId": target_screen_id,
                     "targetStateId": transition.get("targetStateId"),
                     "owner": owner_kind,
                     "ownerId": resolved_owner_id(

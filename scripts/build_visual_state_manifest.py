@@ -80,6 +80,7 @@ def build_validation_regions(
     target_viewport: dict,
     design_scale: float = 1.0,
     active_state: dict | None = None,
+    screen_context: dict | None = None,
 ) -> list[dict]:
     nodes = {str(node["id"]): node for node in screen.get("nodes") or []}
     active_state_id = str((active_state or {}).get("id") or "")
@@ -88,6 +89,7 @@ def build_validation_regions(
         for item in ((active_state or {}).get("stateDelta") or {}).get("operations") or []
         if item.get("kind") in {"remove-subtree", "replace-subtree"} and item.get("targetNodeId")
     }
+    screen_context = screen_context or {}
     root = nodes.get(str(screen.get("rootNodeId") or "")) or {}
     root_rect = (root.get("layout") or {}).get("rect") or {}
     root_x = numeric(root_rect.get("x"))
@@ -117,8 +119,14 @@ def build_validation_regions(
             current = nodes.get(str(current.get("parentId") or ""))
         return True
 
-    uniform_scale = target_width / root_width
-    scaled_root_height = root_height * uniform_scale
+    visual_root_rect = screen_context.get("visualRootRect") or {}
+    visual_root_width = numeric(visual_root_rect.get("width"))
+    visual_root_height = numeric(visual_root_rect.get("height"))
+    uses_browser_visual_root = visual_root_width > 0 and visual_root_height > 0
+    comparison_root_width = visual_root_width if uses_browser_visual_root else root_width
+    comparison_root_height = visual_root_height if uses_browser_visual_root else root_height
+    uniform_scale = target_width / comparison_root_width
+    scaled_root_height = comparison_root_height * uniform_scale
     cover_crop_top = (
         max((scaled_root_height - target_height) / 2, 0)
         if abs(design_scale - 1) > 0.001 and scaled_root_height > target_height
@@ -126,15 +134,26 @@ def build_validation_regions(
     )
 
     def normalized_rect(node: dict, expand: int = 0) -> list[int] | None:
-        rect = (node.get("layout") or {}).get("rect") or {}
+        layout = node.get("layout") or {}
+        source_rect = layout.get("sourceRectCssPx") or {}
+        uses_source_rect = uses_browser_visual_root and numeric(source_rect.get("width")) > 0 and numeric(source_rect.get("height")) > 0
+        rect = source_rect if uses_source_rect else (layout.get("rect") or {})
         width = numeric(rect.get("width"))
         height = numeric(rect.get("height"))
         if width <= 0 or height <= 0:
             return None
-        left = round((numeric(rect.get("x")) - root_x) * uniform_scale) - expand
-        top = round((numeric(rect.get("y")) - root_y) * uniform_scale - cover_crop_top) - expand
-        right = round((numeric(rect.get("x")) - root_x + width) * uniform_scale) + expand
-        bottom = round((numeric(rect.get("y")) - root_y + height) * uniform_scale - cover_crop_top) + expand
+        origin_x = numeric(visual_root_rect.get("x")) if uses_source_rect else root_x
+        origin_y = numeric(visual_root_rect.get("y")) if uses_source_rect else root_y
+        scale = uniform_scale if uses_source_rect else target_width / root_width
+        crop_top = cover_crop_top if uses_source_rect else (
+            max((root_height * scale - target_height) / 2, 0)
+            if abs(design_scale - 1) > 0.001 and root_height * scale > target_height
+            else 0
+        )
+        left = round((numeric(rect.get("x")) - origin_x) * scale) - expand
+        top = round((numeric(rect.get("y")) - origin_y) * scale - crop_top) - expand
+        right = round((numeric(rect.get("x")) - origin_x + width) * scale) + expand
+        bottom = round((numeric(rect.get("y")) - origin_y + height) * scale - crop_top) + expand
         left, top = max(0, left), max(0, top)
         right, bottom = min(round(target_width), right), min(round(target_height), bottom)
         return [left, top, right - left, bottom - top] if right > left and bottom > top else None
@@ -229,6 +248,15 @@ def main() -> int:
     states_by_id = {str(item.get("id")): item for item in data.get("states", [])}
     target = data.get("target") or {}
     source_viewport = (data.get("source") or {}).get("viewport") or {}
+    screen_context = (data.get("source") or {}).get("screenContext") or {}
+    visual_root_selector = str(screen_context.get("visualRootSelector") or "").strip()
+    comparison_root_selector = visual_root_selector or screen.get("sourceSelector") or "html"
+    scroll_root_selector = next((
+        str(item.get("selector") or "").strip()
+        for item in screen_context.get("ancestorChain") or []
+        if str(((item.get("style") or {}).get("overflowY") or "")).lower() in {"auto", "scroll"}
+        and str(item.get("selector") or "").strip()
+    ), screen.get("sourceSelector") or comparison_root_selector)
     target_viewport = target.get("viewportPt") or {}
     source_entry = str(args.html.resolve()) if args.html else (data.get("source") or {}).get("entry")
     source_kind = "html" if source_entry and not str(source_entry).startswith(("http://", "https://")) else "url"
@@ -250,7 +278,7 @@ def main() -> int:
                 })
         scroll = state.get("scroll")
         if scroll in {"top", "middle", "bottom"}:
-            html_actions.append({"type": "scroll", "selector": screen.get("sourceSelector"), "position": scroll})
+            html_actions.append({"type": "scroll", "selector": scroll_root_selector, "position": scroll})
             # Every state launches a fresh app at the initial offset. Requiring a
             # root accessibility element for "top" can skip an otherwise valid
             # initial capture when the native root is intentionally grouped.
@@ -347,6 +375,7 @@ def main() -> int:
                 target_viewport,
                 numeric(target.get("scale"), 1),
                 active_state,
+                screen_context,
             ),
         }
         states.append(state_payload)
@@ -362,11 +391,16 @@ def main() -> int:
         "appearance": target.get("appearance", "light"),
         "locale": (data.get("source") or {}).get("language"),
         "layoutDirection": (data.get("source") or {}).get("direction", "ltr"),
-        "rootSelector": screen.get("sourceSelector") or "html",
+        "rootSelector": comparison_root_selector,
         "systemChrome": screen.get("systemChrome") or {},
         "comparisonMasks": build_comparison_masks(screen, target_viewport),
         "geometryNodes": build_geometry_nodes(screen),
-        "validationRegions": build_validation_regions(screen, target_viewport, numeric(target.get("scale"), 1)),
+        "validationRegions": build_validation_regions(
+            screen,
+            target_viewport,
+            numeric(target.get("scale"), 1),
+            screen_context=screen_context,
+        ),
         "states": states,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)

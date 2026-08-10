@@ -55,13 +55,20 @@ def main() -> int:
         add("STALE_RESPONSIVE_LAYOUT_ANALYSIS", None, "Native layout plan does not match the supplied responsive analyses.")
 
     ir_screens: dict[str, dict[str, Any]] = {}
+    ir_context_by_screen: dict[str, dict[str, Any]] = {}
+    target_height_by_screen: dict[str, float] = {}
     ir_states_by_screen: dict[str, dict[str, dict[str, Any]]] = {}
     for path in args.ir:
         payload = load_json(path)
         payload_screens = payload.get("screens") or []
         payload_screen_ids = [str(item.get("id") or "") for item in payload_screens]
         for screen in payload_screens:
-            ir_screens[str(screen.get("id") or "")] = screen
+            payload_screen_id = str(screen.get("id") or "")
+            ir_screens[payload_screen_id] = screen
+            ir_context_by_screen[payload_screen_id] = (payload.get("source") or {}).get("screenContext") or {}
+            target_height_by_screen[payload_screen_id] = float(
+                ((payload.get("target") or {}).get("viewportPt") or {}).get("height") or 0
+            )
         default_owner = payload_screen_ids[0] if len(payload_screen_ids) == 1 else ""
         for state in payload.get("states") or []:
             owner = str(state.get("ownerScreenId") or default_owner)
@@ -127,6 +134,24 @@ def main() -> int:
                     add("GRID_TRACKS_MISSING", screen_id, "Grid containers require explicit column tracks.", container_id)
             if float(container.get("rowGapPt") or 0) < 0 or float(container.get("columnGapPt") or 0) < 0:
                 add("NEGATIVE_CONTAINER_GAP", screen_id, "Container row/column gaps cannot be negative.", container_id)
+            architecture_sizing = {
+                str(item.get("nodeId") or ""): item
+                for item in (architecture_relations.get(container_id) or {}).get("childSizing") or []
+                if isinstance(item, dict) and item.get("nodeId")
+            }
+            planned_sizing = {
+                str(item.get("nodeId") or ""): item
+                for item in container.get("childSizing") or []
+                if isinstance(item, dict) and item.get("nodeId")
+            }
+            for child_id in expected_order[1:]:
+                expected_child = architecture_sizing.get(child_id) or {}
+                planned_child = planned_sizing.get(child_id) or {}
+                if expected_child.get("gapBeforePt") is not None and planned_child.get("gapBeforePt") is None:
+                    add(
+                        "PER_CHILD_GAP_MISSING", screen_id,
+                        "Linear containers must preserve each child's measured leading gap.", child_id,
+                    )
         for node_id, node_plan in plan_nodes.items():
             box = node_plan.get("boxModel") or {}
             content_geometry = node_plan.get("contentGeometry") or {}
@@ -184,6 +209,12 @@ def main() -> int:
                 add("FIXED_COORDINATE_SPACE_INVALID", screen_id, "Fixed nodes must use the viewport coordinate space.", node_id)
             if scheme in {"absolute", "fixed"} and not positioning.get("nativeOwnerNodeId"):
                 add("NATIVE_POSITIONING_OWNER_MISSING", screen_id, "Positioned node has no executable native owner.", node_id)
+            extracted_owner = str((((ir_nodes.get(node_id) or {}).get("source") or {}).get("positioning") or {}).get("offsetParentNodeId") or "")
+            if scheme == "absolute" and extracted_owner in ir_nodes and positioning.get("containingBlockNodeId") != extracted_owner:
+                add(
+                    "EXTRACTED_POSITIONING_OWNER_CHANGED", screen_id,
+                    "Absolute positioning owner differs from the browser offsetParent.", node_id,
+                )
             stacking_owner = compositing.get("stackingContextOwnerNodeId")
             if compositing.get("createsStackingContext") is True and stacking_owner not in {None, node_id} and stacking_owner not in ir_nodes:
                 add("STACKING_CONTEXT_OWNER_MISSING", screen_id, "Stacking context owner is absent from the screen node set.", node_id)
@@ -292,6 +323,31 @@ def main() -> int:
                     "UNRESOLVED_STICKY_MAPPING", screen_id,
                     "Sticky nodes must map to a native screen region or pinned collection supplementary view.", node_id,
                 )
+        root_id = str(ir_screen.get("rootNodeId") or "")
+        root_style = (ir_nodes.get(root_id) or {}).get("style") or {}
+        viewport_background = (ir_context_by_screen.get(screen_id) or {}).get("viewportBackground") or {}
+        expected_background = str(viewport_background.get("backgroundColor") or "").lower()
+        actual_background = str(root_style.get("backgroundColor") or "").lower()
+        transparent_values = {"", "transparent", "rgba(0, 0, 0, 0)"}
+        if expected_background not in transparent_values and actual_background in transparent_values:
+            add(
+                "VIEWPORT_BACKGROUND_NOT_INHERITED", screen_id,
+                "The content root must inherit the visible viewport background before native generation.", root_id,
+            )
+        target_height = target_height_by_screen.get(screen_id, 0)
+        for region_name in ("topBar", "bottomBar"):
+            region = (ir_screen.get("regions") or {}).get(region_name) or {}
+            region_id = str(region.get("nodeId") or "")
+            if region_id and region_id not in ir_nodes:
+                add("CRITICAL_REGION_NODE_MISSING", screen_id, f"{region_name} references a missing node.", region_id)
+            if region_name == "bottomBar" and region_id in ir_nodes and target_height > 0:
+                region_rect = (ir_nodes[region_id].get("layout") or {}).get("rect") or {}
+                region_bottom = float(region_rect.get("y") or 0) + float(region_rect.get("height") or 0)
+                if abs(region_bottom - target_height) > max(target_height * 0.18, 80):
+                    add(
+                        "BOTTOM_REGION_GEOMETRY_IMPLAUSIBLE", screen_id,
+                        "Bottom region is not geometrically attached to the target viewport.", region_id,
+                    )
         for compound in screen_plan.get("compoundControls") or []:
             slot_ids = [str(item) for item in compound.get("orderedSlotIds") or []]
             slots = [str(item.get("slotId") or "") for item in compound.get("orderedSlots") or []]

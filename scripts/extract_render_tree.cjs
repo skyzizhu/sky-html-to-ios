@@ -307,9 +307,13 @@ async function main() {
     const rootHandle = await page.$(rootSelector);
     if (!rootHandle) throw new Error(`Root selector did not match: ${rootSelector}`);
 
-    const extracted = await page.evaluate((selector) => {
+    const extracted = await page.evaluate((selectors) => {
+      const selector = selectors.visual;
+      const contentRootSelector = selectors.content || selector;
       const root = document.querySelector(selector);
       if (!root) throw new Error(`Root selector did not match: ${selector}`);
+      const contentRoot = document.querySelector(contentRootSelector);
+      if (!contentRoot) throw new Error(`Content root selector did not match: ${contentRootSelector}`);
 
       const clean = (value) => value == null ? null : String(value);
       const directText = (element) => Array.from(element.childNodes)
@@ -724,7 +728,14 @@ async function main() {
           .map((rect) => ({ x: rect.x, y: rect.y, width: rect.width, height: rect.height, top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left }));
         const lines = [];
         for (const fragment of fragments.sort((a, b) => a.top - b.top || a.left - b.left)) {
-          const line = lines.find((candidate) => Math.abs(candidate.top - fragment.top) <= 1.5);
+          const line = lines.find((candidate) => {
+            const overlap = Math.max(
+              Math.min(candidate.bottom, fragment.bottom) - Math.max(candidate.top, fragment.top),
+              0,
+            );
+            const overlapRatio = overlap / Math.max(Math.min(candidate.height, fragment.height), 1);
+            return Math.abs(candidate.top - fragment.top) <= 1.5 || overlapRatio >= 0.6;
+          });
           if (!line) {
             lines.push({ ...fragment });
             continue;
@@ -867,6 +878,14 @@ async function main() {
           : style.display !== "none" && style.visibility !== "hidden" && Number.parseFloat(style.opacity || "1") > 0;
         const treeRoot = element.getRootNode();
         const parent = element === root ? null : (element.parentElement || (treeRoot instanceof ShadowRoot ? treeRoot.host : null));
+        const offsetParent = element.offsetParent;
+        let scrollAncestor = element.parentElement;
+        while (scrollAncestor) {
+          const scrollStyle = getComputedStyle(scrollAncestor);
+          const overflow = `${scrollStyle.overflowX} ${scrollStyle.overflowY}`;
+          if (/(auto|scroll|overlay)/.test(overflow)) break;
+          scrollAncestor = scrollAncestor.parentElement;
+        }
         const tag = element.tagName.toLowerCase();
         const placeholderStyle = (
           (tag === "input" || tag === "textarea")
@@ -910,6 +929,17 @@ async function main() {
         return {
           runtimeId: idByElement.get(element),
           parentRuntimeId: parent && idByElement.has(parent) ? idByElement.get(parent) : null,
+          positioning: {
+            offsetParentRuntimeId: offsetParent && idByElement.has(offsetParent) ? idByElement.get(offsetParent) : null,
+            offsetParentSelector: offsetParent ? cssPath(offsetParent) : null,
+            offsetParentRect: offsetParent ? (() => {
+              const value = offsetParent.getBoundingClientRect();
+              return { x: value.x, y: value.y, width: value.width, height: value.height };
+            })() : null,
+            scrollAncestorRuntimeId: scrollAncestor && idByElement.has(scrollAncestor) ? idByElement.get(scrollAncestor) : null,
+            scrollAncestorSelector: scrollAncestor ? cssPath(scrollAncestor) : null,
+            viewportRect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+          },
           selector: cssPath(element),
           tag,
           domId: element.id || null,
@@ -1130,6 +1160,79 @@ async function main() {
         iosEasing: node.attributes["data-ios-easing"] || null,
       }));
       const viewportMeta = document.querySelector('meta[name="viewport"]');
+      const compactVisualStyle = (element) => {
+        const style = getComputedStyle(element);
+        return {
+          backgroundColor: style.backgroundColor,
+          backgroundImage: style.backgroundImage,
+          color: style.color,
+          colorScheme: style.colorScheme,
+          overflowX: style.overflowX,
+          overflowY: style.overflowY,
+          position: style.position,
+        };
+      };
+      const rectValue = (rect) => ({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+      const runtimeIdFor = (element) => idByElement.get(element) || null;
+      const ancestorChain = [];
+      let ancestor = contentRoot.parentElement;
+      while (ancestor && ancestor !== document.documentElement) {
+        ancestorChain.push({
+          selector: cssPath(ancestor),
+          runtimeId: runtimeIdFor(ancestor),
+          classNames: Array.from(ancestor.classList),
+          rect: rectValue(ancestor.getBoundingClientRect()),
+          style: compactVisualStyle(ancestor),
+        });
+        if (ancestor === root) break;
+        ancestor = ancestor.parentElement;
+      }
+      const transparent = (value) => !value || value === "transparent" || /rgba\([^)]*,\s*0(?:\.0+)?\s*\)/.test(value);
+      const backgroundOwner = [contentRoot, ...ancestorChain.map((item) => document.querySelector(item.selector)).filter(Boolean)]
+        .find((element) => !transparent(getComputedStyle(element).backgroundColor) || getComputedStyle(element).backgroundImage !== "none");
+      const sharedRegions = [];
+      for (const element of root.querySelectorAll("*")) {
+        if (element === contentRoot || contentRoot.contains(element) || element.contains(contentRoot)) continue;
+        if (element.closest("[data-ios-screen], .page[id], [role=tabpanel][id], [data-screen-id]")) continue;
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        const rootRect = root.getBoundingClientRect();
+        let visibleThroughAncestors = true;
+        let current = element;
+        while (current && current !== root.parentElement) {
+          const currentStyle = getComputedStyle(current);
+          if (currentStyle.display === "none" || currentStyle.visibility === "hidden" || Number(currentStyle.opacity || 1) <= 0.01) {
+            visibleThroughAncestors = false;
+            break;
+          }
+          if (current === root) break;
+          current = current.parentElement;
+        }
+        if (!visibleThroughAncestors || rect.width <= 0 || rect.height <= 0) continue;
+        const hint = [element.id, ...element.classList].join(" ").toLowerCase();
+        if (/statusbar|status-bar|notch|home-indicator/.test(hint)) continue;
+        const interactive = element.matches("button, a, input, select, textarea, [role=button], [role=tab]")
+          || Boolean(element.querySelector("button, a, input, select, textarea, [role=button], [role=tab]"));
+        const widthFraction = rect.width / Math.max(rootRect.width, 1);
+        const topGap = rect.top - rootRect.top;
+        const bottomGap = rootRect.bottom - rect.bottom;
+        const nearTop = topGap <= Math.max(96, rootRect.height * 0.14);
+        const nearBottom = bottomGap <= Math.max(24, rootRect.height * 0.05);
+        const named = /(?:^|[\s_-])(nav|header|footer|bottom|top|toolbar|tabbar|tab-bar|actions?|dock)(?:$|[\s_-])/.test(hint);
+        if (widthFraction >= 0.7 && interactive && (nearTop || nearBottom) || named && (nearTop || nearBottom)) {
+          sharedRegions.push({
+            element,
+            selector: cssPath(element),
+            runtimeId: runtimeIdFor(element),
+            edge: nearBottom && !nearTop ? "bottom" : "top",
+            rect: rectValue(rect),
+            position: style.position,
+          });
+        }
+      }
+      const normalizedSharedRegions = sharedRegions
+        .filter((item) => !sharedRegions.some((candidate) => candidate !== item && candidate.element.contains(item.element)))
+        .map(({ element, ...item }) => item);
       return {
         document: {
           title: document.title,
@@ -1140,6 +1243,7 @@ async function main() {
           documentSize: { width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight },
           metaViewport: viewportMeta ? viewportMeta.getAttribute("content") : null,
           rootSelector: selector,
+          contentRootSelector,
           loadedFonts: document.fonts ? Array.from(document.fonts).map((face) => ({
             family: face.family,
             style: face.style,
@@ -1151,8 +1255,22 @@ async function main() {
         nodes,
         interactions,
         phoneCandidates: candidates,
+        screenContext: {
+          visualRootSelector: selector,
+          contentRootSelector,
+          visualRootRuntimeId: runtimeIdFor(root),
+          contentRootRuntimeId: runtimeIdFor(contentRoot),
+          visualRootRect: rectValue(root.getBoundingClientRect()),
+          contentRootRect: rectValue(contentRoot.getBoundingClientRect()),
+          visualRootStyle: compactVisualStyle(root),
+          viewportBackground: backgroundOwner ? compactVisualStyle(backgroundOwner) : compactVisualStyle(root),
+          backgroundOwnerSelector: backgroundOwner ? cssPath(backgroundOwner) : selector,
+          ancestorChain,
+          ancestorStateClasses: ancestorChain.flatMap((item) => item.classNames),
+          sharedRegions: Array.from(new Map(normalizedSharedRegions.map((item) => [item.runtimeId, item])).values()),
+        },
       };
-    }, rootSelector);
+    }, { visual: rootSelector, content: args.contentSelector || rootSelector });
 
     const compactControlStyle = async (locator) => locator.evaluate((element) => {
       const style = getComputedStyle(element);
@@ -1176,6 +1294,16 @@ async function main() {
         appearance: style.appearance || style.webkitAppearance || "auto",
       };
     });
+    const preControlSamplingViewport = await page.evaluate(() => ({
+      windowX: window.scrollX,
+      windowY: window.scrollY,
+      scrollOffsets: Array.from(document.querySelectorAll("*")).map((element, index) => ({
+        index,
+        left: element.scrollLeft,
+        top: element.scrollTop,
+        scrollable: element.scrollWidth > element.clientWidth || element.scrollHeight > element.clientHeight,
+      })).filter((item) => item.scrollable),
+    }));
     const stateDiffers = (left, right) => JSON.stringify(left) !== JSON.stringify(right);
     const interactiveIds = new Set((extracted.interactions || []).map((item) => item.sourceRuntimeId));
     for (const node of extracted.nodes.filter((item) => interactiveIds.has(item.runtimeId)).slice(0, 80)) {
@@ -1319,6 +1447,27 @@ async function main() {
       }
     }
     await page.mouse.move(0, 0);
+    await page.evaluate((snapshot) => {
+      const elements = Array.from(document.querySelectorAll("*"));
+      for (const item of snapshot.scrollOffsets || []) {
+        const element = elements[item.index];
+        if (element) element.scrollTo(item.left, item.top);
+      }
+      window.scrollTo(snapshot.windowX || 0, snapshot.windowY || 0);
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    }, preControlSamplingViewport);
+    const controlSamplingViewportRestored = await page.evaluate((snapshot) => {
+      const elements = Array.from(document.querySelectorAll("*"));
+      return window.scrollX === (snapshot.windowX || 0)
+        && window.scrollY === (snapshot.windowY || 0)
+        && (snapshot.scrollOffsets || []).every((item) => {
+          const element = elements[item.index];
+          return element && Math.abs(element.scrollLeft - item.left) < 0.5 && Math.abs(element.scrollTop - item.top) < 0.5;
+        });
+    }, preControlSamplingViewport);
+    if (!controlSamplingViewportRestored) {
+      throw new Error("Control-state sampling changed the captured viewport and restoration failed.");
+    }
 
     const parentIds = new Set(extracted.nodes.map((node) => node.parentRuntimeId).filter(Boolean));
     for (const node of extracted.nodes) {
@@ -1345,6 +1494,7 @@ async function main() {
         activationWaitMs: args.activateSelector ? args.activateWaitMs : 0,
         settleWaitMs: args.waitMs,
         totalPostActivationWaitMs: (args.activateSelector ? args.activateWaitMs : 0) + args.waitMs,
+        controlSamplingViewportRestored,
       },
       screenshot: screenshotPath,
       warnings: Array.from(new Set(warnings)),

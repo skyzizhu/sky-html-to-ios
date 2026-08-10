@@ -57,6 +57,7 @@ class NativeAppearancePlanTests(unittest.TestCase):
                 "--native-layout-plan", str(layout), "--out", str(report),
             ], text=True, capture_output=True)
             self.assertEqual(validated.returncode, 0, validated.stderr or validated.stdout)
+            self.assertEqual(json.loads(validated.stdout)["status"], "passed")
 
 
 if __name__ == "__main__":

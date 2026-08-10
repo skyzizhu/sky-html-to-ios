@@ -101,7 +101,10 @@ def main() -> int:
             for transition_index, transition in enumerate(interaction_transitions(item)):
                 action = str(transition.get("action") or item.get("action") or "")
                 target = str(transition.get("targetScreenId") or transition.get("target") or item.get("target") or "")
-                if action in {"push", "replace-stack", "switch-tab"} and target in set(ids):
+                if action in {
+                    "push", "replace-stack", "replace-root", "set-flow-state",
+                    "replace-flow-state", "switch-tab", "select-tab",
+                } and target in set(ids):
                     routes.append({
                         "interactionId": item.get("id"),
                         "transitionIndex": transition_index,

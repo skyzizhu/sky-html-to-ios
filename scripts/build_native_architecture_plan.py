@@ -285,7 +285,28 @@ def layout_relation_plan(
                 return y, x, source_index
             return y, x, source_index
 
-        visual_order = sorted(child_ids, key=visual_key)
+        if axis == "grid":
+            def explicit_grid_index(child_id: str, property_name: str) -> int | None:
+                raw = str((nodes[child_id].get("style") or {}).get(property_name) or "").strip()
+                return int(raw) if raw.isdigit() and int(raw) > 0 else None
+
+            has_explicit_grid_placement = any(
+                explicit_grid_index(child_id, property_name) is not None
+                for child_id in child_ids
+                for property_name in ("gridRowStart", "gridColumnStart")
+            )
+            if has_explicit_grid_placement:
+                visual_order = sorted(child_ids, key=lambda child_id: (
+                    explicit_grid_index(child_id, "gridRowStart") or 10_000,
+                    explicit_grid_index(child_id, "gridColumnStart") or 10_000,
+                    source_child_ids.index(child_id),
+                ))
+            else:
+                # CSS Grid auto-placement follows source order. Sorting by y first
+                # reverses same-row items when their intrinsic heights differ.
+                visual_order = list(child_ids)
+        else:
+            visual_order = sorted(child_ids, key=visual_key)
         measured_gaps = []
         if axis in {"horizontal", "vertical"}:
             origin_key = "x" if axis == "horizontal" else "y"
@@ -307,7 +328,7 @@ def layout_relation_plan(
             else max(css_number(style.get("gap")), 0)
         )
         child_sizing = []
-        for child_id in visual_order:
+        for child_index, child_id in enumerate(visual_order):
             child = nodes[child_id]
             child_style = child.get("style") or {}
             rect = (child.get("layout") or {}).get("rect") or {}
@@ -317,16 +338,60 @@ def layout_relation_plan(
             flex_shrink = css_number(child_style.get("flexShrink"), 1)
             width_value = str(child_style.get("width") or "")
             height_value = str(child_style.get("height") or "")
+            authored_layout = child_style.get("authoredLayout")
+            authored_layout = authored_layout if isinstance(authored_layout, dict) else None
+
+            def authored_value(property_name: str) -> str:
+                if authored_layout is None:
+                    return ""
+                declaration = authored_layout.get(property_name)
+                if isinstance(declaration, dict):
+                    return str(declaration.get("value") or "").strip().lower()
+                return str(declaration or "").strip().lower()
+
+            authored_width = authored_value("width")
+            authored_height = authored_value("height")
+
+            def is_parent_relative(value: str) -> bool:
+                return "%" in value or value.startswith("calc(") or value in {
+                    "stretch", "-webkit-fill-available", "fill-available",
+                }
+
+            def is_fixed_length(value: str) -> bool:
+                return value.endswith("px") and css_number(value) >= 0
+
             child_semantic = str(child.get("semanticType") or "container")
             width_policy = (
                 "flexible" if flex_grow > 0
-                else "fixed" if width > 0 and width_value.endswith("px")
+                else "flexible" if is_parent_relative(authored_width)
+                else "fixed" if width > 0 and is_fixed_length(authored_width)
+                # Synthetic and older IR may not carry cascade provenance.
+                # Never use computed px as authored fixed width when it does.
+                else "fixed" if authored_layout is None and width > 0 and width_value.endswith("px")
                 else "intrinsic"
             )
             height_policy = (
-                "fixed" if height > 0 and height_value.endswith("px")
+                "flexible" if is_parent_relative(authored_height)
+                else "fixed" if height > 0 and is_fixed_length(authored_height)
+                else "fixed" if authored_layout is None and height > 0 and height_value.endswith("px")
                 else "intrinsic"
             )
+            gap_before = None
+            flexible_gap_before = False
+            if child_index > 0 and axis in {"horizontal", "vertical"}:
+                previous = nodes[visual_order[child_index - 1]]
+                previous_rect = (previous.get("layout") or {}).get("rect") or {}
+                origin_key = "x" if axis == "horizontal" else "y"
+                extent_key = "width" if axis == "horizontal" else "height"
+                gap_before = max(
+                    css_number(rect.get(origin_key))
+                    - css_number(previous_rect.get(origin_key))
+                    - css_number(previous_rect.get(extent_key)),
+                    0,
+                )
+                flexible_gap_before = str(style.get("justifyContent") or "").lower() in {
+                    "space-between", "space-around", "space-evenly"
+                }
             child_sizing.append({
                 "nodeId": child_id,
                 "widthPolicy": width_policy,
@@ -336,6 +401,8 @@ def layout_relation_plan(
                 "aspectRatio": width / height if width > 0 and height > 0 else None,
                 "flexGrow": flex_grow,
                 "flexShrink": flex_shrink,
+                "gapBeforePt": gap_before,
+                "flexibleGapBefore": flexible_gap_before,
                 "resistsHorizontalCompression": bool(
                     flex_shrink == 0
                     or str(child_style.get("whiteSpace") or "") == "nowrap"
@@ -363,6 +430,7 @@ def content_container_plan(
     screen: dict[str, Any],
     nodes: dict[str, dict[str, Any]],
     children: dict[str, list[str]],
+    viewport_height: float = 0,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     root_id = str(screen.get("rootNodeId") or "")
     root_descendants = [root_id] + descendants(root_id, children)
@@ -377,7 +445,8 @@ def content_container_plan(
     vertical_scroll = [node for node in candidates if scroll_axis(node) in {"vertical", "both"}]
     primary_vertical_scrolls = [
         node for node in vertical_scroll
-        if str(node.get("semanticType") or "") == "scroll"
+        if str(node.get("id") or "") == root_id
+        and str(node.get("semanticType") or "") == "scroll"
     ]
     direct_repeated = repeated_groups(root_id, nodes, children)
     primary_scroll_id = str(primary_vertical_scrolls[0].get("id") or "") if primary_vertical_scrolls else ""
@@ -396,6 +465,25 @@ def content_container_plan(
             or semantic == "grid" and (item_count >= 4 or repeated)
             or semantic in {"list", "sectioned-list"} and (semantic == "sectioned-list" or item_count >= 5 or repeated)
         )
+
+    root_node = nodes.get(root_id) or {}
+    root_height = measured_height(root_node)
+    root_requires_vertical_scroll = bool(
+        scroll_axis(root_node) in {"vertical", "both"}
+        or viewport_height > 0 and root_height > viewport_height + max(viewport_height * 0.02, 8)
+    )
+    direct_root_nodes = [
+        nodes[node_id] for node_id in children.get(root_id) or []
+        if node_id in nodes
+        and str(((nodes[node_id].get("style") or {}).get("position") or "static")) not in {"absolute", "fixed"}
+    ]
+    direct_root_collections = [node for node in direct_root_nodes if reusable_candidate(node)]
+    root_is_collection = reusable_candidate(root_node)
+    single_dominant_root_collection = (
+        direct_root_collections[0]
+        if len(direct_root_nodes) == 1 and len(direct_root_collections) == 1
+        else None
+    )
 
     direct_flow_children = [
         nodes[node_id] for node_id in children.get(primary_scroll_id) or []
@@ -449,28 +537,38 @@ def content_container_plan(
             kind, swiftui, uikit = "collection-view", "Lazy grid/stack", "UICollectionView"
             reasons = ["A dominant grid or data table replaces the enclosing same-axis scroll view."]
         confidence = 0.94
-    elif primary_vertical_scrolls:
-        selected_node_id = str(primary_vertical_scrolls[0].get("id") or root_id)
+    elif primary_vertical_scrolls or root_requires_vertical_scroll:
+        selected_node_id = str(primary_vertical_scrolls[0].get("id") or root_id) if primary_vertical_scrolls else root_id
         kind, swiftui, uikit = "scroll-view", "ScrollView", "UIScrollView"
         confidence = 0.96
-        reasons = ["An explicit measured vertical scroll node owns the screen content axis."]
-    elif len(structured_collections) >= 2:
+        reasons = [
+            "An explicit measured vertical scroll node owns the screen content axis."
+            if primary_vertical_scrolls
+            else "Root content exceeds the target viewport height and requires one vertical scroll owner."
+        ]
+    elif len(direct_root_collections) >= 2:
         selected_node_id = root_id
         kind, swiftui, uikit = "compositional-collection", "Lazy stacks/grids", "UICollectionViewCompositionalLayout"
         confidence = 0.92
-        reasons = ["Multiple independently structured sections require compositional layout and reuse."]
-    elif data_tables:
-        selected_node_id = str(data_tables[0].get("id"))
+        reasons = ["Multiple reusable top-level sections require compositional layout."]
+    elif root_is_collection or single_dominant_root_collection is not None:
+        selected = root_node if root_is_collection else single_dominant_root_collection
+        selected_node_id = str((selected or {}).get("id") or root_id)
+        selected_semantic = str((selected or {}).get("semanticType") or "")
+        if selected_semantic in {"list", "sectioned-list"}:
+            kind, swiftui, uikit = "table-view", "List/LazyVStack", "UITableView"
+            reasons = ["The root content is one dominant reusable list."]
+        else:
+            kind, swiftui, uikit = "collection-view", "Lazy grid/stack", "UICollectionView"
+            reasons = ["The root content is one dominant reusable collection."]
+        confidence = 0.92
+    elif root_node.get("semanticType") == "data-table":
+        selected_node_id = root_id
         kind, swiftui, uikit = "collection-view", "Grid/custom table", "UICollectionView"
         confidence = 0.94
         reasons = ["Data-table semantics require multi-column layout and reusable rows."]
-    elif carousels:
-        selected_node_id = str(carousels[0].get("id"))
-        kind, swiftui, uikit = "collection-view", "ScrollView/LazyHStack", "UICollectionView"
-        confidence = 0.92
-        reasons = ["Horizontal repeated content is owned by a collection container."]
-    elif grids:
-        selected_node_id = str(grids[0].get("id"))
+    elif root_node.get("semanticType") in {"grid", "collection"}:
+        selected_node_id = root_id
         item_count = len(children.get(selected_node_id) or [])
         if item_count >= 4 or repeated_groups(selected_node_id, nodes, children):
             kind, swiftui, uikit = "collection-view", "LazyVGrid", "UICollectionView"
@@ -480,8 +578,8 @@ def content_container_plan(
             kind, swiftui, uikit = "static-grid", "Grid", "UIStackView grid"
             confidence = 0.82
             reasons = ["Small fixed grid is cheaper and clearer as static native layout."]
-    elif lists:
-        selected_node_id = str(lists[0].get("id"))
+    elif root_node.get("semanticType") in {"list", "sectioned-list"}:
+        selected_node_id = root_id
         item_count = len(children.get(selected_node_id) or [])
         if item_count >= 5 or repeated_groups(selected_node_id, nodes, children):
             kind, swiftui, uikit = "table-view", "List/LazyVStack", "UITableView"
@@ -499,11 +597,6 @@ def content_container_plan(
         kind, swiftui, uikit = "table-view", "LazyVStack", "UITableView"
         confidence = 0.76
         reasons = ["Repeated homogeneous root children suggest reusable rows."]
-    elif vertical_scroll:
-        selected_node_id = str(vertical_scroll[0].get("id") or root_id)
-        kind, swiftui, uikit = "scroll-view", "ScrollView", "UIScrollView"
-        confidence = 0.94
-        reasons = ["Measured vertical overflow requires a scroll container."]
 
     def build_section(source: dict[str, Any], index: int, uses_reuse: bool) -> dict[str, Any]:
         source_id = str(source.get("id") or root_id)
@@ -785,11 +878,37 @@ def screen_plan(
         warnings.append("Conflicting Safe Area ownership was normalized to immersive-content.")
     if tab and bottom:
         warnings.append("Native tab ownership suppresses the page bottomBar to avoid duplicate bottom insets.")
-    content_container, sections = content_container_plan(screen, nodes, children)
-    content_container["layoutRelations"] = (
-        [dict(item) for item in graph_screen.get("containers") or []]
-        if graph_screen else layout_relation_plan(nodes, children)
-    )
+    viewport_height = css_number(((ir.get("target") or {}).get("viewportPt") or {}).get("height"))
+    content_container, sections = content_container_plan(screen, nodes, children, viewport_height)
+    inferred_layout_relations = layout_relation_plan(nodes, children)
+    if graph_screen:
+        inferred_by_container = {
+            str(item.get("containerNodeId") or ""): item
+            for item in inferred_layout_relations
+        }
+        graph_relations = []
+        for item in graph_screen.get("containers") or []:
+            relation = dict(item)
+            inferred = inferred_by_container.get(str(relation.get("containerNodeId") or "")) or {}
+            inferred_sizing = {
+                str(value.get("nodeId") or ""): value
+                for value in inferred.get("childSizing") or []
+            }
+            relation["childSizing"] = [
+                {
+                    **value,
+                    **{
+                        key: inferred_sizing.get(str(value.get("nodeId") or ""), {}).get(key)
+                        for key in ("gapBeforePt", "flexibleGapBefore")
+                        if key in inferred_sizing.get(str(value.get("nodeId") or ""), {})
+                    },
+                }
+                for value in relation.get("childSizing") or []
+            ]
+            graph_relations.append(relation)
+        content_container["layoutRelations"] = graph_relations
+    else:
+        content_container["layoutRelations"] = inferred_layout_relations
     leaf_components = leaf_component_plan(screen, nodes, children)
     app_container_kind = "tab-navigation" if tab else "navigation"
     top_region = {

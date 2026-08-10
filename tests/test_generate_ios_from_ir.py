@@ -97,6 +97,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
         interaction_motion_plan: Path | None = None,
         compatibility_matrix: Path | None = None,
         api_fallback_plan: Path | None = None,
+        native_layout_plan: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         command = ["python3", str(SCRIPT)]
         for path in paths:
@@ -116,12 +117,118 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             command.extend(["--compatibility-matrix", str(compatibility_matrix)])
         if api_fallback_plan:
             command.extend(["--api-fallback-plan", str(api_fallback_plan)])
+        if native_layout_plan:
+            command.extend(["--native-layout-plan", str(native_layout_plan)])
         if out_dir.parts[-2:] != ("Generated", "HTMLToIOS"):
             command.append("--allow-nonstandard-output")
         result = subprocess.run(command, text=True, capture_output=True, check=False)
         if expect_success and result.returncode != 0:
             self.fail(result.stderr or result.stdout)
         return result
+
+    def test_css_pill_radius_is_reduced_to_the_native_box(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("home")
+            pill = node("home.pill", "home.root", "text", "Badge")
+            pill["layout"]["rect"] = {"x": 0, "y": 0, "width": 120, "height": 24}
+            pill["style"]["cornerRadii"] = ["999px"] * 4
+            pill["style"]["backgroundImage"] = (
+                "linear-gradient(90deg, rgb(120, 100, 255), rgb(60, 210, 255))"
+            )
+            payload["screens"][0]["nodes"].append(pill)
+            source, output = root / "ui-ir.json", root / "generated"
+            source.write_text(json.dumps(payload), encoding="utf-8")
+            self.run_generator([source], output, ui_stack="uikit")
+            generated = json.loads((output / PAYLOAD).read_text(encoding="utf-8"))
+            generated_pill = generated["screens"][0]["root"]["children"][0]
+            self.assertEqual(generated_pill["style"]["cornerRadius"], 12)
+            self.assertEqual(generated_pill["style"]["cornerRadii"], [12, 12, 12, 12])
+            runtime = (output / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn("backgroundHostedTextViewIfNeeded", runtime)
+            self.assertIn("A CSS", runtime)
+            self.assertIn("label.attributedText = text", runtime)
+            self.assertIn("restoreOwnedRichTextIfNeeded", runtime)
+            self.assertNotIn("view.subviews.forEach { applyControlForeground", runtime)
+
+    def test_native_layout_point_gaps_are_not_scaled_twice(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("home")
+            payload["target"]["scale"] = 2
+            root_node = payload["screens"][0]["nodes"][0]
+            first = node("home.first", root_node["id"], "text", "First")
+            second = node("home.second", root_node["id"], "text", "Second")
+            payload["screens"][0]["nodes"].extend([first, second])
+            source = root / "home.json"
+            source.write_text(json.dumps(payload), encoding="utf-8")
+            plan = root / "native-layout-plan.json"
+            plan.write_text(json.dumps({
+                "schemaVersion": "native-layout-plan-1.1",
+                "screens": [{
+                    "screenId": "home",
+                    "rootNodeId": root_node["id"],
+                    "contentContainer": {"kind": "static"},
+                    "containers": [{
+                        "containerNodeId": root_node["id"],
+                        "layoutAlgorithm": "stack",
+                        "axis": "vertical",
+                        "orderedChildNodeIds": [first["id"], second["id"]],
+                        "paintOrderNodeIds": [first["id"], second["id"]],
+                        "gapPt": 10,
+                        "rowGapPt": 10,
+                        "columnGapPt": 10,
+                        "alignment": "normal",
+                        "distribution": "normal",
+                        "wraps": False,
+                        "reverse": False,
+                        "childSizing": [
+                            {"nodeId": first["id"], "gapBeforePt": None},
+                            {"nodeId": second["id"], "gapBeforePt": 12, "flexibleGapBefore": False},
+                        ],
+                    }],
+                    "nodes": [],
+                    "collectionLayouts": [],
+                    "compoundControls": [],
+                    "stateLayouts": [],
+                }],
+            }), encoding="utf-8")
+            out_dir = root / "out"
+            self.run_generator([source], out_dir, native_layout_plan=plan)
+            generated = json.loads((out_dir / PAYLOAD).read_text(encoding="utf-8"))
+            generated_root = generated["screens"][0]["root"]
+            self.assertEqual(generated_root["style"]["spacing"], 10)
+            self.assertEqual(generated_root["style"]["rowSpacing"], 10)
+            self.assertEqual(generated_root["style"]["columnSpacing"], 10)
+            self.assertEqual(generated_root["contentItems"][1]["gapBefore"], 12)
+
+    def test_grid_auto_placement_preserves_source_order_when_items_have_different_y(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("grid")
+            root_node = payload["screens"][0]["nodes"][0]
+            root_node["style"]["display"] = "grid"
+            root_node["layout"]["mode"] = "grid"
+            title = node("grid.title", root_node["id"], "text", "Title")
+            icon = node("grid.icon", root_node["id"], "button", "Icon")
+            title["layout"]["rect"] = {"x": 0, "y": 8, "width": 320, "height": 24}
+            icon["layout"]["rect"] = {"x": 333, "y": 0, "width": 40, "height": 40}
+            for child in (title, icon):
+                child["layout"]["sourceRectCssPx"] = dict(child["layout"]["rect"])
+            root_node["content"]["runs"] = [
+                {"kind": "node", "nodeId": title["id"], "domIndex": 0, "rect": title["layout"]["rect"]},
+                {"kind": "node", "nodeId": icon["id"], "domIndex": 1, "rect": icon["layout"]["rect"]},
+            ]
+            payload["screens"][0]["nodes"].extend([title, icon])
+            source = root / "grid.json"
+            source.write_text(json.dumps(payload), encoding="utf-8")
+            out_dir = root / "out"
+            self.run_generator([source], out_dir)
+            generated = json.loads((out_dir / PAYLOAD).read_text(encoding="utf-8"))
+            self.assertEqual(
+                [item.get("childID") for item in generated["screens"][0]["root"]["contentItems"]],
+                [title["id"], icon["id"]],
+            )
 
     def test_interaction_motion_plan_is_lowered_into_generated_action_ownership(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -493,6 +600,13 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn("hasReliableFontMetrics(spec)", uikit_runtime)
             self.assertIn("baselineOffset += min(max(rawAdjustment", uikit_runtime)
+            self.assertIn("owner.layoutMarginsGuide.widthAnchor", uikit_runtime)
+            self.assertIn("owner.layoutMarginsGuide.heightAnchor", uikit_runtime)
+            self.assertIn("Establish the parent's CSS content box before child percentage", uikit_runtime)
+            self.assertIn("makeStack(spec, appliesPadding: false)", uikit_runtime)
+            self.assertIn('gradient.name == "html-to-ios-gradient"', uikit_runtime)
+            self.assertIn('gradientMask.name = "html-to-ios-gradient-corner-mask"', uikit_runtime)
+            self.assertIn('layer.name == "html-to-ios-gradient" || layer.name == "html-to-ios-control-state-gradient"', uikit_runtime)
 
     def test_common_html_controls_emit_native_control_configuration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1301,7 +1415,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("safeAreaInset(edge: .top", runtime)
             self.assertIn('screen.bottomBarPlacement == "viewport-overlay"', runtime)
             self.assertIn("GeometryReader { proxy in", runtime)
-            self.assertIn(".offset(y: proxy.safeAreaInsets.bottom)", runtime)
+            self.assertIn("proxy.safeAreaInsets.bottom + CGFloat(screen.fixedArtboardCropInsets?[2] ?? 0)", runtime)
             self.assertIn("presentationDetents", root_source)
             self.assertIn("HTMLToIOSScrollOffsetPreferenceKey", runtime)
             self.assertIn('screen.topBarBehavior == "collapse"', runtime)
@@ -1314,6 +1428,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn('screen.bottomKeyboardAvoidance == "keyboard-layout-guide"', uikit_runtime)
             self.assertIn('? view.keyboardLayoutGuide.topAnchor', uikit_runtime)
             self.assertIn('screen.bottomBarPlacement == "viewport-overlay"', uikit_runtime)
+            self.assertIn('CGFloat(screen.fixedArtboardCropInsets?[2] ?? 0)', uikit_runtime)
             self.assertIn("func scrollViewDidScroll(_ scrollView: UIScrollView)", uikit_runtime)
             self.assertIn('case "appearance-change":', uikit_runtime)
             self.assertIn("navigationController?.hidesBarsOnSwipe", uikit_runtime)
@@ -1728,7 +1843,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             uikit_dir = root / "uikit"
             self.run_generator([path], uikit_dir, ui_stack="uikit")
             uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
-            self.assertIn('let content = spec.axis == "grid" ? makeGrid(spec) : makeStack(spec)', uikit_runtime)
+            self.assertIn('let content = spec.axis == "grid" ? makeGrid(spec) : makeStack(spec, appliesPadding: false)', uikit_runtime)
+            self.assertIn("stack.insetsLayoutMarginsFromSafeArea = false", uikit_runtime)
             self.assertIn("private func makeGrid(_ spec: HTMLToIOSNodeSpec) -> UIView", uikit_runtime)
             self.assertIn("HTMLToIOSGridPlacementView", uikit_runtime)
             self.assertIn("row.distribution = .fillEqually", uikit_runtime)
@@ -1737,7 +1853,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("$0.style.nativePaintOrder ?? 0", uikit_runtime)
             self.assertIn("spec.style.clipsContent == true || spec.style.clipsOwnContent == true", uikit_runtime)
             self.assertIn("childSpec.style.offsetX ?? 0", uikit_runtime)
-            self.assertIn("let renderedView = wrapInMargins(view, spec: spec)", uikit_runtime)
+            self.assertIn("let renderedView = wrapInMargins(styledView, spec: spec)", uikit_runtime)
             self.assertIn("private func wrapInMargins(_ view: UIView, spec: HTMLToIOSNodeSpec) -> UIView", uikit_runtime)
             self.assertIn("private func applyMotion(_ spec: HTMLToIOSNodeSpec, to view: UIView)", uikit_runtime)
             self.assertIn('CABasicAnimation(keyPath: "transform.rotation")', uikit_runtime)
@@ -1748,7 +1864,10 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             payload = ir("home")
             root_node = payload["screens"][0]["nodes"][0]
             root_node["layout"]["rect"].update({"height": 852})
-            status = node("home.statusbar", root_node["id"], "container")
+            status = node("home.chrome", root_node["id"], "container", "9:41  ● ◒ ▰")
+            status["source"]["selector"] = "body > main > div.status"
+            status["source"]["domId"] = None
+            status["source"]["runtimeId"] = "node-status"
             status["layout"]["rect"] = {"x": 0, "y": 0, "width": 393, "height": 52}
             payload["screens"][0]["nodes"].append(status)
             payload["screens"][0]["systemChrome"] = {
@@ -1763,18 +1882,23 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertEqual(generated["screens"][0]["safeArea"]["owner"], "system")
             self.assertFalse(generated["screens"][0]["safeArea"]["subtractFromContainerDimensions"])
             runtime = (out_dir / RUNTIME_FILE).read_text(encoding="utf-8")
-            self.assertIn("if let sourceStatusBarHeight = screen.sourceStatusBarHeight", runtime)
+            self.assertIn('if let sourceStatusBarHeight = screen.sourceStatusBarHeight', runtime)
             self.assertIn(".padding(.top, sourceStatusBarHeight)", runtime)
             self.assertIn(".ignoresSafeArea(.container, edges: .top)", runtime)
             self.assertIn(".safeAreaInset(edge: .top, spacing: 0)", runtime)
             uikit_dir = root / "uikit-out"
             self.run_generator([path], uikit_dir, ui_stack="uikit")
             uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
-            self.assertIn("scroll.contentInsetAdjustmentBehavior = screen.safeArea.contentInsetAdjustment == \"never\" ? .never : .automatic", uikit_runtime)
+            self.assertIn("let customTopBarOwnsStatusArea = screen.sourceStatusBarHeight == 0", uikit_runtime)
+            self.assertIn("scroll.contentInsetAdjustmentBehavior = customTopBarOwnsStatusArea", uikit_runtime)
+            self.assertIn('(screen.safeArea.contentInsetAdjustment == "never" ? .never : .automatic)', uikit_runtime)
             self.assertIn("scroll.topAnchor.constraint(equalTo: view.topAnchor)", uikit_runtime)
             self.assertIn("scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor)", uikit_runtime)
-            self.assertIn("let topCalibration = CGFloat(sourceStatusBarHeight) - view.safeAreaInsets.top", uikit_runtime)
-            self.assertIn("scroll.contentInset.top = topCalibration", uikit_runtime)
+            self.assertIn("sourceTopCalibration = CGFloat(sourceStatusBarHeight) - view.safeAreaInsets.top", uikit_runtime)
+            self.assertIn("+ sourceTopCalibration", uikit_runtime)
+            self.assertIn("let wasAtTop = scroll.contentOffset.y <= -scroll.adjustedContentInset.top + 0.5", uikit_runtime)
+            self.assertIn('screen.safeArea.owner == "system" && screen.sourceStatusBarHeight == nil', uikit_runtime)
+            self.assertIn("constant: CGFloat(screen.sourceStatusBarHeight ?? 0)", uikit_runtime)
             self.assertIn("CGPoint(x: 0, y: -scroll.adjustedContentInset.top)", uikit_runtime)
             self.assertNotIn("scroll.topAnchor.constraint(equalTo: top.bottomAnchor)", uikit_runtime)
             self.assertNotIn("scroll.bottomAnchor.constraint(equalTo: bottom.topAnchor)", uikit_runtime)
@@ -1788,6 +1912,9 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "viewportPt": {"width": 393, "height": 852},
                 "scale": 393 / 318,
             }
+            payload.setdefault("source", {})["screenContext"] = {
+                "visualRootRect": {"x": 0, "y": 0, "width": 318, "height": 698},
+            }
             root_node = payload["screens"][0]["nodes"][0]
             root_node["layout"]["rect"].update({"width": 393, "height": 862.622641509434})
             status = node("home.statusbar", root_node["id"], "container")
@@ -1800,6 +1927,30 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             path.write_text(json.dumps(payload), encoding="utf-8")
             out_dir = root / "out"
             self.run_generator([path], out_dir)
+            generated = json.loads((out_dir / PAYLOAD).read_text(encoding="utf-8"))
+            self.assertAlmostEqual(generated["screens"][0]["sourceStatusBarHeight"], 46.5943396226)
+            self.assertAlmostEqual(generated["screens"][0]["fixedArtboardCropInsets"][2], 5.311320755)
+
+    def test_fixed_artboard_content_origin_falls_back_to_visual_root_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("home")
+            payload["target"] = {
+                "uiStack": "uikit",
+                "viewportPt": {"width": 393, "height": 852},
+                "scale": 393 / 318,
+            }
+            payload.setdefault("source", {})["screenContext"] = {
+                "visualRootRect": {"x": 40, "y": 200, "width": 318, "height": 698},
+                "contentRootRect": {"x": 40, "y": 242, "width": 318, "height": 520},
+            }
+            payload["screens"][0]["systemChrome"] = {
+                "statusBar": "native", "navigationBar": "none", "homeIndicator": "native",
+            }
+            path = root / "home.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            out_dir = root / "out"
+            self.run_generator([path], out_dir, ui_stack="uikit")
             generated = json.loads((out_dir / PAYLOAD).read_text(encoding="utf-8"))
             self.assertAlmostEqual(generated["screens"][0]["sourceStatusBarHeight"], 46.5943396226)
 
@@ -1819,6 +1970,31 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             generated_arrow = generated["screens"][0]["root"]["children"][0]
             self.assertEqual(generated_arrow["semantic"], "icon")
             self.assertEqual(generated_arrow["systemImage"], "arrow.right")
+
+    def test_extracted_svg_asset_prevents_approximate_system_symbol_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("home")
+            root_node = payload["screens"][0]["nodes"][0]
+            upload = node("home.upload", root_node["id"], "icon")
+            upload["source"]["selector"] = ".toolbar .upload-icon"
+            upload["assetRef"] = "asset.upload"
+            payload["screens"][0]["nodes"].append(upload)
+            payload["assets"] = [{
+                "id": "asset.upload",
+                "kind": "inline-svg",
+                "source": "inline-svg",
+                "markup": '<svg viewBox="0 0 16 16"><path d="M8 1v10M4 5l4-4 4 4"/></svg>',
+                "iosName": "html_home_upload",
+            }]
+            path = root / "home.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            out_dir = root / "out"
+            self.run_generator([path], out_dir)
+            generated = json.loads((out_dir / PAYLOAD).read_text(encoding="utf-8"))
+            generated_upload = generated["screens"][0]["root"]["children"][0]
+            self.assertEqual(generated_upload["assetName"], "html_home_upload")
+            self.assertIsNone(generated_upload["systemImage"])
 
     def test_noninteractive_inline_text_container_is_flattened_to_rich_text(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1913,6 +2089,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(generated_label["contentItems"][1]["preferredWidth"], 88)
+            runtime = (out_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn("needsTrailingContentSpacer", runtime)
             self.assertTrue(generated_label["contentItems"][1]["singleLine"])
             self.assertEqual(generated_label["contentItems"][1]["gapBefore"], 8)
             self.assertFalse(generated_label["contentItems"][1]["flexibleGapBefore"])
@@ -1940,8 +2118,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("let contentItems: [HTMLToIOSContentItemSpec]", (out_dir / MODELS_FILE).read_text(encoding="utf-8"))
             self.assertIn("private var orderedContentItems: some View", swiftui_runtime)
             self.assertIn("contentItemGap(item)", swiftui_runtime)
-            self.assertIn(".minimumScaleFactor(0.7)", swiftui_runtime)
-            self.assertIn(".allowsTightening(true)", swiftui_runtime)
+            self.assertNotIn(".minimumScaleFactor(0.7)", swiftui_runtime)
+            self.assertIn(".truncationMode(.tail)", swiftui_runtime)
             self.assertIn("Color.clear.frame(width: gap, height: 0)", swiftui_runtime)
 
             uikit_dir = root / "uikit"
@@ -1950,8 +2128,9 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("spec.contentItems.forEach", uikit_runtime)
             self.assertIn("contentItemText(item, spec: spec)", uikit_runtime)
             self.assertIn("addContentGap(item, to: stack, axis: spec.axis)", uikit_runtime)
-            self.assertIn("label.adjustsFontSizeToFitWidth = true", uikit_runtime)
-            self.assertIn("label.allowsDefaultTighteningForTruncation = true", uikit_runtime)
+            self.assertNotIn("label.adjustsFontSizeToFitWidth = true", uikit_runtime)
+            self.assertIn("label.lineBreakMode = spec.style.textOverflow", uikit_runtime)
+            self.assertNotIn("label.allowsDefaultTighteningForTruncation = true", uikit_runtime)
 
     def test_explicit_text_lines_and_rich_text_keep_browser_measure_width(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -2138,6 +2317,32 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn('if value >= 800 { return .heavy }', runtime)
             self.assertIn('case "monospaced": return .monospaced', runtime)
 
+    def test_responsive_source_does_not_freeze_browser_soft_line_breaks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("home")
+            payload.setdefault("source", {})["layoutClassification"] = {
+                "kind": "responsive-document",
+                "conversionStatus": "automatic",
+            }
+            root_node = payload["screens"][0]["nodes"][0]
+            body = node("home.body", root_node["id"], "text", "一段需要响应式换行的正文内容")
+            body["layout"]["rect"] = {"x": 20, "y": 40, "width": 180, "height": 44}
+            body["content"].update({
+                "lines": 2,
+                "lineTexts": ["一段需要响应式", "换行的正文内容"],
+                "runs": [{"kind": "text", "text": "一段需要响应式换行的正文内容", "domIndex": 0}],
+            })
+            payload["screens"][0]["nodes"].append(body)
+            path = root / "home.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            out_dir = root / "out"
+            self.run_generator([path], out_dir)
+            generated = json.loads((out_dir / PAYLOAD).read_text(encoding="utf-8"))
+            generated_body = generated["screens"][0]["root"]["children"][0]
+            self.assertEqual(generated_body["text"], "一段需要响应式换行的正文内容")
+            self.assertNotIn("\n", "".join(run["text"] for run in generated_body["richTextRuns"]))
+
     def test_resolved_font_contract_uses_generic_fallback_and_safe_ios_native_alias(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -2260,15 +2465,31 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             swiftui_runtime = (swiftui_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn("HTMLToIOSBorderModifier", swiftui_runtime)
             self.assertIn("gradientAngle", swiftui_runtime)
+            self.assertIn("else if let fixedHeight", swiftui_runtime)
+            self.assertIn(".frame(minWidth: minWidth, idealWidth: idealWidth, maxWidth: maxWidth)", swiftui_runtime)
+            self.assertNotIn("if fixedWidth != nil || fixedHeight != nil", swiftui_runtime)
 
             uikit_dir = root / "uikit"
             self.run_generator([path], uikit_dir, ui_stack="uikit")
             uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            uikit_navigation = (uikit_dir / NAVIGATION_FILE).read_text(encoding="utf-8")
             self.assertIn("CAGradientLayer", uikit_runtime)
+            self.assertIn("let isGradientText = view is UILabel", uikit_runtime)
+            self.assertIn("attributedText.addAttribute(.foregroundColor", uikit_runtime)
             self.assertIn("html-to-ios-border", uikit_runtime)
             self.assertIn("HTMLToIOSUIKitState", uikit_runtime)
             self.assertIn("toggle-selection", uikit_runtime)
             self.assertIn("scroll.backgroundColor = view.backgroundColor", uikit_runtime)
+            self.assertIn("content.translatesAutoresizingMaskIntoConstraints = false", uikit_runtime)
+            self.assertIn("spec.richTextRuns?.isEmpty == false && !hasInteractiveInlineChild", uikit_runtime)
+            self.assertIn("usesRichText: false", uikit_runtime)
+            self.assertIn('spec.style.alignItems == "center" || spec.style.textAlignment == "center"', uikit_runtime)
+            self.assertIn('screen.safeArea.owner == "system" && screen.sourceStatusBarHeight == nil', uikit_runtime)
+            self.assertIn('? view.safeAreaLayoutGuide.topAnchor', uikit_runtime)
+            self.assertIn(': view.topAnchor', uikit_runtime)
+            self.assertIn("content.bottomAnchor.constraint(\n                    lessThanOrEqualTo:", uikit_runtime)
+            self.assertIn("configureNavigationBar(for: controller, in: navigation)", uikit_navigation)
+            self.assertIn("generatedShowsNavigationBar", uikit_navigation)
 
     def test_text_behavior_generates_native_editable_and_readonly_controls(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

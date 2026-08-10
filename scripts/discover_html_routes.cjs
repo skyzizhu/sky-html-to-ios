@@ -222,6 +222,69 @@ async function main() {
               hints: Array.from(new Set(hints)).slice(0, 120),
             };
           };
+          const visualEnvelope = (target) => {
+            const explicit = target.getAttribute("data-ios-visual-root");
+            let visualRoot = explicit ? document.querySelector(explicit) : null;
+            if (!visualRoot) {
+              let current = target.parentElement;
+              while (current && current !== document.body) {
+                if (
+                  current.hasAttribute("data-ios-container")
+                  || current.matches(".screen, .phone-screen, .mobile, .mobile-screen, .app-screen, [role=application]")
+                ) {
+                  visualRoot = current;
+                  break;
+                }
+                current = current.parentElement;
+              }
+            }
+            visualRoot ||= target;
+            const sharedRegionSelectors = [];
+            for (const element of visualRoot.querySelectorAll("*")) {
+              if (element === target || target.contains(element) || element.contains(target)) continue;
+              if (element.closest("[data-ios-screen], .page[id], [role=tabpanel][id], [data-screen-id]")) continue;
+              const hint = [element.id, ...element.classList].join(" ").toLowerCase();
+              if (/statusbar|status-bar|notch|home-indicator/.test(hint)) continue;
+              const style = getComputedStyle(element);
+              const rect = element.getBoundingClientRect();
+              const rootRect = visualRoot.getBoundingClientRect();
+              const interactive = element.matches("button, a, input, select, textarea, [role=button], [role=tab]")
+                || Boolean(element.querySelector("button, a, input, select, textarea, [role=button], [role=tab]"));
+              const edgeLike = rect.width >= rootRect.width * 0.7 && (
+                rect.top <= rootRect.top + Math.max(96, rootRect.height * 0.14)
+                || rect.bottom >= rootRect.bottom - Math.max(24, rootRect.height * 0.05)
+              );
+              const named = /(?:^|[\s_-])(nav|header|footer|bottom|top|toolbar|tabbar|tab-bar|actions?|dock)(?:$|[\s_-])/.test(hint);
+              if ((edgeLike && interactive) || named || ["fixed", "sticky"].includes(style.position)) {
+                sharedRegionSelectors.push(element);
+              }
+            }
+            const ancestorVisualContext = [];
+            let current = target.parentElement;
+            while (current && current !== document.documentElement) {
+              const style = getComputedStyle(current);
+              ancestorVisualContext.push({
+                selector: cssPath(current),
+                classNames: Array.from(current.classList),
+                backgroundColor: style.backgroundColor,
+                color: style.color,
+                colorScheme: style.colorScheme,
+                overflowX: style.overflowX,
+                overflowY: style.overflowY,
+              });
+              if (current === visualRoot) break;
+              current = current.parentElement;
+            }
+            return {
+              visualRootSelector: cssPath(visualRoot),
+              contentRootSelector: cssPath(target),
+              sharedRegionSelectors: sharedRegionSelectors
+                .filter((element) => !sharedRegionSelectors.some((candidate) => candidate !== element && candidate.contains(element)))
+                .map(cssPath),
+              ancestorVisualContext,
+              ancestorStateClasses: ancestorVisualContext.flatMap((item) => item.classNames),
+            };
+          };
           const virtualTargets = new Map();
           const controls = Array.from(document.querySelectorAll("[data-page], [data-screen], [data-route], [aria-controls], [data-ios-action][data-ios-target]"));
           for (const control of controls) {
@@ -231,6 +294,7 @@ async function main() {
             const target = targetId ? document.querySelector(`[data-ios-screen="${escapedTarget}"]`) || document.getElementById(targetId) : null;
             if (!target) continue;
             const semanticScreenId = target.getAttribute("data-ios-screen") || target.id;
+            const envelope = visualEnvelope(target);
             const existing = virtualTargets.get(semanticScreenId) || {
               id: semanticScreenId,
               rootSelector: target.getAttribute("data-ios-screen") ? `[data-ios-screen="${CSS.escape(semanticScreenId)}"]` : `#${CSS.escape(target.id)}`,
@@ -238,7 +302,12 @@ async function main() {
               bodyTextLength: (target.textContent || "").trim().length,
               activationSelectors: [],
               activationSources: [],
-              containerSelector: null,
+              containerSelector: envelope.visualRootSelector,
+              visualRootSelector: envelope.visualRootSelector,
+              contentRootSelector: envelope.contentRootSelector,
+              sharedRegionSelectors: envelope.sharedRegionSelectors,
+              ancestorVisualContext: envelope.ancestorVisualContext,
+              ancestorStateClasses: envelope.ancestorStateClasses,
               sourceElementId: target.id || null,
               iosStateOwner: target.getAttribute("data-ios-state-owner"),
               iosStateKind: target.getAttribute("data-ios-state-kind"),
@@ -253,14 +322,12 @@ async function main() {
                 ? sourceScreen.getAttribute("data-ios-screen") || sourceScreen.id || sourceScreen.getAttribute("data-screen-id")
                 : null,
             });
-            const container = target.closest("[data-ios-container], .screen, .page, .mobile, .app-screen");
-            if (container) existing.containerSelector = cssPath(container);
             virtualTargets.set(semanticScreenId, existing);
           }
           for (const target of document.querySelectorAll("[data-ios-screen], .page[id], [role=tabpanel][id], [data-screen-id]")) {
             const targetId = target.getAttribute("data-ios-screen") || target.id || target.getAttribute("data-screen-id");
             if (!targetId || virtualTargets.has(targetId)) continue;
-            const container = target.closest("[data-ios-container], .screen, .page, .mobile, .app-screen");
+            const envelope = visualEnvelope(target);
             virtualTargets.set(targetId, {
               id: targetId,
               rootSelector: target.getAttribute("data-ios-screen") ? `[data-ios-screen="${CSS.escape(targetId)}"]` : target.id ? `#${CSS.escape(target.id)}` : cssPath(target),
@@ -268,7 +335,12 @@ async function main() {
               bodyTextLength: (target.textContent || "").trim().length,
               activationSelectors: [],
               activationSources: [],
-              containerSelector: container ? cssPath(container) : null,
+              containerSelector: envelope.visualRootSelector,
+              visualRootSelector: envelope.visualRootSelector,
+              contentRootSelector: envelope.contentRootSelector,
+              sharedRegionSelectors: envelope.sharedRegionSelectors,
+              ancestorVisualContext: envelope.ancestorVisualContext,
+              ancestorStateClasses: envelope.ancestorStateClasses,
               initial: target.hasAttribute("data-ios-screen-initial"),
               sourceElementId: target.id || null,
               iosStateOwner: target.getAttribute("data-ios-state-owner"),
@@ -315,6 +387,11 @@ async function main() {
             bodyTextLength: virtual.bodyTextLength,
             rootSelector: virtual.rootSelector,
             containerSelector: virtual.containerSelector,
+            visualRootSelector: virtual.visualRootSelector,
+            contentRootSelector: virtual.contentRootSelector,
+            sharedRegionSelectors: virtual.sharedRegionSelectors,
+            ancestorVisualContext: virtual.ancestorVisualContext,
+            ancestorStateClasses: virtual.ancestorStateClasses,
             activation: virtual.activationSelectors.length ? { type: "click", selectors: virtual.activationSelectors } : null,
             virtualStateId: virtual.id,
             sourceElementId: virtual.sourceElementId,
