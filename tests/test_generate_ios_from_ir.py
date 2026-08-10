@@ -1650,7 +1650,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("sourceLeading.priority = .defaultHigh", uikit_root)
             self.assertIn("panel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor)", uikit_root)
             self.assertIn("panel.heightAnchor.constraint(equalToConstant: height)", uikit_root)
-            self.assertIn("spec.style.baselineAligned == true ? .firstBaseline : .center", uikit_runtime)
+            self.assertIn('spec.style.baselineAligned == true || spec.style.alignItems == "baseline"', uikit_runtime)
 
     def test_large_overlay_height_and_actionable_grid_are_preserved_for_both_stacks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -2483,7 +2483,9 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("content.translatesAutoresizingMaskIntoConstraints = false", uikit_runtime)
             self.assertIn("spec.richTextRuns?.isEmpty == false && !hasInteractiveInlineChild", uikit_runtime)
             self.assertIn("usesRichText: false", uikit_runtime)
-            self.assertIn('spec.style.alignItems == "center" || spec.style.textAlignment == "center"', uikit_runtime)
+            self.assertIn('case "start", "flex-start", "top": stack.alignment = .top', uikit_runtime)
+            self.assertIn('case "start", "flex-start", "left": stack.alignment = .leading', uikit_runtime)
+            self.assertIn("stack.setCustomSpacing(gap, after: previous)", uikit_runtime)
             self.assertIn('screen.safeArea.owner == "system" && screen.sourceStatusBarHeight == nil', uikit_runtime)
             self.assertIn('? view.safeAreaLayoutGuide.topAnchor', uikit_runtime)
             self.assertIn(': view.topAnchor', uikit_runtime)

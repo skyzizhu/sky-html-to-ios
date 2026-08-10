@@ -1468,42 +1468,153 @@ def build_bar_contracts(
     top_node = node_by_id.get(str(top_region.get("nodeId") or "")) or {}
     top_hints = top_node.get("iosHints") or {}
     declared_chrome = str(root_attrs.get("data-ios-system-chrome") or "").strip().lower()
-    style = str(top_hints.get("navigation-style") or "").strip().lower()
-    if not style:
-        if declared_chrome == "native":
-            style = "native"
-        elif top_region:
-            style = "custom"
-        else:
-            style = "hidden"
+    declared_style = str(top_hints.get("navigation-style") or "").strip().lower()
+    top_descendants = descendant_ids(str(top_region.get("nodeId") or "") or None)
+
+    def numeric(value: object, default: float = 0) -> float:
+        match = re.search(r"-?\d+(?:\.\d+)?", str(value or ""))
+        return float(match.group(0)) if match else default
+
+    def truthy(value: object) -> bool:
+        return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+    def system_navigation_fit() -> dict:
+        if not top_region:
+            return {"compatible": False, "score": 0.0, "evidence": ["no-top-region"], "divergences": []}
+        divergences: list[str] = []
+        evidence = ["edge-aligned-top-region"]
+        top_style = top_node.get("style") or {}
+        top_rect = (top_node.get("layout") or {}).get("rect") or {}
+        height = numeric(top_rect.get("height"))
+        if height and not 36 <= height <= 124:
+            divergences.append(f"nonstandard-height:{height:g}")
+        if str(top_style.get("backgroundImage") or "none").lower() != "none":
+            divergences.append("background-image-or-gradient")
+        corner_radius = max((numeric(value) for value in top_style.get("cornerRadii") or []), default=0)
+        if corner_radius > 10:
+            divergences.append("shaped-container")
+        if str(top_style.get("clipPath") or "none").lower() not in {"", "none"}:
+            divergences.append("clip-path")
+        unsupported_semantics = {
+            "search", "search-field", "search-input", "search-bar", "text-input", "text-area", "segmented-control",
+            "collection", "table", "list", "carousel", "canvas-artwork", "video", "map",
+        }
+        present = sorted({
+            str((node_by_id.get(node_id) or {}).get("semanticType") or "")
+            for node_id in top_descendants
+        } & unsupported_semantics)
+        if present:
+            divergences.append("embedded-complex-content:" + ",".join(present))
+        row_centers = sorted({
+            numeric(((node_by_id.get(node_id) or {}).get("layout") or {}).get("rect", {}).get("y"))
+            + numeric(((node_by_id.get(node_id) or {}).get("layout") or {}).get("rect", {}).get("height")) / 2
+            for node_id in top_descendants
+            if str((node_by_id.get(node_id) or {}).get("semanticType") or "") in {
+                "heading", "label", "text", "button", "icon", "image"
+            }
+        })
+        row_clusters: list[float] = []
+        for center in row_centers:
+            if not row_clusters or center - row_clusters[-1] > 16:
+                row_clusters.append(center)
+            else:
+                row_clusters[-1] = (row_clusters[-1] + center) / 2
+        if len(row_clusters) > 2:
+            divergences.append("multi-row-toolbar-content")
+        if not divergences:
+            evidence.extend(["system-title-toolbar-compatible", "system-first-policy"])
+        return {
+            "compatible": not divergences,
+            "score": max(0.0, 1.0 - len(divergences) * 0.25),
+            "evidence": evidence,
+            "divergences": divergences,
+        }
+
+    navigation_fit = system_navigation_fit()
+    force_custom = truthy(
+        top_hints.get("force-custom-navigation")
+        or root_attrs.get("data-ios-force-custom-navigation")
+    )
+    if declared_style in {"hidden", "immersive"}:
+        style = declared_style
+    elif declared_chrome == "native" or declared_style == "native":
+        style = "native"
+    elif force_custom or not navigation_fit["compatible"]:
+        style = "custom" if top_region else "hidden"
+    else:
+        # An authored HTML `custom` label is evidence about the source, not a
+        # reason to replace UIKit/SwiftUI system chrome when it visually fits.
+        style = "native" if top_region else "hidden"
+
+    title_candidates = []
+    for node_id in top_descendants:
+        candidate = node_by_id.get(node_id) or {}
+        content = candidate.get("content") or {}
+        text = re.sub(r"\s+", " ", str(content.get("text") or "")).strip()
+        if not text or len(text) > 80:
+            continue
+        semantic = str(candidate.get("semanticType") or "")
+        font_size = numeric((candidate.get("style") or {}).get("fontSize"), 16)
+        priority = 3 if semantic == "heading" else 2 if semantic in {"label", "text"} else 1
+        title_candidates.append((priority, font_size, text))
+    detected_title = max(title_candidates, default=(0, 0, ""), key=lambda item: (item[0], item[1]))
+    title_mode = str(top_hints.get("title-mode") or root_attrs.get("data-ios-title-mode") or "")
+    if not title_mode:
+        title_mode = "large" if detected_title[1] >= 26 else "inline"
     navigation = {
         "style": style,
-        "title": str(root_attrs.get("data-ios-screen-title") or screen_name),
-        "titleMode": str(top_hints.get("title-mode") or root_attrs.get("data-ios-title-mode") or "inline"),
+        "title": str(root_attrs.get("data-ios-screen-title") or detected_title[2] or screen_name),
+        "titleMode": title_mode,
         "scrollEdgeAppearance": str(top_hints.get("scroll-edge") or root_attrs.get("data-ios-scroll-edge") or "automatic"),
         "backButton": str(top_hints.get("back-button") or root_attrs.get("data-ios-back-button") or "system"),
         "sourceNodeId": top_region.get("nodeId"),
+        "renderingDecision": {
+            "policy": "system-first-visual-fit-gated",
+            "declaredStyle": declared_style or None,
+            "forceCustom": force_custom,
+            **navigation_fit,
+        },
         "toolbarItems": [],
     }
-    top_descendants = descendant_ids(str(top_region.get("nodeId") or "") or None)
-    for interaction in interactions:
-        source_id = str(interaction.get("sourceNodeId") or "")
-        if source_id not in top_descendants:
-            continue
+    if top_region:
+        top_region["kind"] = "system-navigation-source" if style == "native" else "custom-navigation-bar"
+    toolbar_source_ids: set[str] = set()
+
+    def append_toolbar_item(source_id: str, interaction: dict | None = None) -> None:
+        if source_id in toolbar_source_ids:
+            return
         source = node_by_id.get(source_id) or {}
         hints = source.get("iosHints") or {}
         content = source.get("content") or {}
         rect = (source.get("layout") or {}).get("rect") or {}
+        label = str(content.get("accessibilityLabel") or content.get("text") or "").strip()
+        action_name = str((interaction or {}).get("action") or "")
         placement = str(hints.get("toolbar-placement") or "")
         if not placement:
-            placement = "leading" if interaction.get("action") in {"back", "pop", "dismiss"} or float(rect.get("x") or 0) < float((root.get("rect") or {}).get("width") or 393) / 2 else "trailing"
+            placement = "leading" if action_name in {"back", "pop", "dismiss"} or float(rect.get("x") or 0) < float((root.get("rect") or {}).get("width") or 393) / 2 else "trailing"
+        icon = hints.get("icon")
+        if not icon and (action_name in {"back", "pop"} or label in {"返回", "Back", "‹", "←"}):
+            icon = "chevron.left"
         navigation["toolbarItems"].append({
             "id": source_id,
-            "title": str(content.get("accessibilityLabel") or content.get("text") or "").strip()[:80],
-            "icon": hints.get("icon"),
+            "title": label[:80],
+            "icon": icon,
             "placement": placement,
             "sourceNodeId": source_id,
+            "hasAction": interaction is not None,
         })
+        toolbar_source_ids.add(source_id)
+
+    for interaction in interactions:
+        source_id = str(interaction.get("sourceNodeId") or "")
+        if source_id not in top_descendants:
+            continue
+        append_toolbar_item(source_id, interaction)
+    if style == "native":
+        for source_id in top_descendants:
+            source = node_by_id.get(source_id) or {}
+            if str(source.get("semanticType") or "") in {"button", "icon-button", "link", "menu-item"}:
+                append_toolbar_item(source_id)
 
     bottom = regions.get("bottomBar") or {}
     bottom_id = str(bottom.get("nodeId") or "") or None
@@ -1550,6 +1661,20 @@ def build_bar_contracts(
         bottom["kind"] = "bottom-action-bar"
         return navigation, None
     bottom["kind"] = "tab-bar"
+    force_custom_tab = truthy(
+        bottom_hints.get("force-custom-tab-bar")
+        or root_attrs.get("data-ios-force-custom-tab-bar")
+    )
+    bottom_style = bottom_node.get("style") or {}
+    bottom_rect = (bottom_node.get("layout") or {}).get("rect") or {}
+    tab_divergences = []
+    if numeric(bottom_rect.get("height")) > 105:
+        tab_divergences.append("nonstandard-height")
+    if str(bottom_style.get("backgroundImage") or "none").lower() != "none":
+        tab_divergences.append("background-image-or-gradient")
+    if force_custom_tab or tab_divergences:
+        bottom["kind"] = "bottom-action-bar"
+        return navigation, None
     return navigation, {
         "id": str(bottom_hints.get("tab-id") or f"{items[0]['targetScreenId']}.main-tabs"),
         "sourceNodeId": bottom_id,
@@ -1557,6 +1682,13 @@ def build_bar_contracts(
         "initialTabId": next((item["id"] for item in items if item["selected"]), items[0]["id"]),
         "reselectBehavior": str(bottom_hints.get("reselect") or "keep"),
         "visibility": str(bottom_hints.get("tab-visibility") or "automatic"),
+        "rendering": "system",
+        "renderingDecision": {
+            "policy": "system-first-visual-fit-gated",
+            "compatible": True,
+            "forceCustom": False,
+            "divergences": [],
+        },
     }
 
 

@@ -196,6 +196,30 @@ def css_number(value: Any, default: float = 0.0) -> float:
     return float(match.group(0)) if match else default
 
 
+def normalized_alignment(value: Any, axis: str = "cross") -> str:
+    raw = str(value or "normal").strip().lower()
+    if raw in {"flex-start", "start", "left", "top", "self-start"}:
+        return "start"
+    if raw in {"flex-end", "end", "right", "bottom", "self-end"}:
+        return "end"
+    if raw in {"center", "safe center", "unsafe center"}:
+        return "center"
+    if raw in {"baseline", "first baseline", "last baseline"}:
+        return "baseline"
+    if raw in {"stretch", "normal", "auto", ""}:
+        return "stretch" if axis == "cross" else "start"
+    return raw
+
+
+def normalized_distribution(value: Any) -> str:
+    raw = str(value or "normal").strip().lower()
+    if raw in {"flex-start", "start", "left", "top", "normal", ""}:
+        return "start"
+    if raw in {"flex-end", "end", "right", "bottom"}:
+        return "end"
+    return raw
+
+
 def visual_text_line_count(content: dict[str, Any]) -> int:
     runs = content.get("runs") or []
     if len(runs) <= 1:
@@ -316,16 +340,15 @@ def layout_relation_plan(
                 current_rect = (nodes[current_id].get("layout") or {}).get("rect") or {}
                 if origin_key not in previous_rect or origin_key not in current_rect:
                     continue
-                measured_gaps.append(max(
+                measured_gaps.append(
                     css_number(current_rect.get(origin_key))
                     - css_number(previous_rect.get(origin_key))
-                    - css_number(previous_rect.get(extent_key)),
-                    0,
-                ))
+                    - css_number(previous_rect.get(extent_key))
+                )
         measured_gap = (
             sorted(measured_gaps)[len(measured_gaps) // 2]
             if measured_gaps
-            else max(css_number(style.get("gap")), 0)
+            else css_number(style.get("gap"))
         )
         child_sizing = []
         for child_index, child_id in enumerate(visual_order):
@@ -383,15 +406,29 @@ def layout_relation_plan(
                 previous_rect = (previous.get("layout") or {}).get("rect") or {}
                 origin_key = "x" if axis == "horizontal" else "y"
                 extent_key = "width" if axis == "horizontal" else "height"
-                gap_before = max(
+                gap_before = (
                     css_number(rect.get(origin_key))
                     - css_number(previous_rect.get(origin_key))
-                    - css_number(previous_rect.get(extent_key)),
-                    0,
+                    - css_number(previous_rect.get(extent_key))
                 )
                 flexible_gap_before = str(style.get("justifyContent") or "").lower() in {
                     "space-between", "space-around", "space-evenly"
                 }
+                previous_style = previous.get("style") or {}
+                previous_margin = css_number((previous_style.get("margin") or [0, 0, 0, 0])[1 if axis == "horizontal" else 2])
+                current_margin = css_number((child_style.get("margin") or [0, 0, 0, 0])[3 if axis == "horizontal" else 0])
+                authored_gap = css_number(style.get("columnGap" if axis == "horizontal" else "rowGap"), css_number(style.get("gap")))
+                spacing_contract = {
+                    "mode": "flexible" if flexible_gap_before else "overlap" if gap_before < 0 else "fixed",
+                    "measuredGapPt": gap_before,
+                    "authoredGapPt": authored_gap,
+                    "previousTrailingMarginPt": previous_margin,
+                    "currentLeadingMarginPt": current_margin,
+                    "residualPt": gap_before - authored_gap - previous_margin - current_margin,
+                    "source": "rendered-border-box-geometry",
+                }
+            else:
+                spacing_contract = None
             child_sizing.append({
                 "nodeId": child_id,
                 "widthPolicy": width_policy,
@@ -403,6 +440,7 @@ def layout_relation_plan(
                 "flexShrink": flex_shrink,
                 "gapBeforePt": gap_before,
                 "flexibleGapBefore": flexible_gap_before,
+                "spacingContract": spacing_contract,
                 "resistsHorizontalCompression": bool(
                     flex_shrink == 0
                     or str(child_style.get("whiteSpace") or "") == "nowrap"
@@ -417,8 +455,10 @@ def layout_relation_plan(
             "positionedChildNodeIds": detached_positioned_child_ids,
             "orderedChildNodeIds": visual_order,
             "reordersSourceChildren": visual_order != child_ids,
-            "alignment": str(style.get("alignItems") or "normal"),
-            "distribution": str(style.get("justifyContent") or "normal"),
+            "alignment": normalized_alignment(style.get("alignItems")),
+            "sourceAlignment": str(style.get("alignItems") or "normal"),
+            "distribution": normalized_distribution(style.get("justifyContent")),
+            "sourceDistribution": str(style.get("justifyContent") or "normal"),
             "wraps": str(style.get("flexWrap") or "nowrap") != "nowrap",
             "gap": measured_gap,
             "childSizing": child_sizing,
@@ -899,7 +939,7 @@ def screen_plan(
                     **value,
                     **{
                         key: inferred_sizing.get(str(value.get("nodeId") or ""), {}).get(key)
-                        for key in ("gapBeforePt", "flexibleGapBefore")
+                        for key in ("gapBeforePt", "flexibleGapBefore", "spacingContract")
                         if key in inferred_sizing.get(str(value.get("nodeId") or ""), {})
                     },
                 }

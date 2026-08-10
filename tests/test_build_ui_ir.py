@@ -583,7 +583,47 @@ class BuildUIIRTests(unittest.TestCase):
             self.assertEqual(screen["regions"]["bottomBar"]["nodeId"], "home.bottom")
             self.assertEqual(screen["regions"]["bottomBar"]["kind"], "bottom-action-bar")
             self.assertEqual(screen["regions"]["bottomBar"]["placement"], "viewport-overlay")
-            self.assertEqual(screen["systemChrome"]["navigationBar"], "custom")
+            self.assertEqual(screen["systemChrome"]["navigationBar"], "native")
+            self.assertEqual(
+                screen["navigation"]["renderingDecision"]["policy"],
+                "system-first-visual-fit-gated",
+            )
+            self.assertTrue(screen["navigation"]["renderingDecision"]["compatible"])
+            self.assertEqual(screen["navigation"]["toolbarItems"][0]["id"], "home.back")
+            self.assertTrue(screen["navigation"]["toolbarItems"][0]["hasAction"])
+
+    def test_complex_search_header_remains_custom_navigation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            nodes = [
+                render_node("app", None, "main", {"x": 0, "y": 0, "width": 393, "height": 852}),
+                render_node("header", "app", "header", {"x": 0, "y": 0, "width": 393, "height": 112}, direction="row"),
+                render_node("search", "header", "input", {"x": 20, "y": 58, "width": 353, "height": 42}),
+            ]
+            nodes[1]["attributes"]["data-ios-component"] = "navigation-bar"
+            nodes[2]["attributes"].update({"type": "search", "placeholder": "Search"})
+            data = {
+                "schemaVersion": "render-tree-1.2",
+                "source": {"kind": "html-file", "entry": "/tmp/example.html"},
+                "document": {"viewport": {"width": 393, "height": 852}},
+                "nodes": nodes,
+                "interactions": [],
+                "phoneCandidates": [],
+            }
+            source = root / "render-tree.json"
+            output = root / "ui-ir.json"
+            source.write_text(json.dumps(data), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), str(source), "--out", str(output),
+                "--root-runtime-id", "app", "--screen-id", "search",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            screen = json.loads(output.read_text(encoding="utf-8"))["screens"][0]
+            self.assertEqual(screen["navigation"]["style"], "custom")
+            self.assertIn(
+                "embedded-complex-content:search-input",
+                screen["navigation"]["renderingDecision"]["divergences"],
+            )
 
     def test_text_controls_preserve_single_line_multiline_and_readonly_semantics(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

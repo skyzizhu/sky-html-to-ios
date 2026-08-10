@@ -107,6 +107,41 @@ class BuildNativeArchitecturePlanTests(unittest.TestCase):
             body_sizing = next(item for item in root_relation["childSizing"] if item["nodeId"] == "article.body")
             self.assertEqual(body_sizing["gapBeforePt"], 20)
             self.assertFalse(body_sizing["flexibleGapBefore"])
+            self.assertEqual(body_sizing["spacingContract"]["mode"], "fixed")
+            self.assertEqual(body_sizing["spacingContract"]["measuredGapPt"], 20)
+            self.assertEqual(body_sizing["spacingContract"]["source"], "rendered-border-box-geometry")
+
+    def test_alignment_is_normalized_without_losing_source_semantics(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = make_ir("alignment")
+            screen = payload["screens"][0]
+            root_id = screen["rootNodeId"]
+            screen["nodes"][0].update({
+                "layout": {"mode": "row", "scrollAxis": "none"},
+                "style": {
+                    "display": "flex", "flexDirection": "row",
+                    "alignItems": "flex-start", "justifyContent": "flex-end",
+                },
+            })
+            screen["nodes"].append({
+                "id": "alignment.item", "parentId": root_id, "semanticType": "text",
+                "layout": {"rect": {"x": 20, "y": 20, "width": 80, "height": 24}},
+                "style": {"display": "block"},
+            })
+            ir_path = root / "ui-ir.json"
+            output = root / "plan.json"
+            ir_path.write_text(json.dumps(payload), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), "--ir", str(ir_path), "--out", str(output), "--ui-stack", "uikit",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            relations = json.loads(output.read_text(encoding="utf-8"))["screens"][0]["layers"]["contentContainer"]["layoutRelations"]
+            relation = next(item for item in relations if item["containerNodeId"] == root_id)
+            self.assertEqual(relation["alignment"], "start")
+            self.assertEqual(relation["sourceAlignment"], "flex-start")
+            self.assertEqual(relation["distribution"], "end")
+            self.assertEqual(relation["sourceDistribution"], "flex-end")
 
     def test_block_rich_text_stays_inline_and_positioned_decoration_stays_out_of_flow(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

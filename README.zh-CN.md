@@ -418,11 +418,14 @@ designScale = targetWidthPt / sourceAppRootWidthCssPx
 ### 导航栏、Tab Bar 和底部操作栏
 
 - 区分系统导航栏与 HTML 自绘导航；
+- 标准标题、返回和 toolbar 默认使用系统导航；只有视觉适配门确认系统栏无法表达时才自绘；
+- 主 Tab 在目标页面完整时默认使用 `TabView`/`UITabBarController`，不会为套系统栏虚构路由；
 - 区分固定底栏和随内容滚动的普通 footer；
 - viewport 级栏位由父容器宽度决定；
 - 不让栏内按钮的设计稿理想宽度反向撑开页面；
 - `flex-grow` 子项可等分或按比例伸展；
 - 小图标、角标和文字仍保持自身尺寸；
+- 按轴统一映射 start/center/end/stretch/baseline，并逐项保存实测间距、CSS gap、相邻 margin 和残差；
 - 滚动消失、sticky、collapse、hide-on-scroll 通过真实滚动探测判断。
 
 ### 多尺寸验证

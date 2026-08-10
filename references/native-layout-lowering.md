@@ -108,7 +108,9 @@ Wrapping stack 在 SwiftUI 中使用原生 `Layout` 协议实现，在 UIKit 中
 
 浏览器提取的 `offsetParentRuntimeId`、`scrollAncestorRuntimeId` 与对应 rect 是定位所有权的首选证据。只有这些节点不在当前 Screen 闭包内时，才允许按 CSS positioned ancestor/scroll ancestor 规则回退。生成 Payload 时定位节点必须重挂到 `nativeOwnerNodeId`，偏移也必须在同一 owner 坐标系计算。
 
-horizontal/vertical 容器必须逐项保留 `gapBeforePt`，整体 row/column gap 只作为缺失几何时的 fallback。逐项 gap 表示相邻 border box 之间的最终可见距离；这些 `*Pt` 已经处于目标坐标系，生成器不得再次乘设计倍率。原生端消费后必须清除相邻主轴 margin，防止 CSS margin 与 Spacer 被重复计算。
+horizontal/vertical 容器必须逐项保留 `gapBeforePt`，整体 row/column gap 只作为缺失几何时的 fallback。逐项 spacing contract 同时保存 signed 实测 border-box gap、authored CSS gap、前项 trailing margin、当前项 leading margin、残差和 `fixed|flexible|overlap` 模式，便于区分真正 gap、margin 分组、弹性分配和负间距重叠。实测最终距离拥有首次生成的几何优先级；这些 `*Pt` 已经处于目标坐标系，生成器不得再次乘设计倍率。原生端消费后必须清除相邻主轴 margin，防止 CSS margin 与 Spacer 被重复计算。
+
+对齐值先归一化为 `start|center|end|stretch|baseline`，再按轴映射。横向 Stack 的 cross-axis 对应 top/center/bottom/fill/firstBaseline，纵向 Stack 对应 leading/center/trailing/fill；`text-align` 只控制文字绘制，不能偷偷改变容器子项对齐。Grid 的 `justify-items` 与 `align-items` 分别控制水平和垂直 item 对齐。
 
 同页状态使用 `stateLayouts` 保存 insert/remove/replace 对应的目标父容器、生成节点布局和原节点基线布局。状态节点仍消费普通 Node Layout Contract；状态变化不得另建一套截图坐标或独立页面。
 

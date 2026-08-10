@@ -52,6 +52,21 @@ def css_px_to_target_pt(value: Any, design_scale: float) -> float | None:
     return parsed * design_scale if parsed is not None else None
 
 
+def normalize_alignment(value: Any, *, main_axis: bool = False) -> str:
+    raw = str(value or "normal").strip().lower()
+    if raw in {"flex-start", "start", "left", "top", "self-start", "normal", ""}:
+        return "start" if main_axis else ("stretch" if raw in {"normal", ""} else "start")
+    if raw in {"flex-end", "end", "right", "bottom", "self-end"}:
+        return "end"
+    if raw in {"safe center", "unsafe center"}:
+        return "center"
+    if raw in {"first baseline", "last baseline"}:
+        return "baseline"
+    if raw == "auto":
+        return "start" if main_axis else "stretch"
+    return raw
+
+
 def split_css_tokens(value: Any) -> list[str]:
     raw = str(value or "").strip()
     tokens: list[str] = []
@@ -706,10 +721,12 @@ def build_screen(
             "columnGapPt": column_gap if column_gap is not None else measured_gap,
             "rowGapContract": length_contract(authored_value(container_style, "rowGap"), "vertical"),
             "columnGapContract": length_contract(authored_value(container_style, "columnGap"), "horizontal"),
-            "alignment": str(relation.get("alignment") or "normal"),
-            "distribution": str(relation.get("distribution") or "normal"),
-            "alignContent": str(container_style.get("alignContent") or "normal"),
-            "justifyItems": str(container_style.get("justifyItems") or "normal"),
+            "alignment": normalize_alignment(relation.get("alignment") or container_style.get("alignItems")),
+            "sourceAlignment": str(relation.get("sourceAlignment") or container_style.get("alignItems") or "normal"),
+            "distribution": normalize_alignment(relation.get("distribution") or container_style.get("justifyContent"), main_axis=True),
+            "sourceDistribution": str(relation.get("sourceDistribution") or container_style.get("justifyContent") or "normal"),
+            "alignContent": normalize_alignment(container_style.get("alignContent")),
+            "justifyItems": normalize_alignment(container_style.get("justifyItems")),
             "wraps": bool(relation.get("wraps")),
             "reverse": flex_direction in {"row-reverse", "column-reverse"},
             "writingDirection": str(container_style.get("direction") or "ltr"),

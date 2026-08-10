@@ -335,10 +335,13 @@ The IR represents edges, centers, intrinsic/fixed/min/max dimensions, aspect rat
 ### Navigation bars, Tab Bars, and bottom bars
 
 - Distinguishes native navigation from custom HTML navigation.
+- Uses system navigation for standard titles, back actions, and toolbar items unless the visual-fit gate proves a native bar cannot represent the source.
+- Uses `TabView`/`UITabBarController` for complete main-tab routes and never invents destinations merely to obtain a system Tab Bar.
 - Separates fixed bottom bars from scrolling footers.
 - Sizes viewport bars from the parent width.
 - Prevents child button widths from expanding the page.
 - Preserves `flex-grow` distribution and measured icon/badge/label sizes.
+- Normalizes axis-aware start/center/end/stretch/baseline alignment and records measured gaps, authored CSS gaps, adjacent margins, and residual spacing per item.
 - Uses scroll probes to identify sticky, collapsing, and hide-on-scroll behavior.
 
 ### Multi-size validation

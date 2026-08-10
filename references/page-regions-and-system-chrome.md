@@ -16,12 +16,12 @@
 
 按以下顺序决定，不允许仅凭顶部矩形的位置直接升级为系统导航栏：
 
-1. 显式 `data-ios-navigation-style=native|custom|hidden|immersive`；
+1. 显式 `hidden|immersive` 与 `data-ios-force-custom-navigation=true`；普通 `data-ios-navigation-style=custom` 只说明 HTML 来源自绘，不直接决定原生实现；
 2. 目标工程已有 Router/NavigationStack/UINavigationController 所有权；
 3. 标准返回、标题和 toolbar 语义及其几何证据；
 4. 视觉差异是否可由 `UINavigationBarAppearance`、large/inline title、scroll edge 和 toolbar placement 表达。
 
-`native` 必须生成系统导航容器，并将 HTML 返回/操作节点提升为 leading、principal、trailing 或 primary toolbar item；原 HTML top bar 不再重复渲染。`custom` 保留为 safe-area 内自绘区域，系统导航栏隐藏。`immersive` 允许背景越过顶部 Safe Area，但标题、返回和交互点击区仍要安全避让。返回按钮的 `system|custom|hidden` 与页面进入方式分别建模，不能以隐藏系统返回按钮代替正确的 pop/dismiss 所有权。
+默认采用 system-first 视觉适配门：标准标题、返回、少量 toolbar item、large/inline title 和普通背景直接升级为系统栏；搜索/输入、多行复合内容、明显异形容器、品牌渐变/图片或系统 API 无法表达的结构才保留自绘。`native` 必须生成系统导航容器，并将 HTML 返回/操作节点提升为 leading、principal、trailing 或 primary toolbar item；原 HTML top bar 及全部后代不再重复渲染，并记录 `system-chrome-merged`。`custom` 保留为 safe-area 内自绘区域，系统导航栏隐藏。`immersive` 允许背景越过顶部 Safe Area，但标题、返回和交互点击区仍要安全避让。返回按钮的 `system|custom|hidden` 与页面进入方式分别建模，不能以隐藏系统返回按钮代替正确的 pop/dismiss 所有权。
 
 导航容器所有权、导航栏绘制方式和滚动行为必须分开记录。页面可以处于 `UINavigationController`/`NavigationStack` 中，但视觉上使用 custom top bar；也可以使用系统栏并通过 large-title collapse、scroll-edge appearance 或 hide-on-swipe 响应滚动。只有浏览器滚动探测确认 region 随内容移出时才实现 scroll-away；确认先移动后吸附时才实现 sticky；确认透明度、transform 或高度变化时分别映射 hide/collapse/appearance-change。无法分类时保持 fixed 并进入必检状态，禁止为了“像导航”就强行使用系统置顶栏。
 
@@ -44,6 +44,7 @@
 ### TabBar 决策规则
 
 - 只有显式 Tab 标注，或至少两个稳定主目的地且交互为 `switch-tab/select-tab` 时，才创建 `TabView`/`UITabBarController`；按钮数量多不能作为唯一证据。
+- 满足主 Tab 语义且目标 screen 完整时默认使用系统 Tab 容器；只有明显超出系统 TabBar 外观/结构能力或显式 `data-ios-force-custom-tab-bar=true` 才自绘。不得为套用系统 Tab 虚构目标页面。
 - 每个 Tab 必须有稳定 `tab-id`、标题、目标 screen 和选中状态；图标、选中图标、badge、role、重复点击行为与 push 后可见性进入 IR。
 - 每个主 Tab 拥有独立 `NavigationStack` path 或 `UINavigationController`，切换 Tab 不得清空其他 Tab 的导航状态。
 - `reselect=pop-to-root` 回到该 Tab 根页；`scroll-to-top` 回根并滚到首屏；`keep` 不改变栈或滚动位置。

@@ -2202,6 +2202,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "textAlignment": str(style.get("textAlign") or "start"),
             "justifyContent": str(layout_container.get("distribution") or style.get("justifyContent") or "normal"),
             "alignItems": str(layout_container.get("alignment") or style.get("alignItems") or "normal"),
+            "justifyItems": str(layout_container.get("justifyItems") or style.get("justifyItems") or "normal"),
             "gridColumnCount": grid_column_count(style.get("gridTemplateColumns")) if axis == "grid" else None,
             "gridColumnWidths": grid_column_widths if grid_column_widths else None,
             "positioningScheme": str(positioning.get("scheme") or style.get("position") or "static"),
@@ -2716,13 +2717,13 @@ def build_screen(
         "titleMode": str(navigation_source.get("titleMode") or "inline"),
         "scrollEdgeAppearance": str(navigation_source.get("scrollEdgeAppearance") or "automatic"),
         "backButton": str(navigation_source.get("backButton") or "system"),
+        "sourceNodeId": navigation_source.get("sourceNodeId"),
+        "renderingDecision": navigation_source.get("renderingDecision"),
         "toolbarItems": [],
     }
     for item in navigation_source.get("toolbarItems") or []:
         source_node_id = str(item.get("sourceNodeId") or "")
         action = actions.get(source_node_id)
-        if not action:
-            continue
         navigation["toolbarItems"].append({
             "id": str(item.get("id") or source_node_id),
             "title": compact_text(item.get("title"), 80),
@@ -2769,6 +2770,8 @@ def build_screen(
             top_bar_id = max(edge_candidates["top"])[1]
         if not bottom_bar_id and edge_candidates["bottom"]:
             bottom_bar_id = max(edge_candidates["bottom"])[1]
+    system_navigation_source_id = top_bar_id if navigation_style == "native" else None
+    system_tab_source_id = bottom_bar_id if tab_container else None
     if navigation_style != "custom":
         top_bar_id = None
     if tab_container:
@@ -2787,6 +2790,10 @@ def build_screen(
         else "none"
     )
     detached_root_ids = set(presentation_root_ids) | contextual_root_ids
+    if system_navigation_source_id:
+        detached_root_ids.add(system_navigation_source_id)
+    if system_tab_source_id:
+        detached_root_ids.add(system_tab_source_id)
     if top_bar_id:
         detached_root_ids.add(top_bar_id)
     if bottom_bar_id:
@@ -3158,7 +3165,7 @@ struct HTMLToIOSToolbarItemSpec: Codable, Identifiable {{
     let title: String
     let icon: String?
     let placement: String
-    let action: HTMLToIOSActionSpec
+    let action: HTMLToIOSActionSpec?
 }}
 
 struct HTMLToIOSTabContainerSpec: Codable, Identifiable {{
@@ -3641,6 +3648,7 @@ struct HTMLToIOSStyleSpec: Codable {{
     let textAlignment: String?
     let justifyContent: String?
     let alignItems: String?
+    let justifyItems: String?
     let gridColumnCount: Int?
     let gridColumnWidths: [Double?]?
     let positioningScheme: String?
@@ -5844,14 +5852,21 @@ struct HTMLToIOSNativeNodeView: View {
         let spacing = spec.style.columnSpacing ?? spec.style.spacing ?? 0
         if let widths = spec.style.gridColumnWidths, !widths.isEmpty {
             return widths.map { width in
-                width.map { GridItem(.fixed($0), spacing: spacing) }
-                    ?? GridItem(.flexible(), spacing: spacing)
+                    width.map { GridItem(.fixed($0), spacing: spacing, alignment: gridItemAlignment) }
+                    ?? GridItem(.flexible(), spacing: spacing, alignment: gridItemAlignment)
             }
         }
         return Array(
-            repeating: GridItem(.flexible(), spacing: spacing),
+            repeating: GridItem(.flexible(), spacing: spacing, alignment: gridItemAlignment),
             count: max(spec.style.gridColumnCount ?? 2, 1)
         )
+    }
+    private var gridItemAlignment: Alignment {
+        switch spec.style.justifyItems {
+        case "center": return .center
+        case "end", "flex-end", "right": return .trailing
+        default: return .leading
+        }
     }
     private var hasExplicitGridPlacement: Bool {
         spec.children.contains {
@@ -8168,13 +8183,23 @@ final class HTMLToIOSNodeRenderer {
             )
         }
         if spec.axis == "horizontal" {
-            stack.alignment = spec.style.baselineAligned == true ? .firstBaseline : .center
-        } else if spec.style.alignItems == "center" || spec.style.textAlignment == "center" {
-            stack.alignment = .center
-        } else if ["end", "flex-end", "right"].contains(spec.style.alignItems ?? "") {
-            stack.alignment = .trailing
+            if spec.style.baselineAligned == true || spec.style.alignItems == "baseline" {
+                stack.alignment = .firstBaseline
+            } else {
+                switch spec.style.alignItems {
+                case "start", "flex-start", "top": stack.alignment = .top
+                case "end", "flex-end", "bottom": stack.alignment = .bottom
+                case "stretch", "normal": stack.alignment = .fill
+                default: stack.alignment = .center
+                }
+            }
         } else {
-            stack.alignment = .fill
+            switch spec.style.alignItems {
+            case "center": stack.alignment = .center
+            case "start", "flex-start", "left": stack.alignment = .leading
+            case "end", "flex-end", "right": stack.alignment = .trailing
+            default: stack.alignment = .fill
+            }
         }
         let usesMeasuredSpacing = spec.contentItems.dropFirst().contains {
             $0.gapBefore != nil || $0.flexibleGapBefore == true
@@ -8280,21 +8305,19 @@ final class HTMLToIOSNodeRenderer {
 
     private func addContentGap(_ item: HTMLToIOSContentItemSpec, to stack: UIStackView, axis: String) {
         guard let gap = item.gapBefore, gap > 0 else { return }
-        let spacer = UIView()
-        spacer.isUserInteractionEnabled = false
         if item.flexibleGapBefore == true {
+            let spacer = UIView()
+            spacer.isUserInteractionEnabled = false
             spacer.setContentHuggingPriority(.defaultLow, for: axis == "vertical" ? .vertical : .horizontal)
             if axis == "vertical" {
                 spacer.heightAnchor.constraint(greaterThanOrEqualToConstant: gap).isActive = true
             } else {
                 spacer.widthAnchor.constraint(greaterThanOrEqualToConstant: gap).isActive = true
             }
-        } else if axis == "vertical" {
-            spacer.heightAnchor.constraint(equalToConstant: gap).isActive = true
-        } else {
-            spacer.widthAnchor.constraint(equalToConstant: gap).isActive = true
+            stack.addArrangedSubview(spacer)
+        } else if let previous = stack.arrangedSubviews.last {
+            stack.setCustomSpacing(gap, after: previous)
         }
-        stack.addArrangedSubview(spacer)
     }
 
     private func makeContentItemLabel(_ item: HTMLToIOSContentItemSpec, spec: HTMLToIOSNodeSpec) -> UILabel {
@@ -10884,6 +10907,7 @@ def build_native_merge_evidence(
     ir_nodes: dict[str, dict[str, Any]],
     payload_nodes: dict[str, dict[str, Any]],
     motions_by_node: dict[str, list[dict[str, Any]]],
+    system_chrome_roots: dict[str, str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     motion_node_ids = set(motions_by_node)
     children: dict[str, list[str]] = {}
@@ -10900,6 +10924,17 @@ def build_native_merge_evidence(
         return result
 
     evidence: dict[str, dict[str, Any]] = {}
+    for owner_id, primitive in (system_chrome_roots or {}).items():
+        if owner_id not in ir_nodes:
+            continue
+        source_ids = [owner_id, *descendants(owner_id)]
+        for source_id in source_ids:
+            evidence[source_id] = {
+                "strategy": "system-chrome-merged",
+                "ownerNodeId": owner_id,
+                "sourceNodeIds": source_ids,
+                "nativePrimitive": primitive,
+            }
     for owner_id, node in ir_nodes.items():
         if not is_status_bar_chrome(node):
             continue
@@ -11423,7 +11458,28 @@ def build_native_structure_manifest(
             if source_id:
                 motions_by_node.setdefault(source_id, []).append(item)
         motion_node_ids = set(motions_by_node)
-        merge_evidence = build_native_merge_evidence(ir_nodes, payload_nodes, motions_by_node)
+        navigation_contract = ir_screen.get("navigation") or {}
+        regions = ir_screen.get("regions") or {}
+        system_chrome_roots: dict[str, str] = {}
+        if str(navigation_contract.get("style") or "") == "native":
+            navigation_source_id = str(
+                navigation_contract.get("sourceNodeId")
+                or ((regions.get("topBar") or {}).get("nodeId"))
+                or ""
+            )
+            if navigation_source_id:
+                system_chrome_roots[navigation_source_id] = "system-navigation-bar"
+        tab_contract = ir_screen.get("tabContainer") or {}
+        tab_source_id = str(
+            tab_contract.get("sourceNodeId")
+            or ((regions.get("bottomBar") or {}).get("nodeId"))
+            or ""
+        )
+        if tab_contract and tab_source_id:
+            system_chrome_roots[tab_source_id] = "system-tab-bar"
+        merge_evidence = build_native_merge_evidence(
+            ir_nodes, payload_nodes, motions_by_node, system_chrome_roots
+        )
         states_by_id = {str(item.get("id") or ""): item for item in ir_payload.get("states") or []}
         for presentation in (presentation_by_screen.get(screen_id) or {}).get("presentations") or []:
             owner_id = str(presentation.get("targetNodeId") or "")
@@ -11793,7 +11849,11 @@ def build_native_structure_manifest(
             geometry = planned.get("geometry") or {}
             appearance = planned.get("appearance") or {}
             behavior = planned.get("behavior") or {}
-            presentation_merge = (merge_evidence.get(node_id) or {}).get("strategy") == "presentation-backdrop-merged"
+            merge_strategy = str((merge_evidence.get(node_id) or {}).get("strategy") or "")
+            native_owner_merge = merge_strategy in {
+                "presentation-backdrop-merged",
+                "system-chrome-merged",
+            }
             checks = {
                 "payloadNode": bool(generated),
                 "controlConfig": bool(config),
@@ -11810,8 +11870,8 @@ def build_native_structure_manifest(
             control_configuration_consumption.append({
                 "nodeId": node_id,
                 "semantic": planned.get("semantic"),
-                "status": "consumed" if presentation_merge or all(checks.values()) else "not-consumed",
-                "checks": {"presentationBackdropMerge": True} if presentation_merge else checks,
+                "status": "consumed" if native_owner_merge or all(checks.values()) else "not-consumed",
+                "checks": {"nativeOwnerMerge": merge_strategy} if native_owner_merge else checks,
             })
         payload_presentations = {str(item.get("stateID") or ""): item for item in payload_screen.get("presentations") or []}
         presentation_consumption = []
