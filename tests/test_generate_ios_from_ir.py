@@ -197,6 +197,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.run_generator([source], out_dir, native_layout_plan=plan)
             generated = json.loads((out_dir / PAYLOAD).read_text(encoding="utf-8"))
             generated_root = generated["screens"][0]["root"]
+            self.assertIsNone(generated_root["style"]["fixedHeight"])
             self.assertEqual(generated_root["style"]["spacing"], 10)
             self.assertEqual(generated_root["style"]["rowSpacing"], 10)
             self.assertEqual(generated_root["style"]["columnSpacing"], 10)
@@ -2470,7 +2471,10 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("HTMLToIOSBorderModifier", swiftui_runtime)
             self.assertIn("gradientAngle", swiftui_runtime)
             self.assertIn("else if let fixedHeight", swiftui_runtime)
-            self.assertIn(".frame(minWidth: minWidth, idealWidth: idealWidth, maxWidth: maxWidth)", swiftui_runtime)
+            self.assertIn(".frame(minWidth: minWidth, idealWidth: idealWidth, maxWidth: maxWidth, alignment: alignment)", swiftui_runtime)
+            self.assertIn("contentAlignment: contentFrameAlignment", swiftui_runtime)
+            self.assertIn("alignment: childSlotAlignment(child)", swiftui_runtime)
+            self.assertIn("private var contentHorizontalAlignment: HorizontalAlignment", swiftui_runtime)
             self.assertNotIn("if fixedWidth != nil || fixedHeight != nil", swiftui_runtime)
 
             uikit_dir = root / "uikit"

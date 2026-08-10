@@ -34,6 +34,8 @@
 
 SwiftUI 使用这些证据选择 Stack/Grid/Overlay、spacing、frame 和 layout priority。UIKit 使用相同证据配置 `UIStackView`、Auto Layout、Table/Collection item sizing 与 hugging/compression priority。禁止技术栈各自重排子节点。
 
+固定 border-box 的尺寸与盒内内容对齐是两个独立契约。SwiftUI 所有 fixed/min/max frame 必须显式传入由容器 axis、`justify-content`、`align-items`、Grid `justify-items` 和文字 `text-align` 推导的 Alignment，不能使用 `.frame` 的默认居中；UIKit 使用同一证据配置 Stack alignment/distribution 与文字 alignment。横向复合控件中的 flexible 文本槽先获取剩余宽度，再在槽内按来源 left/center/right 对齐，禁止扩展槽位后把文字默认居中。
+
 `widthFraction` 始终等于节点 border box 宽度除以直接父内容框宽度；只有 screen root 才使用目标 viewport 宽度。接近父宽的普通流节点优先生成父级填充约束，absolute/fixed、Overlay、横向滚动 item、动画节点和紧凑文字保留独立尺寸。CSS Grid 若没有子 View、只有一个直接文本或图标槽，只承担单槽对齐职责，SwiftUI/UIKit 使用填满父级的 Stack/ZStack/普通 View；不得创建会按内容收缩的 Lazy Grid 或 Collection。
 
 混合普通流与 positioned 子节点时，先用浏览器矩形判断实际重叠。若 positioned 子节点覆盖普通流内容且承担同一视觉层级，所有相关子节点按最终绘制顺序进入同一 Overlay/ZStack，并保留容器实测尺寸；若没有实质重叠，普通流继续参与 Stack/Grid 测量，positioned 子节点单独挂到 overlay 层。禁止把所有 absolute 节点一概移出后破坏前后层级。
@@ -119,6 +121,8 @@ horizontal/vertical 容器必须逐项保留 `gapBeforePt`，整体 row/column g
 系统导航栏显隐是 Application Container 的首帧职责。UIKit 在创建 `UINavigationController`、push 与 replace 前同步应用目标页面策略，不能只依赖被嵌入 child controller 的 `viewWillAppear`；SwiftUI 的 toolbar visibility 也必须与目标路由首帧一致。
 
 Screen Content Root 的宽度由 Screen Container 响应式约束持有，来源单次实测宽度不能继续作为根节点 fixed-width。非滚动静态页面从系统 Safe Area 顶部开始，保留内容的 intrinsic/measured height，并以底部 `lessThanOrEqual` 限制可用范围；不能同时保留固定根高度又用 top/bottom 等式把它强制拉满屏幕。滚动页面仍使用完整父 bounds 与系统自动 inset。
+
+Screen Root 的来源高度同样只作为几何验收证据，不进入 Payload `fixedHeight`。根内容由自身 intrinsic height、唯一 Scroll owner 和 Screen Container 可用高度共同解析；子级 authored 固定卡片/行高仍可保留。生成后门禁必须同时验证根 fixed height 已清除，以及 SwiftUI/UIKit 均消费盒内内容对齐契约。
 
 UIKit 页面级 typed wrapper 和模块 ContentView 必须在加入 Screen Container 前设置 `translatesAutoresizingMaskIntoConstraints = false`。结构清单不能只证明文件和类型存在，还要保证根 wrapper 由 Auto Layout 接管；运行时根 frame 为零而子树依靠 unclipped overflow 显示属于硬失败。
 

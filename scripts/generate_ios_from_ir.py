@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.45.0"
+GENERATOR_VERSION = "1.46.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SUPPORTED_API_FALLBACKS = {
     "custom-overlay-container", "over-full-screen-container",
@@ -1861,9 +1861,10 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             fixed_width = None
     if not parent_id:
         # The screen container owns responsive width. A measured HTML content-root
-        # height may remain intrinsic, but pinning the root to one sampled width
-        # conflicts with the native screen constraints on other devices.
+        # and height. The sampled artboard height is evidence for validation, not
+        # a frame that may center or clip the native content tree.
         fixed_width = None
+        fixed_height = None
     preserves_aspect_ratio = bool(
         ratio is not None
         and (
@@ -4562,18 +4563,19 @@ private struct HTMLToIOSFrameModifier: ViewModifier {
     let maxWidth: CGFloat?
     let minHeight: CGFloat?
     let maxHeight: CGFloat?
+    let alignment: Alignment
 
     @ViewBuilder func body(content: Content) -> some View {
         if let fixedWidth, let fixedHeight {
-            content.frame(width: fixedWidth, height: fixedHeight)
+            content.frame(width: fixedWidth, height: fixedHeight, alignment: alignment)
         } else if let fixedWidth {
             content
-                .frame(width: fixedWidth)
-                .frame(minHeight: minHeight, maxHeight: maxHeight)
+                .frame(width: fixedWidth, alignment: alignment)
+                .frame(minHeight: minHeight, maxHeight: maxHeight, alignment: alignment)
         } else if let fixedHeight {
             content
-                .frame(height: fixedHeight)
-                .frame(minWidth: minWidth, idealWidth: idealWidth, maxWidth: maxWidth)
+                .frame(height: fixedHeight, alignment: alignment)
+                .frame(minWidth: minWidth, idealWidth: idealWidth, maxWidth: maxWidth, alignment: alignment)
         } else if minWidth != nil || idealWidth != nil {
             firstFrame(content)
         } else if maxWidth != nil || minHeight != nil || maxHeight != nil {
@@ -4584,16 +4586,16 @@ private struct HTMLToIOSFrameModifier: ViewModifier {
     }
 
     @ViewBuilder private func firstFrame(_ content: Content) -> some View {
-        let framed = content.frame(minWidth: minWidth, idealWidth: idealWidth)
+        let framed = content.frame(minWidth: minWidth, idealWidth: idealWidth, alignment: alignment)
         if maxWidth != nil || minHeight != nil || maxHeight != nil {
-            framed.frame(maxWidth: maxWidth, minHeight: minHeight, maxHeight: maxHeight)
+            framed.frame(maxWidth: maxWidth, minHeight: minHeight, maxHeight: maxHeight, alignment: alignment)
         } else {
             framed
         }
     }
 
     private func secondFrame(_ content: Content) -> some View {
-        content.frame(maxWidth: maxWidth, minHeight: minHeight, maxHeight: maxHeight)
+        content.frame(maxWidth: maxWidth, minHeight: minHeight, maxHeight: maxHeight, alignment: alignment)
     }
 }
 
@@ -4689,6 +4691,7 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
     let enforcesPreferredWidth: Bool
     let calibratesTextLineBox: Bool
     let calibratesFirstBaseline: Bool
+    let contentAlignment: Alignment
 
     func body(content: Content) -> some View {
         let padding = style.padding ?? [0, 0, 0, 0]
@@ -4761,7 +4764,8 @@ private struct HTMLToIOSStyleModifier: ViewModifier {
                 idealWidth: idealWidth,
                 maxWidth: maxWidth,
                 minHeight: minHeight,
-                maxHeight: maxHeight
+                maxHeight: maxHeight,
+                alignment: contentAlignment
             ))
             .modifier(HTMLToIOSAspectRatioModifier(ratio: style.aspectRatio.map { CGFloat($0) }))
         return framedContent
@@ -5217,7 +5221,8 @@ struct HTMLToIOSNativeNodeView: View {
             constrainsPreferredWidth: isMeasuredText || spec.children.isEmpty || isNativeControl,
             enforcesPreferredWidth: isNativeControl && spec.style.preservesIntrinsicWidth == true,
             calibratesTextLineBox: isTextBearingNode,
-            calibratesFirstBaseline: isPureTextNode && hasReliableFontMetrics
+            calibratesFirstBaseline: isPureTextNode && hasReliableFontMetrics,
+            contentAlignment: contentFrameAlignment
         ))
         .modifier(HTMLToIOSRelativeConstraintModifier(contract: spec.layoutContract))
     }
@@ -5983,6 +5988,44 @@ struct HTMLToIOSNativeNodeView: View {
     }
 
     private var fillsAvailableWidth: Bool { (spec.style.widthFraction ?? 0) > 0.72 }
+    private var contentFrameAlignment: Alignment {
+        Alignment(
+            horizontal: contentHorizontalAlignment,
+            vertical: contentVerticalAlignment
+        )
+    }
+    private var contentHorizontalAlignment: HorizontalAlignment {
+        let axisValue = spec.axis == "horizontal"
+            ? spec.style.justifyContent
+            : (spec.axis == "grid" ? spec.style.justifyItems : spec.style.alignItems)
+        let value = isTextOnlyControl && [nil, "normal", "stretch"].contains(axisValue)
+            ? spec.style.textAlignment
+            : axisValue
+        switch value {
+        case "center": return .center
+        case "end", "flex-end", "right": return .trailing
+        default: return .leading
+        }
+    }
+    private var contentVerticalAlignment: VerticalAlignment {
+        let axisValue = spec.axis == "horizontal" || spec.axis == "grid"
+            ? spec.style.alignItems
+            : spec.style.justifyContent
+        let value = isTextOnlyControl && [nil, "normal", "stretch"].contains(axisValue)
+            ? "center"
+            : axisValue
+        switch value {
+        case "center": return .center
+        case "end", "flex-end", "bottom": return .bottom
+        default: return .top
+        }
+    }
+    private var isTextOnlyControl: Bool {
+        ["button", "link", "menu-item", "tab-item"].contains(spec.semantic)
+            && spec.children.isEmpty
+            && !spec.contentItems.isEmpty
+            && spec.contentItems.allSatisfy { $0.kind == "text" }
+    }
     private var gridColumns: [GridItem] {
         let spacing = spec.style.columnSpacing ?? spec.style.spacing ?? 0
         if let widths = spec.style.gridColumnWidths, !widths.isEmpty {
@@ -6044,18 +6087,10 @@ struct HTMLToIOSNativeNodeView: View {
         }
     }
     private var horizontalFrameAlignment: Alignment {
-        switch spec.style.justifyContent {
-        case "center": return .center
-        case "flex-end", "end": return .trailing
-        default: return .leading
-        }
+        contentFrameAlignment
     }
     private var verticalFrameAlignment: Alignment {
-        switch spec.style.justifyContent {
-        case "center": return .center
-        case "flex-end", "end": return .bottom
-        default: return .top
-        }
+        contentFrameAlignment
     }
 
     @ViewBuilder private var distributedContentItems: some View {
@@ -6108,7 +6143,18 @@ struct HTMLToIOSNativeNodeView: View {
                 typedRegistry: typedRegistry,
                 bypassTypedNodeID: bypassTypedNodeID
             )
-                .frame(maxWidth: (child.style.flexGrow ?? 0) > 0 ? .infinity : nil)
+                .frame(
+                    maxWidth: (child.style.flexGrow ?? 0) > 0 ? .infinity : nil,
+                    alignment: childSlotAlignment(child)
+                )
+        }
+    }
+
+    private func childSlotAlignment(_ child: HTMLToIOSNodeSpec) -> Alignment {
+        switch child.style.textAlignment {
+        case "center": return .center
+        case "end", "right": return .trailing
+        default: return .leading
         }
     }
 
@@ -11689,6 +11735,18 @@ def build_native_structure_manifest(
                 and "stack.alignment = .trailing" in runtime_text
             ),
         },
+        "boxContentAlignment": {
+            "required": True,
+            "consumed": (
+                "contentAlignment: contentFrameAlignment" in runtime_text
+                and "alignment: childSlotAlignment(child)" in runtime_text
+                and "private var contentHorizontalAlignment: HorizontalAlignment" in runtime_text
+                if ui_stack == "swiftui"
+                else "switch spec.style.alignItems" in runtime_text
+                and "stack.alignment = .fill" in runtime_text
+                and "addTrailingContentSpacerIfNeeded" in runtime_text
+            ),
+        },
         "parentWidthStretch": {
             "required": True,
             "consumed": (
@@ -12016,6 +12074,10 @@ def build_native_structure_manifest(
                 ),
                 "contentHeight": (
                     content_geometry.get("heightMode") != "fixed"
+                    or (
+                        node_id == screen_root_id
+                        and generated_style.get("fixedHeight") is None
+                    )
                     or abs(number(generated_style.get("fixedHeight")) - number(content_geometry.get("sourceHeightPt"))) <= 0.01
                 ),
                 "contentAspectRatio": (

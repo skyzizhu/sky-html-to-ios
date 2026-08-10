@@ -72,6 +72,7 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 61. 对齐与间距必须先归一化再由两套原生栈共同消费。`flex-start/start/left/top`、`flex-end/end/right/bottom`、center、baseline、stretch 按容器轴映射，文本 `text-align` 不得覆盖父容器交叉轴对齐。每个相邻子项保存 signed 实测 border-box gap、CSS gap、前项尾 margin、当前项首 margin、残差和 fixed/flexible/overlap 模式；实测间距是首次生成的权威值，margin 只消费一次，`space-between/around/evenly` 不得退化成等量固定空白 View。
 62. 系统 NavigationBar 接管后，系统 Safe Area 与状态栏 inset 是唯一顶部系统空间；不得继续叠加 HTML 模拟状态栏高度。来源导航栏底边到首个业务内容节点的实测间距可以保留为 `systemNavigationContentSpacing`，但不得包含已由系统栏消费的高度。宽容器填充、轴向对齐和 authored `aspect-ratio` 必须进入 UIKit/SwiftUI 共同的运行时能力门禁。
 63. 节点 `widthFraction` 必须相对直接父容器的内容宽度计算，不得相对整屏计算；接近父宽的普通流节点映射为父级填充，absolute/fixed、Overlay、横向滚动 item、动画节点和紧凑文字继续保留各自尺寸语义。只有一个直接文本/图标槽且无子 View 的 CSS Grid 是单槽对齐容器，SwiftUI 使用填满父级的 Stack/ZStack，禁止为了 `display:grid` 生成会按内容收缩的 Lazy Grid。
+64. 固定 border-box 只约束外框，不代表内部内容居中。盒内水平/垂直位置必须按容器 axis 联合消费 `justify-content`、`align-items`、Grid `justify-items`、文字 `text-align` 与复合槽位角色；可伸展文字槽必须在自身分配宽度内保持来源对齐。Screen Root 的实测高度只用于几何验收，Payload 必须清除根 `fixedHeight`，由内容 intrinsic height、Scroll owner 与 Screen Container 上界共同决定，禁止因 SwiftUI `.frame` 默认居中造成整页纵向漂移。
 
 ## 支持范围
 
