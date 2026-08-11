@@ -6,9 +6,76 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import statistics
 import subprocess
 import sys
 from pathlib import Path
+
+
+def percent(value: float) -> float:
+    return round(max(0.0, min(100.0, value)), 4)
+
+
+def region_score(regions: list[dict], *, categories: set[str] | None = None, profiles: set[str] | None = None) -> float | None:
+    selected = [
+        item for item in regions
+        if (categories is None or str(item.get("category") or "") in categories)
+        and (profiles is None or str(item.get("toleranceProfile") or "") in profiles)
+    ]
+    if not selected:
+        return None
+    penalties = [
+        min(float(item.get("mismatchRatio") or 0), 1) * 0.72
+        + min(float(item.get("edgeMismatchRatio") or 0), 1) * 0.28
+        for item in selected
+    ]
+    return percent(100 * (1 - sum(penalties) / len(penalties)))
+
+
+def geometry_score(geometry_report: dict | None) -> float | None:
+    nodes = [
+        item for item in (geometry_report or {}).get("nodes") or []
+        if item.get("verticalAggregationEligible")
+    ]
+    if not nodes:
+        return None
+    has_system_navigation = any(
+        item.get("nativeOwnershipGroup") == "system-navigation"
+        for item in (geometry_report or {}).get("nodes") or []
+    )
+    content_x_offset = statistics.median([
+        float((item.get("delta") or {}).get("x") or 0)
+        for item in nodes if item.get("nativeOwnershipGroup") == "content"
+    ]) if has_system_navigation and any(item.get("nativeOwnershipGroup") == "content" for item in nodes) else 0.0
+    content_y_offset = statistics.median([
+        float((item.get("delta") or {}).get("y") or 0)
+        for item in nodes if item.get("nativeOwnershipGroup") == "content"
+    ]) if has_system_navigation and any(item.get("nativeOwnershipGroup") == "content" for item in nodes) else 0.0
+    penalties = []
+    for item in nodes:
+        expected = item.get("expectedRect") or [0, 0, 0, 0]
+        delta = item.get("delta") or {}
+        width, height = max(float(expected[2] or 0), 1), max(float(expected[3] or 0), 1)
+        calibrates_system_container = has_system_navigation and item.get("nativeOwnershipGroup") == "content"
+        normalized = (
+            abs(float(delta.get("x") or 0) - (content_x_offset if calibrates_system_container else 0)) / width
+            + abs(float(delta.get("y") or 0) - (content_y_offset if calibrates_system_container else 0)) / height
+            + abs(float(delta.get("width") or 0)) / width
+            + abs(float(delta.get("height") or 0)) / height
+        ) / 4
+        penalties.append(min(normalized, 1))
+    return percent(100 * (1 - sum(penalties) / len(penalties)))
+
+
+def state_dimension_scores(report: dict, geometry_report: dict | None) -> dict:
+    regions = report.get("semanticRegions") or []
+    return {
+        "structure": region_score(regions, profiles={"structure"}),
+        "geometry": geometry_score(geometry_report),
+        "typography": region_score(regions, profiles={"text"}),
+        "appearance": percent(float(report.get("simplePixelSimilarity") or 0) * 100),
+        "controlVisual": region_score(regions, categories={"control"}),
+    }
 
 
 def resolve_image_capability(requested: str) -> tuple[str, str]:
@@ -33,6 +100,9 @@ def main() -> int:
     parser.add_argument("--max-mean-difference", type=float, default=18.0)
     parser.add_argument("--max-critical-region-mismatch", type=float, default=0.16)
     parser.add_argument("--max-text-edge-mismatch", type=float, default=0.30)
+    parser.add_argument("--max-vertical-drift-span", type=float, default=12.0)
+    parser.add_argument("--max-anchor-jump", type=float, default=8.0)
+    parser.add_argument("--min-reliable-geometry-anchors", type=int, default=3)
     parser.add_argument("--advisory", action="store_true", help="Write failures without returning a non-zero quality-gate exit code")
     parser.add_argument(
         "--multimodal-capability",
@@ -132,6 +202,32 @@ def main() -> int:
             failures.append({"gate": "critical-region-mismatch", "actual": diagnostics["maxCriticalRegionMismatchRatio"], "maximum": args.max_critical_region_mismatch})
         if diagnostics.get("maxTextEdgeMismatchRatio", 0) > args.max_text_edge_mismatch:
             failures.append({"gate": "text-edge-mismatch", "actual": diagnostics["maxTextEdgeMismatchRatio"], "maximum": args.max_text_edge_mismatch})
+        geometry_summary = (geometry_report or {}).get("summary") or {}
+        reliable_anchor_count = int(
+            geometry_summary.get("verticalAnchorNodeCount")
+            if geometry_summary.get("verticalAnchorNodeCount") is not None
+            else geometry_summary.get("reliableMatchedNodeCount") or 0
+        )
+        if reliable_anchor_count >= args.min_reliable_geometry_anchors:
+            drift_span = geometry_summary.get("verticalDriftSpanPt")
+            if drift_span is not None and float(drift_span) > args.max_vertical_drift_span:
+                failures.append({
+                    "gate": "vertical-drift-span",
+                    "actual": drift_span,
+                    "maximum": args.max_vertical_drift_span,
+                    "reliableAnchorCount": reliable_anchor_count,
+                })
+            anchor_jump = max(
+                (abs(float(item.get("deltaChangePt") or 0)) for item in geometry_summary.get("driftTransitions") or []),
+                default=0.0,
+            )
+            if anchor_jump > args.max_anchor_jump:
+                failures.append({
+                    "gate": "vertical-anchor-jump",
+                    "actual": round(anchor_jump, 3),
+                    "maximum": args.max_anchor_jump,
+                    "reliableAnchorCount": reliable_anchor_count,
+                })
         passed = not failures
         fidelity = max(0.0, 100.0 * (1.0 - (
             report["mismatchRatio"] * 0.45
@@ -150,6 +246,7 @@ def main() -> int:
             "exactPixelMatch": not report["resizedCurrent"] and report["mismatchRatio"] == 0 and report["meanAbsoluteDifference"] == 0,
             "report": report,
             "geometryReport": geometry_report,
+            "dimensionScores": state_dimension_scores(report, geometry_report),
         })
 
     missing_required = [item["id"] for item in results if item["required"] and item["status"] == "missing"]
@@ -159,6 +256,18 @@ def main() -> int:
     fidelity_percent = round(
         sum(float(item.get("fidelityPercent") or 0) for item in required_states) / max(1, len(required_states)),
         4,
+    )
+    dimension_names = ("structure", "geometry", "typography", "appearance", "controlVisual")
+    dimension_scores = {
+        name: percent(sum(values) / len(values)) if (values := [
+            float((item.get("dimensionScores") or {}).get(name))
+            for item in required_states
+            if (item.get("dimensionScores") or {}).get(name) is not None
+        ]) else None
+        for name in dimension_names
+    }
+    dimension_scores["interactionStateCoverage"] = percent(
+        100 * sum(item.get("status") != "missing" for item in required_states) / max(len(required_states), 1)
     )
     image_capability, capability_source = resolve_image_capability(args.multimodal_capability)
     if missing_required:
@@ -180,6 +289,9 @@ def main() -> int:
             "maxMeanDifference": args.max_mean_difference,
             "maxCriticalRegionMismatch": args.max_critical_region_mismatch,
             "maxTextEdgeMismatch": args.max_text_edge_mismatch,
+            "maxVerticalDriftSpanPt": args.max_vertical_drift_span,
+            "maxAnchorJumpPt": args.max_anchor_jump,
+            "minReliableGeometryAnchors": args.min_reliable_geometry_anchors,
         },
         "capabilityGate": {
             "requested": args.multimodal_capability,
@@ -197,6 +309,7 @@ def main() -> int:
             "qualityGate": "passed" if not missing_required and not required_failures else "failed",
             "targetFidelityPercent": 100.0,
             "fidelityPercent": fidelity_percent,
+            "dimensionScores": dimension_scores,
             "exactFidelityAchieved": bool(required_states) and not missing_required and all(item.get("exactPixelMatch") for item in required_states),
             "readyForAgentReview": not missing_required and bool(review_required) and image_capability == "available",
             "multimodalReviewStatus": multimodal_status,

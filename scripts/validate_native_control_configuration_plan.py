@@ -42,6 +42,14 @@ def main() -> int:
                     issues.append({"code": "CONTROL_CANDIDATE_CONTEXT_MISSING", "screenId": screen_id, "nodeId": node_id})
                 if selection.get("finalDecision") != control.get("strategy") or int(fit.get("boundedResolutionPasses") or 0) != 2:
                     issues.append({"code": "CONTROL_FINAL_DECISION_INVALID", "screenId": screen_id, "nodeId": node_id})
+                adaptation = control.get("visualAdaptation") or {}
+                wrapper_expected = control.get("strategy") == "system-control-with-wrapper"
+                if (
+                    adaptation.get("preservesNativePrimitive") is not True
+                    or (adaptation.get("mode") == "semantic-wrapper") != wrapper_expected
+                    or bool((control.get("behavior") or {}).get("requiresWrapper")) != wrapper_expected
+                ):
+                    issues.append({"code": "CONTROL_VISUAL_ADAPTATION_INVALID", "screenId": screen_id, "nodeId": node_id})
             geometry = control.get("geometry") or {}
             insets = geometry.get("contentInsetsPt") or []
             if len(insets) != 4 or any(not isinstance(item, (int, float)) or item < 0 for item in insets):

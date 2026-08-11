@@ -34,6 +34,35 @@ def node(node_id: str, parent_id: str | None, semantic: str, rect: list[int], te
 
 
 class VisualValidationTests(unittest.TestCase):
+    def test_manifest_marks_native_navigation_subtree_as_system_owned(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = {
+                "schemaVersion": "1.2",
+                "source": {"entry": str(root / "prototype.html"), "viewport": {"width": 393, "height": 852}},
+                "target": {"viewportPt": {"width": 393, "height": 852}},
+                "screens": [{
+                    "id": "home", "rootNodeId": "home.root", "sourceSelector": "#home",
+                    "systemChrome": {"navigationBar": "native"}, "regions": {},
+                    "navigation": {"style": "native", "sourceNodeId": "home.navigation"},
+                    "nodes": [
+                        node("home.root", None, "container", [0, 0, 393, 852]),
+                        node("home.navigation", "home.root", "navigation", [0, 44, 393, 58]),
+                        node("home.save", "home.navigation", "button", [330, 58, 44, 24], "Save"),
+                        node("home.title", "home.root", "heading", [20, 126, 180, 30], "Home"),
+                    ],
+                }],
+                "interactions": [],
+                "visualStates": [{"id": "initial", "required": True}],
+            }
+            source, output = root / "ui-ir.json", root / "manifest.json"
+            source.write_text(json.dumps(payload), encoding="utf-8")
+            subprocess.run([sys.executable, str(MANIFEST_SCRIPT), str(source), "--out", str(output)], check=True, text=True, capture_output=True)
+            manifest = json.loads(output.read_text(encoding="utf-8"))
+            groups = {item["nodeId"]: item["nativeOwnershipGroup"] for item in manifest["geometryNodes"]}
+            self.assertEqual(groups["home.save"], "system-navigation")
+            self.assertEqual(groups["home.title"], "content")
+
     def test_advisory_motion_checkpoints_are_not_scheduled_for_ui_capture(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -308,6 +337,7 @@ class VisualValidationTests(unittest.TestCase):
             report = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(report["summary"]["matchedNodeCount"], 4)
             self.assertEqual(report["summary"]["reliableMatchedNodeCount"], 3)
+            self.assertEqual(report["summary"]["verticalAnchorNodeCount"], 3)
             self.assertEqual(report["summary"]["verticalDriftSpanPt"], 14)
             self.assertEqual(report["summary"]["bands"]["top"]["medianYDeltaPt"], 1)
             self.assertEqual(report["summary"]["bands"]["bottom"]["medianYDeltaPt"], 15)
@@ -745,6 +775,8 @@ class VisualValidationTests(unittest.TestCase):
             self.assertEqual(bundle["summary"]["qualityGate"], "failed")
             self.assertEqual(bundle["summary"]["requiredFailures"], ["initial"])
             self.assertLess(bundle["summary"]["fidelityPercent"], 100)
+            self.assertIn("appearance", bundle["summary"]["dimensionScores"])
+            self.assertIn("controlVisual", bundle["states"][0]["dimensionScores"])
             self.assertFalse(bundle["summary"]["exactFidelityAchieved"])
             self.assertIn("critical-region-mismatch", {item["gate"] for item in bundle["states"][0]["gateFailures"]})
             state_validation = json.loads(
@@ -754,6 +786,51 @@ class VisualValidationTests(unittest.TestCase):
                 state_validation["validationRegions"][0]["id"],
                 "node.state-specific",
             )
+
+    def test_review_bundle_rejects_cumulative_vertical_geometry_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            html_dir, ios_dir, out_dir = root / "html", root / "ios", root / "review"
+            html_dir.mkdir()
+            ios_dir.mkdir()
+            image = Image.new("RGB", (100, 100), "white")
+            image.save(html_dir / "initial.png")
+            image.save(ios_dir / "initial.png")
+            regions = [
+                {"id": f"node.{node_id}", "nodeId": node_id, "category": "control", "toleranceProfile": "control", "rect": rect, "geometryRect": rect}
+                for node_id, rect in (
+                    ("top", [10, 10, 30, 10]),
+                    ("middle", [10, 40, 30, 10]),
+                    ("bottom", [10, 70, 30, 10]),
+                )
+            ]
+            manifest = {
+                "validationRegions": regions,
+                "geometryNodes": [{"nodeId": item["nodeId"], "hasChildren": False} for item in regions],
+                "states": [{"id": "initial", "required": True}],
+            }
+            manifest_path = root / "manifest.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            (ios_dir / "initial.geometry.json").write_text(json.dumps({
+                "stateId": "initial",
+                "nodes": [
+                    {"nodeId": "top", "elementType": 9, "frame": [10, 10, 30, 10]},
+                    {"nodeId": "middle", "elementType": 9, "frame": [10, 48, 30, 10]},
+                    {"nodeId": "bottom", "elementType": 9, "frame": [10, 90, 30, 10]},
+                ],
+            }), encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(BUNDLE_SCRIPT), str(manifest_path), "--html-dir", str(html_dir), "--ios-dir", str(ios_dir), "--out-dir", str(out_dir)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 2, result.stderr or result.stdout)
+            bundle = json.loads((out_dir / "review-bundle.json").read_text(encoding="utf-8"))
+            gates = {item["gate"] for item in bundle["states"][0]["gateFailures"]}
+            self.assertIn("vertical-drift-span", gates)
+            self.assertIn("vertical-anchor-jump", gates)
+            self.assertEqual(bundle["thresholds"]["minReliableGeometryAnchors"], 3)
 
     def test_review_bundle_applies_manifest_comparison_masks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

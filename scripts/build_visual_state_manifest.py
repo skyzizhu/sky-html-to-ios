@@ -17,6 +17,37 @@ CONTROL_SEMANTICS = {
 ASSET_SEMANTICS = {"icon", "image", "video"}
 
 
+def native_ownership_groups(screen: dict) -> dict[str, str]:
+    nodes = {str(node.get("id") or ""): node for node in screen.get("nodes") or []}
+    roots: dict[str, str] = {}
+    navigation = screen.get("navigation") or {}
+    if str(navigation.get("style") or "") == "native":
+        source_id = str(navigation.get("sourceNodeId") or "")
+        if source_id:
+            roots[source_id] = "system-navigation"
+    if screen.get("tabContainer"):
+        source_id = str((((screen.get("regions") or {}).get("bottomBar") or {}).get("nodeId")) or "")
+        if source_id:
+            roots[source_id] = "system-tab-bar"
+
+    groups: dict[str, str] = {}
+    for node_id, node in nodes.items():
+        current = node
+        visited: set[str] = set()
+        group = "content"
+        while current:
+            current_id = str(current.get("id") or "")
+            if current_id in visited:
+                break
+            visited.add(current_id)
+            if current_id in roots:
+                group = roots[current_id]
+                break
+            current = nodes.get(str(current.get("parentId") or ""))
+        groups[node_id] = group
+    return groups
+
+
 def build_form_checks(screen: dict) -> list[dict]:
     nodes = {str(node.get("id")): node for node in screen.get("nodes") or []}
     children: dict[str, list[str]] = {}
@@ -106,6 +137,7 @@ def numeric(value, default: float = 0.0) -> float:
 
 def build_geometry_nodes(screen: dict, active_state: dict | None = None) -> list[dict]:
     nodes = {str(node["id"]): node for node in screen.get("nodes") or []}
+    ownership_groups = native_ownership_groups(screen)
     active_state_id = str((active_state or {}).get("id") or "")
     removed_node_ids = {
         str(item.get("targetNodeId"))
@@ -148,6 +180,7 @@ def build_geometry_nodes(screen: dict, active_state: dict | None = None) -> list
             "hasChildren": child_counts.get(str(node["id"]), 0) > 0,
             "isDecorative": bool((node.get("content") or {}).get("isDecorative"))
                 or str(node.get("semanticType") or "") == "decoration",
+            "nativeOwnershipGroup": ownership_groups.get(str(node["id"]), "content"),
         }
         for node in screen.get("nodes") or []
         if initially_visible(node)
@@ -162,6 +195,7 @@ def build_validation_regions(
     screen_context: dict | None = None,
 ) -> list[dict]:
     nodes = {str(node["id"]): node for node in screen.get("nodes") or []}
+    ownership_groups = native_ownership_groups(screen)
     active_state_id = str((active_state or {}).get("id") or "")
     removed_node_ids = {
         str(item.get("targetNodeId"))
@@ -287,6 +321,7 @@ def build_validation_regions(
             "toleranceProfile": profile,
             "rect": rect,
             "geometryRect": geometry_rect,
+            "nativeOwnershipGroup": ownership_groups.get(str(node["id"]), "content"),
         })
     return regions
 

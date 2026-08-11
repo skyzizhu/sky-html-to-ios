@@ -2959,13 +2959,20 @@ def build_screen(
             top_bar_id = max(edge_candidates["top"])[1]
         if not bottom_bar_id and edge_candidates["bottom"]:
             bottom_bar_id = max(edge_candidates["bottom"])[1]
-    system_navigation_source_id = top_bar_id if navigation_style == "native" else None
+    system_navigation_source_id = (
+        str(navigation_source.get("sourceNodeId") or top_bar_id or "") or None
+        if navigation_style == "native"
+        else None
+    )
     system_tab_source_id = bottom_bar_id if tab_container else None
     system_navigation_content_spacing = 0.0
+    system_navigation_geometry = None
     if system_navigation_source_id:
         navigation_source_node = nodes.get(system_navigation_source_id) or {}
         navigation_source_rect = (navigation_source_node.get("layout") or {}).get("rect") or {}
-        navigation_bottom = number(navigation_source_rect.get("y")) + number(navigation_source_rect.get("height"))
+        navigation_top = number(navigation_source_rect.get("y"))
+        navigation_height = number(navigation_source_rect.get("height"))
+        navigation_bottom = navigation_top + navigation_height
         navigation_parent_id = str(navigation_source_node.get("parentId") or "")
         following_edges = []
         for candidate_id in children.get(navigation_parent_id) or []:
@@ -2983,6 +2990,19 @@ def build_screen(
                 following_edges.append(candidate_y)
         if following_edges:
             system_navigation_content_spacing = min(max(min(following_edges) - navigation_bottom, 0), 80)
+        system_navigation_geometry = {
+            "sourceNodeId": system_navigation_source_id,
+            "sourceFramePt": [
+                number(navigation_source_rect.get("x")),
+                navigation_top,
+                number(navigation_source_rect.get("width")),
+                navigation_height,
+            ],
+            "consumedTopChromeHeightPt": max(navigation_bottom - number(root_rect.get("y")), 0),
+            "retainedContentSpacingPt": system_navigation_content_spacing,
+            "contentAnchorPolicy": "system-safe-area-after-navigation",
+            "safeAreaOwner": "system",
+        }
     if navigation_style != "custom":
         top_bar_id = None
     if tab_container:
@@ -3234,6 +3254,7 @@ def build_screen(
         "showsNavigationBar": navigation_style == "native",
         "sourceStatusBarHeight": source_status_bar_anchor,
         "systemNavigationContentSpacing": system_navigation_content_spacing,
+        "systemNavigationGeometry": system_navigation_geometry,
         "safeArea": safe_area_payload,
         "contentContainer": {
             "nodeId": str(content_container.get("nodeId") or root_id),
@@ -3288,6 +3309,7 @@ struct HTMLToIOSScreenSpec: Codable, Identifiable {{
     let showsNavigationBar: Bool
     let sourceStatusBarHeight: Double?
     let systemNavigationContentSpacing: Double
+    let systemNavigationGeometry: HTMLToIOSSystemNavigationGeometrySpec?
     let safeArea: HTMLToIOSSafeAreaSpec
     let contentContainer: HTMLToIOSContentContainerSpec
     let navigation: HTMLToIOSNavigationSpec
@@ -3303,6 +3325,15 @@ struct HTMLToIOSScreenSpec: Codable, Identifiable {{
     let presentations: [HTMLToIOSPresentationSpec]
     let automaticActions: [HTMLToIOSActionSpec]
     let stateLayouts: [HTMLToIOSStateLayoutSpec]
+}}
+
+struct HTMLToIOSSystemNavigationGeometrySpec: Codable {{
+    let sourceNodeId: String
+    let sourceFramePt: [Double]
+    let consumedTopChromeHeightPt: Double
+    let retainedContentSpacingPt: Double
+    let contentAnchorPolicy: String
+    let safeAreaOwner: String
 }}
 
 struct HTMLToIOSStateLayoutSpec: Codable, Identifiable {{
@@ -5590,37 +5621,6 @@ struct HTMLToIOSNativeNodeView: View {
                 Text(trigger?.text ?? spec.text)
             }
             .disabled(!spec.isEnabled)
-        case "search-bar":
-            HStack(spacing: spec.controlConfig?.itemSpacing ?? 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: max((spec.style.fontSize ?? 16) * 0.75, 11), weight: .medium))
-                    .foregroundStyle(Color(htmlToIOS: spec.style.foreground).opacity(0.72))
-                    .accessibilityHidden(true)
-                TextField(
-                    "",
-                    text: store.binding(
-                        for: spec.id,
-                        initialValue: spec.textBehavior?.initialValue ?? spec.text,
-                        maxLength: spec.textBehavior?.maxLength
-                    ),
-                    prompt: inputPrompt
-                )
-                .textFieldStyle(.plain)
-                .multilineTextAlignment(.leading)
-                .keyboardType(htmlToIOSKeyboardType(spec.textBehavior?.keyboardType))
-                .textContentType(htmlToIOSTextContentType(spec.textBehavior?.contentType))
-                .submitLabel(htmlToIOSSubmitLabel(spec.textBehavior?.returnKey ?? spec.textBehavior?.submitLabel))
-                .modifier(HTMLToIOSInputPolicyModifier(behavior: spec.textBehavior))
-                .accessibilityIdentifier(spec.id)
-                .focused($isInputFocused)
-                .onSubmit { store.perform(spec.action) }
-                .onAppear {
-                    if spec.textBehavior?.autofocus == true { isInputFocused = true }
-                }
-                .allowsHitTesting(spec.textBehavior?.editable != false)
-                .disabled(!spec.isEnabled || spec.textBehavior?.enabled == false)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
         case "text-field", "input", "search-field", "text-input", "search-input", "number-input":
             HStack(spacing: spec.controlConfig?.options.isEmpty == false ? 4 : 0) {
                 TextField(
@@ -10745,6 +10745,7 @@ final class HTMLToIOSGeneratedCoordinator: NSObject, UITabBarControllerDelegate 
                     showsNavigationBar: false,
                     sourceStatusBarHeight: nil,
                     systemNavigationContentSpacing: 0,
+                    systemNavigationGeometry: nil,
                     safeArea: HTMLToIOSSafeAreaSpec(owner: "system", contentInsetAdjustment: "automatic", containerWidthPolicy: "full-parent-bounds", containerHeightPolicy: "full-parent-bounds", subtractFromContainerDimensions: false),
                     contentContainer: HTMLToIOSContentContainerSpec(nodeId: presentation.node.id, kind: "static-view", scrollAxis: "none", usesCellReuse: false),
                     navigation: HTMLToIOSNavigationSpec(style: "hidden", title: "", titleMode: "inline", scrollEdgeAppearance: "automatic", backButton: "system", appearance: nil, toolbarItems: []),
@@ -12761,6 +12762,7 @@ def build_native_structure_manifest(
                 "fillTint": config.get("fillTint") == appearance.get("fillTint"),
                 "trackTint": config.get("trackTint") == appearance.get("trackTint"),
                 "preferredStyle": str(config.get("preferredStyle") or "automatic") == str(behavior.get("preferredStyle") or "automatic"),
+                "requiresWrapper": bool(config.get("requiresWrapper")) == bool(behavior.get("requiresWrapper")),
                 "nativeStates": list(config.get("nativeStateNames") or []) == list(behavior.get("stateNames") or []),
                 "stateAppearances": (config.get("stateAppearances") or {}) == (planned.get("stateAppearances") or {}),
             }

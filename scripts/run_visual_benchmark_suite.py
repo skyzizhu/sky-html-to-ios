@@ -169,6 +169,30 @@ def summarize_case(
         sum(float(item.get("fidelityPercent") or 0) for item in required) / len(required)
         if required else None
     )
+    native_quality = native_quality_summary(case, case_dir, ui_stack)
+    def average_dimension(name: str) -> float | None:
+        values = [
+            float((item.get("dimensionScores") or {}).get(name))
+            for item in required
+            if (item.get("dimensionScores") or {}).get(name) is not None
+        ]
+        return round(sum(values) / len(values), 4) if values else None
+
+    native_checks = native_quality.get("checks") or []
+    quality_dimensions = {
+        "structure": average_dimension("structure"),
+        "geometry": average_dimension("geometry"),
+        "typography": average_dimension("typography"),
+        "appearance": average_dimension("appearance"),
+        "controlVisual": average_dimension("controlVisual"),
+        "controlSemantics": round(float(native_quality.get("systemControlRatio") or 0) * 100, 4),
+        "interaction": round(
+            100 * sum(item.get("status") != "missing" for item in required) / len(required), 4
+        ) if required else None,
+        "nativeArchitecture": round(
+            100 * sum(bool(item.get("passed")) for item in native_checks) / len(native_checks), 4
+        ) if native_checks else None,
+    }
     return {
         "id": case_id,
         "level": case.get("level"),
@@ -181,6 +205,7 @@ def summarize_case(
         "requiredStateCount": len(required),
         "missingRequiredStateCount": sum(item.get("status") == "missing" for item in required),
         "fidelityPercent": round(fidelity, 4) if fidelity is not None else None,
+        "qualityDimensions": quality_dimensions,
         "exactFidelityAchieved": bool(required) and all(item.get("exactPixelMatch") is True for item in required),
         "reviewBundles": bundles,
         "states": [
@@ -195,7 +220,7 @@ def summarize_case(
             }
             for item in required
         ],
-        "nativeQuality": native_quality_summary(case, case_dir, ui_stack),
+        "nativeQuality": native_quality,
     }
 
 

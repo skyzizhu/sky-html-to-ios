@@ -134,6 +134,11 @@ def main() -> int:
         category = str(region.get("category") or "")
         element_type = int(captured.get("elementType")) if captured.get("elementType") is not None else None
         definition = requested_geometry.get(node_id) or {}
+        ownership_group = str(
+            definition.get("nativeOwnershipGroup")
+            or region.get("nativeOwnershipGroup")
+            or "content"
+        )
         confidence = geometry_confidence(
             category,
             element_type,
@@ -145,6 +150,7 @@ def main() -> int:
             "semanticType": region.get("semanticType"),
             "elementType": element_type,
             "geometryConfidence": confidence,
+            "nativeOwnershipGroup": ownership_group,
             "verticalAggregationEligible": (
                 confidence in {"high", "medium"}
                 and horizontally_corresponds(expected_rect, actual_rect)
@@ -163,15 +169,16 @@ def main() -> int:
 
     comparisons.sort(key=lambda item: item["expectedRect"][1])
     reliable = [item for item in comparisons if item["verticalAggregationEligible"]]
-    y_deltas = [item["delta"]["y"] for item in reliable]
-    height_deltas = [item["delta"]["height"] for item in reliable]
-    third = max(len(reliable) // 3, 1)
+    vertical_reliable = [item for item in reliable if item.get("nativeOwnershipGroup") == "content"]
+    y_deltas = [item["delta"]["y"] for item in vertical_reliable]
+    height_deltas = [item["delta"]["height"] for item in vertical_reliable]
+    third = max(len(vertical_reliable) // 3, 1)
     bands = {
-        "top": reliable[:third],
-        "middle": reliable[third:third * 2],
-        "bottom": reliable[third * 2:],
+        "top": vertical_reliable[:third],
+        "middle": vertical_reliable[third:third * 2],
+        "bottom": vertical_reliable[third * 2:],
     }
-    rows = anchor_rows(comparisons)
+    rows = anchor_rows(vertical_reliable)
     transitions = []
     for previous, current in zip(rows, rows[1:]):
         previous_delta = previous.get("medianYDeltaPt")
@@ -192,6 +199,7 @@ def main() -> int:
         "capturedNodeCount": len(actual),
         "matchedNodeCount": len(comparisons),
         "reliableMatchedNodeCount": len(reliable),
+        "verticalAnchorNodeCount": len(vertical_reliable),
         "missingNodeIds": sorted(set(expected) - set(actual)),
         "geometryCaptureCoverage": {
             "requestedNodeCount": len(requested_geometry),
@@ -220,7 +228,7 @@ def main() -> int:
         "anchorRows": rows,
         "driftTransitions": transitions,
         "worstVerticalNodes": sorted(
-            reliable,
+            vertical_reliable,
             key=lambda item: item["verticalDiagnosticScore"],
             reverse=True,
         )[:12],

@@ -225,7 +225,11 @@ def node_contract(
     fit_status = "source-measured-no-fixed-system-baseline"
     if expected_size:
         fit_status = "system-intrinsic-compatible" if max(value or 0 for value in delta.values()) <= 8 else "wrapper-recommended"
-    existing_strategy = "system-control-with-wrapper" if decision.get("decision") == "system-control-with-wrapper" else "system-control"
+    requires_wrapper = (
+        decision.get("decision") == "system-control-with-wrapper"
+        or fit_status == "wrapper-recommended"
+    )
+    existing_strategy = "system-control-with-wrapper" if requires_wrapper else "system-control"
     child_nodes = [
         child for child in node_index.values()
         if str(child.get("parentId") or "") == str(node.get("id") or "")
@@ -299,6 +303,13 @@ def node_contract(
             "itemSpacingPt": max(number(style.get("gap")) * scale, 0),
             "preservesIntrinsicSize": bool(style.get("preservesIntrinsicWidth")) or semantic in {"switch", "toggle", "stepper", "date-input", "color-picker"},
         },
+        "visualAdaptation": {
+            "mode": "semantic-wrapper" if requires_wrapper else "native-control",
+            "sizingPolicy": "source-box-around-native-intrinsic" if requires_wrapper else "native-intrinsic-or-layout-contract",
+            "nativeOwns": ["interaction", "state-machine", "accessibility", "focus"],
+            "wrapperOwns": ["background", "border", "corner-radius", "shadow", "outer-size"] if requires_wrapper else [],
+            "preservesNativePrimitive": True,
+        },
         "appearance": appearance,
         "derivedConfiguration": derived_configuration,
         "stateAppearances": visual_states,
@@ -306,7 +317,7 @@ def node_contract(
             "preferredStyle": preferred_style(semantic, node),
             "stateNames": sorted(visual_states),
             "usesNativeStateMachine": True,
-            "requiresWrapper": decision.get("decision") == "system-control-with-wrapper",
+            "requiresWrapper": requires_wrapper,
         },
     }
 

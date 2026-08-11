@@ -19,6 +19,7 @@
 - `UISwitch`、`UIStepper`、`UIDatePicker`、`UIColorWell` 等优先保留系统固有尺寸，来源外框差异由布局容器或 wrapper 承担；
 - Button/Search/Input 的 content inset 写入系统 configuration 或文本容器，不用额外空白 Label 模拟；
 - wrapper 只能承载阴影、渐变、非对称装饰或外框布局，不能截获系统控件事件与无障碍语义。
+- 来源尺寸与系统固有尺寸明显不一致时，配置计划自动选择 `semantic-wrapper`：wrapper 拥有外框尺寸、背景、边框、圆角和阴影，内部系统控件继续拥有交互、焦点、状态机和无障碍。禁止仅为匹配外框尺寸把系统控件改造成普通 View。
 
 ## 状态规则
 

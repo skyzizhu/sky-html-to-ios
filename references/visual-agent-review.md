@@ -78,6 +78,8 @@ category 使用 viewport/safe-area、layout、typography、color、asset、shape
 
 通过是组合结论：构建成功、required states 齐全、关键交互可达、结构锚点正确、差异指标在项目阈值内、视觉 Agent 无 blocker/major 未解决项。
 
+确定性报告应同时输出结构、几何、文字、外观、控件内部视觉、交互状态覆盖和原生架构维度。节点几何至少有三个可靠纵向锚点时，`verticalDriftSpanPt` 与相邻锚点 `deltaChangePt` 必须进入质量门禁；这类累计偏移优先回查容器高度、border-box、逐项 gap 和导航消费契约，不用整页 offset 修补。
+
 文字抗锯齿、动态系统时间、透明 blur 和阴影允许更宽松阈值，但必须局部 mask 并记录理由。模型不得以“整体看起来接近”为由忽略按钮错位、文字换行、裁剪或关闭路径错误。
 
 ## 无多模态能力时

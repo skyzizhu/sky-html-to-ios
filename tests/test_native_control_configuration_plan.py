@@ -109,6 +109,8 @@ class NativeControlConfigurationPlanTests(unittest.TestCase):
             control = payload["screens"][0]["controls"][0]
             self.assertEqual(control["selection"]["semanticCandidate"], "switch")
             self.assertEqual(control["selection"]["finalDecision"], "system-control")
+            self.assertEqual(control["visualAdaptation"]["mode"], "native-control")
+            self.assertTrue(control["visualAdaptation"]["preservesNativePrimitive"])
             self.assertEqual(control["selection"]["geometryFit"]["boundedResolutionPasses"], 2)
             self.assertEqual(control["geometry"]["contentInsetsPt"], [2, 4, 2, 4])
             self.assertEqual(control["geometry"]["itemSpacingPt"], 6)
@@ -132,6 +134,31 @@ class NativeControlConfigurationPlanTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
             self.assertEqual(json.loads(validation.read_text(encoding="utf-8"))["status"], "passed")
+
+    def test_intrinsic_geometry_mismatch_uses_semantic_wrapper(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            ir = root / "ui-ir.json"
+            plan = root / "plan.json"
+            ir.write_text(json.dumps({
+                "target": {"scale": 1},
+                "screens": [{"id": "home", "nodes": [{
+                    "id": "home.switch", "semanticType": "switch",
+                    "layout": {"rect": {"width": 82, "height": 44}},
+                    "style": {"backgroundColor": "rgb(230, 232, 236)", "borderRadius": "22px"},
+                    "nativeMapping": {"nativeControlDecision": {"decision": "system-control"}},
+                }]}],
+            }), encoding="utf-8")
+            result = subprocess.run(
+                ["python3", str(BUILD), "--ir", str(ir), "--out", str(plan)],
+                text=True, capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            control = json.loads(plan.read_text(encoding="utf-8"))["screens"][0]["controls"][0]
+            self.assertEqual(control["strategy"], "system-control-with-wrapper")
+            self.assertTrue(control["behavior"]["requiresWrapper"])
+            self.assertEqual(control["visualAdaptation"]["mode"], "semantic-wrapper")
+            self.assertIn("outer-size", control["visualAdaptation"]["wrapperOwns"])
 
     def test_validator_rejects_invalid_insets_and_disabled_native_state_machine(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

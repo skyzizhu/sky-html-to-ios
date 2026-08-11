@@ -63,12 +63,15 @@ class VisualBenchmarkSuiteTests(unittest.TestCase):
                     "id": "initial", "required": True, "status": "failed-threshold",
                     "fidelityPercent": 91.25, "exactPixelMatch": False,
                     "report": {"mismatchRatio": 0.1, "meanAbsoluteDifference": 11, "simplePixelSimilarity": 0.95},
+                    "dimensionScores": {"geometry": 88.0, "typography": 92.0, "appearance": 95.0},
                 }],
             }), encoding="utf-8")
             summary = MODULE.summarize_case("fixture", case_dir)
             self.assertEqual(summary["fidelityPercent"], 91.25)
             self.assertEqual(summary["buildGate"], "passed")
             self.assertEqual(summary["requiredStateCount"], 1)
+            self.assertEqual(summary["qualityDimensions"]["geometry"], 88.0)
+            self.assertEqual(summary["qualityDimensions"]["appearance"], 95.0)
 
     def test_native_quality_is_reported_separately_from_visual_fidelity(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -800,6 +800,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "toggleMultiSelection(controlID:",
             ):
                 self.assertIn(expected, swiftui_runtime)
+            self.assertEqual(swiftui_runtime.count('case "search-bar":'), 1)
 
             uikit_dir = root / "uikit"
             self.run_generator([path], uikit_dir, ui_stack="uikit", control_configuration_plan=control_plan)
@@ -1243,7 +1244,14 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "titleMode": "large",
                 "scrollEdgeAppearance": "transparent",
                 "backButton": "system",
+                "sourceNodeId": "home.source-navigation",
             }
+            home_root = home["screens"][0]["nodes"][0]
+            source_navigation = node("home.source-navigation", home_root["id"], "navigation")
+            source_navigation["layout"]["rect"].update({"x": 0, "y": 44, "width": 393, "height": 58})
+            source_content = node("home.source-content", home_root["id"], "container")
+            source_content["layout"]["rect"].update({"x": 0, "y": 114, "width": 393, "height": 738})
+            home["screens"][0]["nodes"].extend([source_navigation, source_content])
             home["screens"][0]["tabContainer"] = {
                 "id": "main-tabs",
                 "initialTabId": "home-tab",
@@ -1265,6 +1273,12 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             generated = json.loads((swiftui_dir / PAYLOAD).read_text(encoding="utf-8"))
             self.assertEqual(generated["tabContainer"]["initialTabId"], "home-tab")
             self.assertEqual(generated["screens"][0]["navigation"]["titleMode"], "large")
+            navigation_geometry = generated["screens"][0]["systemNavigationGeometry"]
+            self.assertEqual(navigation_geometry["sourceNodeId"], "home.source-navigation")
+            self.assertEqual(navigation_geometry["consumedTopChromeHeightPt"], 102)
+            self.assertEqual(navigation_geometry["retainedContentSpacingPt"], 12)
+            self.assertEqual(generated["screens"][0]["systemNavigationContentSpacing"], 12)
+            self.assertIsNone(generated["screens"][0]["sourceStatusBarHeight"])
             self.assertFalse((swiftui_dir / "HTMLToIOSGeneratedRuntime.swift").exists())
             self.assertTrue((swiftui_dir / RUNTIME_FILE).is_file())
             self.assertTrue((swiftui_dir / MODELS_FILE).is_file())
@@ -2741,7 +2755,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.run_generator([path], swiftui_dir)
             swiftui_runtime = (swiftui_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn('case "search-bar":', swiftui_runtime)
-            self.assertIn('Image(systemName: "magnifyingglass")', swiftui_runtime)
+            self.assertEqual(swiftui_runtime.count('case "search-bar":'), 1)
+            self.assertIn("HTMLToIOSSearchBarRepresentable(", swiftui_runtime)
             self.assertIn('case "text-field", "input", "search-field", "text-input", "search-input", "number-input":', swiftui_runtime)
             self.assertIn("TextEditor(text:", swiftui_runtime)
             self.assertIn(".textFieldStyle(.plain)", swiftui_runtime)
