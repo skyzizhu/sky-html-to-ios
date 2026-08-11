@@ -203,6 +203,18 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertEqual(generated_root["style"]["columnSpacing"], 10)
             self.assertEqual(generated_root["contentItems"][1]["gapBefore"], 12)
 
+    def test_uikit_grid_rows_consume_source_cross_axis_alignment(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "grid.json"
+            source.write_text(json.dumps(ir("grid")), encoding="utf-8")
+            out_dir = root / "out"
+            self.run_generator([source], out_dir, ui_stack="uikit")
+            runtime = (out_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn('switch spec.style.alignItems {', runtime)
+            self.assertIn('case "center", "baseline": row.alignment =', runtime)
+            self.assertIn('default: row.alignment = .fill', runtime)
+
     def test_grid_auto_placement_preserves_source_order_when_items_have_different_y(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -23,7 +23,8 @@ SPEC.loader.exec_module(MODULE)
 class VisualBenchmarkSuiteTests(unittest.TestCase):
     def test_suite_has_distinct_mobile_ui_coverage(self) -> None:
         suite = MODULE.load_suite(SUITE)
-        self.assertEqual(len(suite["cases"]), 8)
+        self.assertEqual(len(suite["cases"]), 9)
+        self.assertIn("project-command-center", {item["id"] for item in suite["cases"]})
         self.assertEqual({item["level"] for item in suite["cases"]}, {1, 2, 3})
         coverage = {token for item in suite["cases"] for token in item["coverage"]}
         self.assertTrue({
@@ -31,6 +32,7 @@ class VisualBenchmarkSuiteTests(unittest.TestCase):
             "responsive-root", "native-navigation", "sheet", "state-deduplication",
             "editable-input", "readonly-input", "disabled-input", "datalist",
             "calendar-view", "paste-control", "multi-select", "secure-input",
+            "horizontal-collection", "asymmetric-corners", "nonuniform-layout",
         }.issubset(coverage))
 
     def test_fixture_authoring_contracts_are_valid(self) -> None:

@@ -1,5 +1,10 @@
 # Native Architecture Adjustment Plan
 
+> Historical design record. The implementation has been incorporated into
+> `six-layer-native-architecture.md`, `native-layout-lowering.md`, and the
+> executable validation contracts. Do not load this document during normal
+> Skill execution; retain it only for design-history review.
+
 ## 文档状态
 
 - 状态：已按兼容方式实施，旧字段暂保留为兼容镜像

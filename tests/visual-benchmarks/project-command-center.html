@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Project command center benchmark</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+    body { background: #dfe2e7; color: #191c22; }
+    button, input, select { font: inherit; }
+    .screen { position: relative; width: 393px; height: 852px; margin: 0 auto; overflow: hidden; background: #f5f5f3; }
+    .status { height: 54px; padding: 17px 22px 0; display: flex; justify-content: space-between; font-size: 14px; font-weight: 650; }
+    .nav { height: 52px; padding: 0 14px 8px; display: grid; grid-template-columns: 40px 1fr 40px; align-items: center; }
+    .nav h1 { margin: 0; text-align: center; font-size: 17px; line-height: 24px; }
+    .nav button { width: 36px; height: 36px; padding: 0; border: 0; color: #206152; background: transparent; font-size: 23px; }
+    .nav .more { justify-self: end; font-size: 19px; }
+    .content { height: calc(100% - 106px); overflow-y: auto; overflow-x: hidden; padding: 8px 16px 112px; }
+    .overview { padding: 18px; border: 1px solid #202c29; border-radius: 18px 10px 18px 10px; color: white; background: #263733; box-shadow: 0 9px 22px rgba(25,42,37,.16); }
+    .overview-head { display: flex; align-items: flex-start; justify-content: space-between; }
+    .eyebrow { color: #b7cbc5; font-size: 11px; line-height: 16px; }
+    .overview h2 { margin: 3px 0 0; font-size: 22px; line-height: 29px; }
+    .health { padding: 5px 9px; border-radius: 999px; color: #173b31; background: #9fe2c8; font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .stats { margin-top: 18px; display: grid; grid-template-columns: 1.1fr 1fr 1fr; }
+    .stat { min-width: 0; padding: 0 12px; border-left: 1px solid rgba(255,255,255,.15); }
+    .stat:first-child { padding-left: 0; border-left: 0; }
+    .stat b { display: block; font-size: 19px; line-height: 24px; }
+    .stat span { display: block; margin-top: 2px; color: #b7c4c0; font-size: 10px; line-height: 14px; white-space: nowrap; }
+    .mode { width: 100%; height: 36px; margin-top: 16px; padding: 3px; display: grid; grid-template-columns: repeat(3, 1fr); border-radius: 10px; background: #e7e8e4; }
+    .mode span { display: grid; place-items: center; color: #747b78; font-size: 12px; }
+    .mode .selected { border-radius: 8px; color: #1d2522; background: white; box-shadow: 0 1px 4px rgba(20,30,27,.12); font-weight: 650; }
+    .section-head { margin: 20px 2px 10px; display: flex; align-items: baseline; justify-content: space-between; }
+    .section-head h2 { margin: 0; font-size: 17px; line-height: 23px; }
+    .section-head button { padding: 0; border: 0; color: #337665; background: transparent; font-size: 12px; }
+    .milestones { margin: 0 -16px; padding: 0 16px 3px; display: flex; gap: 10px; overflow-x: auto; overflow-y: hidden; }
+    .milestone { flex: 0 0 146px; min-height: 108px; padding: 13px; border: 1px solid #dfe2dc; border-radius: 13px; background: white; }
+    .milestone-top { display: flex; align-items: center; justify-content: space-between; }
+    .date { color: #777e7b; font-size: 10px; white-space: nowrap; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: #e2a33b; }
+    .dot.green { background: #48a482; }
+    .dot.red { background: #dc695d; }
+    .milestone h3 { margin: 12px 0 5px; font-size: 14px; line-height: 19px; white-space: nowrap; }
+    .milestone p { margin: 0; color: #858b88; font-size: 10px; line-height: 14px; }
+    .list { overflow: hidden; border: 1px solid #dfe1dc; border-radius: 14px; background: white; }
+    .task { min-height: 70px; padding: 11px 13px; display: grid; grid-template-columns: 40px minmax(0,1fr) auto; align-items: center; gap: 11px; border-bottom: 1px solid #eceeea; }
+    .task:last-child { border-bottom: 0; }
+    .task-icon { width: 40px; aspect-ratio: 1; display: grid; place-items: center; border-radius: 10px; color: #275e50; background: #dceee8; font-size: 15px; font-weight: 750; }
+    .task-icon.amber { color: #805818; background: #f5e8c9; }
+    .task-icon.rose { color: #8a3f4a; background: #f4dfe2; }
+    .task-copy { min-width: 0; }
+    .task-copy h3 { margin: 0 0 4px; font-size: 14px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .task-copy p { margin: 0; color: #818784; font-size: 10px; line-height: 14px; white-space: nowrap; }
+    .tag { padding: 5px 8px; border-radius: 7px; color: #316a5b; background: #e4f2ed; font-size: 10px; font-weight: 700; white-space: nowrap; }
+    .tag.wait { color: #886020; background: #f8edd6; }
+    .settings { overflow: hidden; border: 1px solid #dfe1dc; border-radius: 14px; background: white; }
+    .setting { min-height: 58px; padding: 9px 13px; display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 12px; border-bottom: 1px solid #eceeea; }
+    .setting:last-child { border-bottom: 0; }
+    .setting label, .setting .label { font-size: 13px; font-weight: 600; }
+    .setting input[type="text"] { width: 158px; height: 36px; padding: 0 10px; border: 1px solid #d7dad4; border-radius: 9px; background: #fafbf9; font-size: 12px; }
+    .setting select { width: 128px; height: 36px; padding: 0 9px; border: 1px solid #d7dad4; border-radius: 9px; background: #fafbf9; color: #303633; font-size: 12px; }
+    .switch { position: relative; width: 48px; height: 29px; border-radius: 999px; background: #3a8d75; }
+    .switch::after { content: ""; position: absolute; top: 3px; right: 3px; width: 23px; height: 23px; border-radius: 50%; background: white; box-shadow: 0 1px 4px rgba(0,0,0,.22); }
+    .action-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 94px; padding: 11px 16px 27px; display: grid; grid-template-columns: 52px 1fr; gap: 10px; border-top: 1px solid #dedfdb; background: rgba(250,250,248,.98); }
+    .action-bar button { height: 50px; border-radius: 12px; font-size: 15px; font-weight: 700; }
+    .filter { border: 1px solid #d4d8d2; color: #38403d; background: white; font-size: 20px !important; }
+    .create { border: 0; color: white; background: #2f7562; }
+  </style>
+</head>
+<body>
+<main class="screen" data-ios-app-root="true" data-ios-screen="project-center" data-ios-screen-initial>
+  <div class="status"><span>9:41</span><span>● ◒ ▰</span></div>
+  <header class="nav" data-ios-title-mode="inline">
+    <button aria-label="返回" data-ios-action="pop">‹</button><h1>项目指挥台</h1><button class="more" aria-label="更多">•••</button>
+  </header>
+  <section class="content" data-ios-scroll-root="vertical">
+    <article class="overview">
+      <div class="overview-head"><div><span class="eyebrow">本周交付进度</span><h2>移动端焕新计划</h2></div><span class="health">进展稳定</span></div>
+      <div class="stats"><div class="stat"><b>68%</b><span>整体完成度</span></div><div class="stat"><b>12</b><span>待处理任务</span></div><div class="stat"><b>3 天</b><span>距离评审</span></div></div>
+    </article>
+    <div class="mode" data-ios-component="segmented-control"><span>概览</span><span class="selected">任务</span><span>文件</span></div>
+    <div class="section-head"><h2>关键节点</h2><button>查看日历</button></div>
+    <div class="milestones" data-ios-component="collection" data-ios-scroll-axis="horizontal">
+      <article class="milestone"><div class="milestone-top"><span class="date">8 月 12 日</span><i class="dot green"></i></div><h3>交互方案冻结</h3><p>产品 · 设计 · iOS</p></article>
+      <article class="milestone"><div class="milestone-top"><span class="date">8 月 15 日</span><i class="dot"></i></div><h3>开发联调</h3><p>接口与页面状态验收</p></article>
+      <article class="milestone"><div class="milestone-top"><span class="date">8 月 18 日</span><i class="dot red"></i></div><h3>灰度发布</h3><p>覆盖 10% 内部用户</p></article>
+    </div>
+    <div class="section-head"><h2>今日任务</h2><button>全部 12 项</button></div>
+    <section class="list" data-ios-component="table">
+      <article class="task"><div class="task-icon">UI</div><div class="task-copy"><h3>核对首页卡片间距</h3><p>设计验收 · 14:30</p></div><span class="tag">进行中</span></article>
+      <article class="task"><div class="task-icon amber">API</div><div class="task-copy"><h3>补齐搜索空状态接口</h3><p>服务端联调 · 今天</p></div><span class="tag wait">待联调</span></article>
+      <article class="task"><div class="task-icon rose">QA</div><div class="task-copy"><h3>回归登录与权限流程</h3><p>测试任务 · 明天</p></div><span class="tag">已排期</span></article>
+    </section>
+    <div class="section-head"><h2>快速设置</h2><button>恢复默认</button></div>
+    <section class="settings">
+      <div class="setting"><label for="owner">负责人</label><input id="owner" type="text" value="林知夏"></div>
+      <div class="setting"><label for="priority">任务优先级</label><select id="priority"><option selected>高优先级</option><option>普通</option><option>低优先级</option></select></div>
+      <div class="setting"><span class="label">风险提醒</span><div class="switch" role="switch" aria-checked="true"></div></div>
+    </section>
+  </section>
+  <footer class="action-bar" data-ios-region="bottom-bar"><button class="filter" aria-label="筛选">≡</button><button class="create">新建任务</button></footer>
+</main>
+</body>
+</html>

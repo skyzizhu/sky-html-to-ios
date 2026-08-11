@@ -9064,7 +9064,12 @@ final class HTMLToIOSNodeRenderer {
         for start in stride(from: 0, to: itemCount, by: columns) {
             let row = UIStackView()
             row.axis = .horizontal
-            row.alignment = .fill
+            switch spec.style.alignItems {
+            case "start", "flex-start", "top": row.alignment = .top
+            case "end", "flex-end", "bottom": row.alignment = .bottom
+            case "center", "baseline": row.alignment = spec.style.alignItems == "baseline" ? .firstBaseline : .center
+            default: row.alignment = .fill
+            }
             row.distribution = .fillEqually
             if trackWidths.contains(where: { $0 != nil }) { row.distribution = .fill }
             row.spacing = spec.style.columnSpacing ?? spec.style.spacing ?? 0

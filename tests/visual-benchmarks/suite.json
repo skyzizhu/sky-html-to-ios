@@ -101,6 +101,20 @@
         "minimumSystemControlRatio": 1.0,
         "maximumCustomControlCount": 0
       }
+    },
+    {
+      "id": "project-command-center",
+      "html": "project-command-center.html",
+      "level": 3,
+      "coverage": ["native-inline-navigation", "fixed-action-bar", "vertical-scroll", "horizontal-collection", "table-view", "square-icons", "segmented-control", "text-field", "select", "switch", "asymmetric-corners", "nonuniform-layout"],
+      "expectedNative": {
+        "navigationBarRendering": "native",
+        "navigationTitleMode": "inline",
+        "requiredUIKitControls": ["UISegmentedControl", "UITextField", "UISwitch", "UIButton"],
+        "requiredSwiftUIControls": ["Picker", "TextField", "Toggle", "Button"],
+        "minimumSystemControlRatio": 0.8,
+        "maximumCustomControlCount": 4
+      }
     }
   ]
 }

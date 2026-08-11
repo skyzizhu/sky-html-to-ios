@@ -224,9 +224,10 @@ def grid_item_contract(style: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def edges(values: Any) -> list[float]:
+def edges(values: Any, *, preserve_sign: bool = False) -> list[float]:
     source = values if isinstance(values, list) else []
-    return [max(number(source[index]) if index < len(source) else 0, 0) for index in range(4)]
+    parsed = [number(source[index]) if index < len(source) else 0 for index in range(4)]
+    return parsed if preserve_sign else [max(value, 0) for value in parsed]
 
 
 def edge_strings(values: Any, default: str) -> list[str]:
@@ -856,7 +857,10 @@ def build_screen(
         measured = rect(node)
         padding = edges(style.get("padding"))
         border = edges(style.get("borderWidths"))
-        margin = edges(style.get("margin"))
+        # Negative margins are authored layout evidence. They commonly let a
+        # carousel or separator escape a padded parent and must survive into
+        # native lowering; padding and border widths remain non-negative.
+        margin = edges(style.get("margin"), preserve_sign=True)
         horizontal_insets = padding[1] + padding[3] + border[1] + border[3]
         vertical_insets = padding[0] + padding[2] + border[0] + border[2]
         box_sizing = str(style.get("boxSizing") or "content-box")

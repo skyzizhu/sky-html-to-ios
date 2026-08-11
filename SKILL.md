@@ -1,11 +1,33 @@
 ---
 name: sky-html-to-ios
-description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换为可编译、可维护的 iOS 原生页面。适用于把网页原型还原为 SwiftUI 或 Swift UIKit，接入现有 Xcode 工程，并复刻布局、样式、资源、导航与基础交互。核心流程必须通过浏览器读取真实计算样式、几何、DOM 与脚本行为，生成 UI IR 和原生代码；构建是基础验证，截图、像素对比、多模态走查和自动纠偏仅是可选的验收兜底，不得作为转换能力或 Agent 多模态能力的前提。不要用于 WKWebView 包装或仅凭截图生成页面。
+description: 将本地或可运行的移动端 HTML/CSS/JavaScript 高保真原型转换为可编译、可维护的 SwiftUI 或 UIKit 原生 iOS 页面，并可接入现有 Xcode 工程。用户明确要求把网页原型、HTML 页面或前端交互复刻为原生 iOS UI 时使用。转换以浏览器计算样式、DOM、几何和脚本行为为输入，截图仅用于可选验收。不要用于仅有截图的 image-to-code、普通 Web 前端实现、WKWebView 包装、与 HTML 转换无关的 iOS 开发，或 Android、Flutter、React Native 输出。
 ---
 
 # HTML to iOS Native
 
 将可运行的移动端 HTML/CSS/JavaScript 原型转换为真实 iOS 原生页面。核心任务是结构化读取网页布局、样式和行为并生成合理的原生 UI；视觉验证是生成后的可选兜底，不是输入方式或转换引擎。
+
+## 调用边界
+
+仅在以下条件同时成立时调用：
+
+- 输入包含可访问、可运行的 HTML 页面或其 CSS/JavaScript/本地资源；静态截图可以作为验收参考，但不能是唯一结构输入。
+- 目标明确是 SwiftUI 或 UIKit 原生 iOS 页面、组件或 Xcode 工程接入。
+- 用户期望保留页面结构、布局、样式、系统控件、导航、弹层或基础交互，而不是用 Web 容器承载原页面。
+
+以下任务不要调用：
+
+- 只有截图、设计稿图片或自然语言描述，没有可运行 HTML；应使用截图转代码或产品设计能力。
+- 创建、修改或克隆 Web 前端，或仅审查 HTML/CSS/JS。
+- 使用 `WKWebView` 包装网页，生成 Android、Flutter、React Native、桌面端或后端代码。
+- 修改一个与 HTML 来源无关的既有 Swift/SwiftUI/UIKit 页面。
+- 只提取设计 Token、编写 PRD、做 UX 审查或比较两张图片。
+
+歧义输入按以下规则处理：
+
+- HTML 同时支持桌面和移动端但没有独立手机画板时，先用响应式探针确认存在稳定移动布局；存在则按目标 iPhone viewport 转换，不存在或页面根不唯一时再询问移动范围。
+- HTML 与截图同时提供时，以 HTML 实际渲染事实驱动转换，以截图做可选验收，不能反过来凭截图覆盖 DOM/CSS 证据。
+- 只有线上 URL 时，必须能够稳定加载页面和必要资源；登录、跨域或动态内容阻断提取时返回 `needs-input`，不退化成截图猜测。
 
 ## 核心原则
 
@@ -57,32 +79,20 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 46. 控件选择分为语义候选、上下文角色、系统候选、几何适配和最终决策。几何适配最多进行两轮有界解析；保留系统语义的 wrapper 不得改变控件的交互、状态机和无障碍所有权。
 47. `native-appearance-plan.json` 负责节点外观，文字占位尺寸仍由 `native-layout-plan.json` 负责；`native-interaction-motion-plan.json` 负责每个动作和动画的唯一 owner 与 executor。生成器必须消费这些计划并在结构清单中记录哈希与消费状态。
 48. 总控先原子化写入 canonical orchestration report，再向 stdout 输出摘要。stdout/日志消费者提前关闭导致的 `BrokenPipeError` 只能停止终端输出，禁止把已通过的转换和构建状态覆盖成 failed。
-49. CSS padding 在原生层只能有一个 owner：普通容器由 Stack layout margins 消费；复合 `UIControl` 若 wrapper 已用边缘约束 inset 内容 Stack，内层 Stack 不得再次应用同一 padding。生成后出现图标/文字宽高被压成零属于硬失败。
-50. 节点外观与系统控件状态外观必须使用独立契约和变量。控件 tint/track/thumb 等配置不得覆盖节点的背景、渐变、圆角、边框、阴影或 `clipsDescendants`；渐变控件有圆角且来源 overflow hidden/clip 时，渐变层必须随节点圆角裁剪。
-51. 圆角背景/渐变与外阴影分层渲染：宿主 CALayer 保留阴影可见，背景资源或 `CAGradientLayer` 自身应用统一 corner radius 或逐角 mask。不得通过关闭全部裁剪留下矩形渐变，也不得裁剪宿主层吞掉外阴影。
-52. 控件 normal/pressed/selected/disabled 状态新建的渐变层必须继承节点基础渐变的圆角和逐角 mask；状态切换不得用矩形状态层覆盖已经正确的圆角背景。
-53. CSS 四角半径在原生 lowering 前必须执行重叠圆角缩减算法。`999px` 等胶囊写法按最终盒子宽高归一化，不能把超大半径原值直接交给 `CALayer`。
-54. 父级系统控件的状态前景色只归父控件所有，不得递归覆盖具有独立计算色或富文本 run 的子节点。UIKit 渐变背景文字使用背景宿主层，富文本颜色在样式与状态安装完成后按节点所有权恢复。
-55. 横向复合内容的单行判定同时使用浏览器实测槽位高度、字体行高和 `white-space`。单行文字保留 intrinsic size 与抗压缩优先级，不把一次测量宽度写成硬约束；`normal/flex-start` 的剩余宽度由尾部弹性槽吸收，不能拉伸文字并把相邻徽标推到末端。
-56. 固定画板按 cover 归一化时必须保存 Visual Root 的上下/左右裁切量。viewport-fixed 顶栏、底栏和浮层按对应裁切量补偿锚点；视觉验证区域也必须使用 Visual Root 浏览器坐标，不能使用 Content Root 相对坐标。
-57. 文字视觉行必须按字符 Range 的垂直重叠归并。光标、下划线、徽标背景和不同字号 inline fragment 不得单独制造新行；只有固定画板且逐行文字与完整渲染文本校验一致时，才把浏览器软换行固化到原生富文本，响应式来源继续由 Auto Layout 在运行宽度重排。
-58. `native-layout-plan.json` 的间距字段 `gapPt`、`rowGapPt`、`columnGapPt` 和 `gapBeforePt` 必须统一为目标 iOS 点值：浏览器实测矩形差值直接使用，来源 CSS px 在计划层只换算一次。生成器及结构消费门禁必须按原值消费，禁止再次乘 `designScale`，避免纵向和横向间距逐段累计漂移。
-59. 已成功提取并接入的来源 SVG/图片拥有图标外观的唯一所有权，此时不得同时生成近似 SF Symbol 作为静默运行时替代。SF Symbol 只用于无来源资源且轮廓、粗细、填充和语义通过适配门禁的节点；源资源接入失败必须显式失败或降级报告。
-60. NavigationBar 与 App 级 TabBar 必须执行 system-first 视觉适配门禁。页面顶部出现返回按钮或页面级操作按钮时，默认直接映射为系统 NavigationBar 的 back/leading/trailing/primary item；标准标题、返回、少量 toolbar item 和稳定主 Tab 默认映射为 `NavigationStack`/`UINavigationController` 与 `TabView`/`UITabBarController`。HTML 的自绘声明只描述来源实现，不能单独迫使原生端自绘。只有页面没有导航语义，或搜索、多行复杂内容、异形/品牌背景、系统栏无法表达的布局及显式 `data-ios-force-custom-navigation|tab-bar=true` 才允许隐藏或自定义。系统容器接管后，来源栏及全部后代必须从页面内容树剥离，并在原生消费清单中记录 `system-chrome-merged`，禁止双栏和重复 Safe Area。
-61. 对齐与间距必须先归一化再由两套原生栈共同消费。`flex-start/start/left/top`、`flex-end/end/right/bottom`、center、baseline、stretch 按容器轴映射，文本 `text-align` 不得覆盖父容器交叉轴对齐。每个相邻子项保存 signed 实测 border-box gap、CSS gap、前项尾 margin、当前项首 margin、残差和 fixed/flexible/overlap 模式；实测间距是首次生成的权威值，margin 只消费一次，`space-between/around/evenly` 不得退化成等量固定空白 View。
-62. 系统 NavigationBar 接管后，系统 Safe Area 与状态栏 inset 是唯一顶部系统空间；不得继续叠加 HTML 模拟状态栏高度。来源导航栏底边到首个业务内容节点的实测间距可以保留为 `systemNavigationContentSpacing`，但不得包含已由系统栏消费的高度。宽容器填充、轴向对齐和 authored `aspect-ratio` 必须进入 UIKit/SwiftUI 共同的运行时能力门禁。
-63. 节点 `widthFraction` 必须相对直接父容器的内容宽度计算，不得相对整屏计算；接近父宽的普通流节点映射为父级填充，absolute/fixed、Overlay、横向滚动 item、动画节点和紧凑文字继续保留各自尺寸语义。只有一个直接文本/图标槽且无子 View 的 CSS Grid 是单槽对齐容器，SwiftUI 使用填满父级的 Stack/ZStack，禁止为了 `display:grid` 生成会按内容收缩的 Lazy Grid。
-64. 固定 border-box 只约束外框，不代表内部内容居中。盒内水平/垂直位置必须按容器 axis 联合消费 `justify-content`、`align-items`、Grid `justify-items`、文字 `text-align` 与复合槽位角色；可伸展文字槽必须在自身分配宽度内保持来源对齐。Screen Root 的实测高度只用于几何验收，Payload 必须清除根 `fixedHeight`，由内容 intrinsic height、Scroll owner 与 Screen Container 上界共同决定，禁止因 SwiftUI `.frame` 默认居中造成整页纵向漂移。
-65. JavaScript/CSS 状态切换造成的 width/height、滚动轴或内容变化必须从隔离浏览器 probe 的 before/after 证据生成可逆 State Variant，不能只切换无视觉消费方的布尔标记。若页面 Content Root 位于被裁出原生树的 HTML Scroll 祖先内，Scroll ownership 必须转交给 Screen Root；展开后的屏外控件由同一原生 Scroll owner 负责到达。Sheet/Popover/Overlay 的原生宿主必须暴露来源面板节点 ID，并保留内部状态 ID 防重入，使交互、无障碍与视觉验收共享同一身份契约。
-66. HTML 中带点击行为的 `span`、`div`、图片或组合文本即使视觉语义不是按钮，也必须由原生事件宿主承担点击，显示子视图不得截获触摸；原生控件、输入控件和滚动容器仍保留自身事件语义。弹层触发器的 anchor rect 与弹层自身 panel rect 必须分开保存：系统 popover 使用 anchor rect，自定义 overlay/popover 使用 panel rect 布局，禁止用触发器尺寸压缩弹层内容。
-67. 每个线性容器必须在 `native-layout-plan.json` 中形成唯一的 `geometrySystem`：先解析父内容盒，再测量 intrinsic 子项、解析父相对尺寸、分配主轴剩余空间，最后处理交叉轴对齐。`equal-share` 只允许来自相等正 `flex-grow`、相等父相对比例，或无固定宽度且实测等宽并完整占满内容盒的强证据；显式固定宽度和 intrinsic 混排不得因为节点重复或尺寸碰巧接近而均分。SwiftUI/UIKit 必须消费同一分配结果，禁止运行时根据子 View 数量重新猜测 `.fillEqually`。
-68. 一个滚动轴只能有一个原生 owner。来源主滚动节点已经 lowering 为 `ScrollView`/`UIScrollView` 时，Screen Container 禁止再次包装同轴外层 Scroll；根内容必须占满可用高度，滚动节点以 flexible/parent-relative 主轴策略接收固定导航、搜索栏或工具栏之外的剩余空间。只有 Screen Root 本身拥有滚动轴时才由 Screen Container 提供外层 Scroll。
-69. 控件内部状态配置必须在 `native-control-configuration-plan.json` 中归一化。开关 thumb、分页点数量/当前项/选中与未选中颜色、分段选中项等可由直接子节点和通用 selected/active/checked/current 证据推导；基础 appearance 与 normal/selected/checked 状态 appearance 必须同步，禁止初始化正确后又被状态机旧值覆盖。
-70. Skill 回归使用 L1 控件、L2 完整页面、L3 状态与弹层的固定 HTML 基准。每个案例分别检查构建、原生结构、系统控件比例/必需 Primitive 和视觉保真度；像素分数提升不得以降低原生架构合理性为代价，单个案例定向补丁不得进入通用转换规则。
-71. 系统导航标题模式必须由显式契约或来源几何决定。`data-ios-title-mode` 优先；否则大字号且靠 leading 的页面标题映射 large title，居中紧凑标题、返回栏标题映射 inline，并把字号、中心偏差和 leading 证据写入 `renderingDecision`。禁止在无显式契约时把所有页面统一写死为 inline 或 large。
-72. 系统控件必须同时消费语义和有界几何。计算布局已经证明控件固定宽高时，即使 CSS 未直接声明 `width/height`，原生控件或 wrapper 仍消费该尺寸，禁止被父 Stack 任意拉伸。Slider 等系统控件允许通过官方 tint、thumb image 和保留系统事件/无障碍的轻量子类适配来源内部尺寸；不得为视觉微调重写完整手势或状态机。
-73. 系统导航替换来源顶部栏时必须输出可审计的几何契约：`sourceNodeId`、来源 frame、已由系统消费的顶部 chrome 高度、仍需保留的首个业务内容间距、Safe Area owner 与内容锚点策略。状态栏和来源导航高度不得再次加到内容 inset；只有来源导航底部到首个业务节点之间的真实间距可以保留。
-74. 视觉质量必须分维度报告结构、几何、文字、外观、控件内部视觉、交互状态覆盖和原生架构，不得用单一像素总分掩盖结构错误。节点几何存在至少三个可靠纵向锚点时，必须检查 `verticalDriftSpanPt` 和相邻 `driftTransitions`；累计漂移或局部锚点跳变越界属于确定性门禁失败。
+49. NavigationBar 与 App 级 TabBar 必须执行 system-first 视觉适配门禁。页面顶部出现返回按钮或页面级操作按钮时，默认映射为系统 NavigationBar；标准主 Tab 默认映射为 `TabView`/`UITabBarController`。只有缺少导航语义、系统容器无法表达来源布局或存在显式强制契约时才允许隐藏或自定义。系统容器接管后必须移除来源栏后代，禁止双栏和重复 Safe Area。
+50. 对齐、间距和负 margin 必须先归一化再由两套原生栈共同消费。实测 border-box 间距是首次生成的权威值，margin 只能消费一次，`space-between/around/evenly` 不得退化成固定空白；负 margin 必须保留以表达 full-bleed 等父级 padding 抵消关系。
+51. 系统 NavigationBar 接管后，系统 Safe Area 与状态栏 inset 是唯一顶部系统空间；只保留来源导航栏底边到首个业务内容节点的真实间距。宽容器填充、轴向对齐和 authored `aspect-ratio` 必须进入 UIKit/SwiftUI 共同门禁。
+52. 节点 `widthFraction` 必须相对直接父内容盒计算；接近父宽的普通流节点映射为填充，absolute/fixed、Overlay、横向 item、动画和紧凑文字保留各自尺寸语义。
+53. 固定 border-box 只约束外框。盒内位置必须联合消费容器 axis、`justify-content`、`align-items`、Grid 对齐和文字对齐；Screen Root 高度只用于验收，不得固化为导致整页漂移的运行时 frame。
+54. JavaScript/CSS 状态变化必须由隔离 probe 的 before/after 证据生成可逆 State Variant；Sheet/Popover/Overlay 必须保留来源 panel 与内部状态身份，交给唯一 Scroll 或 Presentation owner。
+55. HTML 中带点击行为的非按钮元素也必须由原生事件宿主承担点击。Popover 的触发器 anchor 与 panel rect 分开保存，禁止用触发器尺寸压缩弹层。
+56. 每个线性容器只有一份 `geometrySystem`，按父内容盒、intrinsic 子项、父相对尺寸、剩余空间和交叉轴对齐顺序求解；`equal-share` 只来自明确强证据，两套生成器不得重新猜测。
+57. 一个滚动轴只能有一个原生 owner；嵌套横向集合只拥有横轴，不得让 Screen Container 再包装同轴 Scroll。
+58. 控件内部 normal/selected/checked 等状态配置必须在 `native-control-configuration-plan.json` 中归一化并由两套生成器共同消费。
+59. 回归使用 L1 控件、L2 完整页面和 L3 状态/弹层基准，同时检查构建、结构、原生控件比例和分维度视觉质量；不得为了单例像素分数牺牲原生架构。
+60. 系统导航标题模式由显式契约或来源几何决定，不能全局写死；系统控件同时消费语义和有界几何，视觉适配不得重写系统状态机。
+61. 系统导航替换来源顶部栏时必须输出来源 frame、已消费 chrome 高度、保留内容间距、Safe Area owner 和锚点策略，禁止重复 inset。
+62. 视觉质量必须分维度报告结构、几何、文字、外观、控件内部视觉、交互状态覆盖和原生架构；可靠纵向锚点必须检查累计漂移与局部跳变。
 
 ## 支持范围
 
@@ -304,7 +314,7 @@ python3 "$SKILL_ROOT/scripts/build_ui_ir.py" render-tree.json \
 
 ### 6. 规划原生结构
 
-读取 `references/native-architecture-adjustment-plan.md`、`references/six-layer-native-architecture.md`、`references/common-mapping-rules.md`、`references/control-mapping-matrix.md`、`references/native-control-selection-policy.md`、`references/native-component-catalog.md`、`references/interaction-rules.md`、`references/navigation-presentation-containment.md`、`references/page-regions-and-system-chrome.md`、`references/custom-component-fallback.md`、`references/motion-and-effects.md`、`references/edge-case-policy.md`、`references/multi-page-routing.md`、`references/project-component-discovery.md`、`references/text-calibration.md`、`references/form-and-dynamic-data.md` 和 `references/responsive-auto-layout.md`，再按技术栈读取：
+固定读取 `references/six-layer-native-architecture.md`、`references/common-mapping-rules.md`、`references/control-mapping-matrix.md` 和 `references/native-control-selection-policy.md`。其余专项资料按已发现能力加载：有路由或弹层时读取 `interaction-rules.md`、`navigation-presentation-containment.md` 与 `multi-page-routing.md`；有自定义控件候选时读取 `native-component-catalog.md` 与 `custom-component-fallback.md`；有动画时读取 `motion-and-effects.md`；有输入和展示文本时读取 `text-calibration.md` 与 `form-and-dynamic-data.md`；有响应式、系统区域或边界降级时读取对应专项文档。不要为一个不含相关能力的页面一次性加载全部 references。再按技术栈读取：
 
 - SwiftUI：`references/swiftui-rules.md`
 - UIKit：`references/uikit-rules.md`

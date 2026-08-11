@@ -120,6 +120,23 @@ class NativeStructureManifestTests(unittest.TestCase):
             self.fail(result.stderr or result.stdout)
         return result
 
+    def test_native_layout_preserves_negative_margins_for_full_bleed_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = make_ir("uikit")
+            full_bleed = next(
+                item for item in payload["screens"][0]["nodes"]
+                if item["id"] == "home.filters"
+            )
+            full_bleed["style"]["margin"] = ["0px", "-16px", "0px", "-16px"]
+            _, _, native_layout_path, _, _ = self.build_chain(root, "uikit", payload=payload)
+            layout = json.loads(native_layout_path.read_text(encoding="utf-8"))
+            planned = next(
+                item for item in layout["screens"][0]["nodes"]
+                if item["nodeId"] == "home.filters"
+            )
+            self.assertEqual(planned["boxModel"]["marginPt"], [0, -16, 0, -16])
+
     def build_chain(
         self,
         root: Path,
