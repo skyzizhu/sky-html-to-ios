@@ -464,6 +464,7 @@ SYSTEM_CONTROL_SEMANTICS = {
     "button", "icon-button", "link", "text-input", "secure-input", "search-input",
     "number-input", "date-input", "text-area", "file-input", "switch",
     "segmented-control", "select", "wheel-picker", "slider", "stepper", "color-picker", "progress",
+    "multi-select",
     "activity-indicator", "page-control", "paste-control", "refresh-control", "calendar-view", "search-bar",
     "disclosure", "disclosure-trigger", "menu-item", "tab-item", "alert", "sheet",
     "modal", "menu", "loading", "video", "map",
@@ -476,7 +477,7 @@ SYSTEM_CONTAINER_SEMANTICS = {
     "navigation", "navigation-bar", "tab-bar", "tab-control",
 }
 NATIVE_COMPOSITION_SEMANTICS = {
-    "checkbox", "radio", "radio-group", "multi-select", "meter", "toast", "overlay",
+    "checkbox", "radio", "radio-group", "meter", "toast", "overlay",
 }
 
 
@@ -1209,6 +1210,17 @@ def visual_states(root: dict, interactions: list[dict], motions: list[dict]) -> 
         if interaction.get("automatic") or not interaction.get("sourceNodeId") or (interaction.get("sourceVisibleInitially") is False and len(sequence) == 1):
             continue
         if interaction.get("action") not in state_actions:
+            continue
+        transition_targets = [
+            item.get("targetStateId") or item.get("targetScreenId") or item.get("target")
+            for item in ((interaction.get("payload") or {}).get("transitions") or [])
+        ]
+        if interaction.get("action") == "toggle-state" and not (
+            interaction.get("target") or any(transition_targets)
+        ):
+            # Native controls such as checkbox/radio own their local selected
+            # state. Without a target State Variant there is no page-level
+            # state to capture or replay as a separate screen checkpoint.
             continue
         states.append({
             "id": slug(f"after-{interaction['id']}"),

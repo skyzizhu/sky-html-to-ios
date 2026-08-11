@@ -784,6 +784,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "ProgressView(",
                 "HTMLToIOSCheckboxToggleStyle",
                 "HTMLToIOSRadioToggleStyle",
+                "DisclosureGroup(",
                 "Toggle(",
                 "HTMLToIOSSearchBarRepresentable(",
                 ".pickerStyle(.wheel)",
@@ -795,12 +796,16 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "HTMLToIOSNativeIntrinsicSizeModifier",
                 "nativeControlAppearance",
                 "inputSuggestionMenu",
+                "multiSelectionTitle(controlID:",
+                "toggleMultiSelection(controlID:",
             ):
                 self.assertIn(expected, swiftui_runtime)
 
             uikit_dir = root / "uikit"
             self.run_generator([path], uikit_dir, ui_stack="uikit", control_configuration_plan=control_plan)
             uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
+            self.assertIn("formatter.timeZone = .current", uikit_runtime)
+            self.assertNotIn("formatter.timeZone = TimeZone(secondsFromGMT: 0)", uikit_runtime)
             for expected in (
                 "HTMLToIOSMeasuredSlider()",
                 "override func thumbRect(forBounds bounds:",
@@ -812,6 +817,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "UIProgressView(progressViewStyle:",
                 "UIMenu(children:",
                 'spec.semantic == "radio" ? "circle" : "square"',
+                'button.accessibilityValue = body.isHidden ? "collapsed" : "expanded"',
                 "UISwitch()",
                 "UISearchTextField()",
                 "UISearchBar(frame: .zero)",
@@ -826,6 +832,12 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "segmented.selectedSegmentTintColor",
                 "attributes: option.enabled == false ? .disabled : []",
                 "state.values[spec.id] = option.value ?? option.id",
+                "initiallySelectedTitles",
+                "button.accessibilityIdentifier = spec.id",
+                "button?.setTitle(renderedTitle, for: .normal)",
+                "button?.accessibilityValue = renderedTitle",
+                "if let accessibilityLabel = spec.accessibilityLabel",
+                "styledView.accessibilityIdentifier = spec.id",
                 "configureSuggestions(field, spec: spec)",
                 "field.rightViewMode = .always",
                 "pageControl.currentPageIndicatorTintColor",
@@ -2170,6 +2182,33 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertEqual(generated_row["semantic"], "text")
             self.assertEqual(generated_row["children"], [])
             self.assertEqual([run["text"] for run in generated_row["richTextRuns"]], ["建议：", "Suggested copy"])
+
+    def test_label_with_interactive_control_is_not_flattened_to_rich_text(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = ir("home")
+            root_node = payload["screens"][0]["nodes"][0]
+            label = node("home.notice-label", root_node["id"], "label", "站内")
+            label["layout"]["mode"] = "flex-row"
+            checkbox = node("home.notice-checkbox", label["id"], "checkbox")
+            checkbox["interactionRefs"] = ["home.notice-checkbox.change"]
+            label["content"]["runs"] = [
+                {"kind": "node", "text": "", "nodeId": checkbox["id"]},
+                {"kind": "text", "text": "站内", "nodeId": None},
+            ]
+            payload["screens"][0]["nodes"].extend([label, checkbox])
+            path = root / "home.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            out_dir = root / "out"
+            self.run_generator([path], out_dir)
+            generated = json.loads((out_dir / PAYLOAD).read_text(encoding="utf-8"))
+            generated_label = generated["screens"][0]["root"]["children"][0]
+            self.assertEqual(generated_label["semantic"], "label")
+            self.assertEqual(generated_label["richTextRuns"], [])
+            self.assertEqual(
+                [child["id"] for child in generated_label["children"]],
+                [checkbox["id"]],
+            )
 
     def test_compound_control_content_follows_visual_order_without_flattening(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

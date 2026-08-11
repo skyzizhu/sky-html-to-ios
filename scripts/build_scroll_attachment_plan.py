@@ -16,6 +16,10 @@ INPUT_SEMANTICS = {
     "text-field", "text-input", "search-field", "search-input", "secure-field",
     "secure-input", "number-input", "text-area", "date-input",
 }
+NATIVE_INTERNAL_SCROLL_SEMANTICS = {
+    "text-area", "select", "multi-select", "picker", "wheel-picker",
+    "date-input", "calendar-view", "search-bar",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -75,6 +79,8 @@ def descendants(node_id: str, children: dict[str, list[str]]) -> set[str]:
 
 
 def axis(node: dict[str, Any]) -> str:
+    if str(node.get("semanticType") or "") in NATIVE_INTERNAL_SCROLL_SEMANTICS:
+        return "none"
     layout = node.get("layout") or {}
     value = str(layout.get("scrollAxis") or "none")
     return value if value in SCROLL_AXES else "none"

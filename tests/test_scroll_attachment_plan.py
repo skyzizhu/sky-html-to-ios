@@ -123,6 +123,23 @@ class ScrollAttachmentPlanTests(unittest.TestCase):
             self.assertTrue(table_payload["screens"][0]["rootBidirectionalScrollExplicit"])
             self.assertEqual(self.validate(root, table_payload).returncode, 0)
 
+    def test_native_control_internal_scroll_does_not_claim_page_axis(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = self.build(root, [
+                node("home.root", None, "scroll", "vertical"),
+                node("home.multi", "home.root", "multi-select", "vertical"),
+                node("home.editor", "home.root", "text-area", "vertical"),
+                node("home.top", "home.root", "navigation"),
+            ])
+            contracts = {
+                item["nodeId"]: item
+                for item in payload["screens"][0]["nodes"]
+            }
+            self.assertEqual(contracts["home.multi"]["scrollAxis"], "none")
+            self.assertEqual(contracts["home.editor"]["scrollAxis"], "none")
+            self.assertEqual(self.validate(root, payload).returncode, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -857,8 +857,22 @@ def rich_text_runs(
     content_runs = (node.get("content") or {}).get("runs") or []
     if any(str(item.get("nodeId") or "") in context.selection_count_bindings for item in content_runs):
         return []
+
+    def text_only_subtree(candidate: dict[str, Any]) -> bool:
+        candidate_id = str(candidate.get("id") or "")
+        semantic = str(candidate.get("semanticType") or "")
+        if semantic not in {"text", "label", "heading", "decoration"}:
+            return False
+        if candidate.get("interactionRef") or candidate.get("interactionRefs") or candidate.get("assetRef"):
+            return False
+        return all(
+            text_only_subtree(context.nodes[child_id])
+            for child_id in context.children.get(candidate_id, [])
+            if child_id in context.nodes
+        )
+
     referenced = [context.nodes.get(str(item.get("nodeId") or "")) for item in content_runs if item.get("nodeId")]
-    if not referenced or (not allow_block_children and any(
+    if not referenced or any(child and not text_only_subtree(child) for child in referenced) or (not allow_block_children and any(
         str((child.get("style") or {}).get("display") or "") not in {"inline", "inline-block", "contents"}
         for child in referenced
         if child
@@ -2420,6 +2434,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         "selectionStateID": selection.get("stateID"),
         "isInitiallySelected": first_non_none(
             selection.get("initiallySelected"), node_state.get("checked"), node_state.get("selected"),
+            node_state.get("expanded"),
         ),
         "selectedForeground": selection.get("selectedForeground"),
         "selectedBackground": selection.get("selectedBackground"),
@@ -4160,6 +4175,7 @@ final class HTMLToIOSGeneratedStore: ObservableObject {
     @Published var colorValues: [String: Color] = [:]
     @Published var booleanValues: [String: Bool] = [:]
     @Published var flags: Set<String> = []
+    @Published var multiSelections: [String: Set<String>] = [:]
     @Published var selectedByState: [String: String] = [:]
     @Published var selectionOverrides: [String: Bool] = [:]
     @Published var selectionCounts: [String: Int] = [:]
@@ -4243,6 +4259,25 @@ final class HTMLToIOSGeneratedStore: ObservableObject {
             get: { self.values[nodeID] ?? initialValue },
             set: { self.values[nodeID] = $0 }
         )
+    }
+
+    func isMultiSelected(controlID: String, option: HTMLToIOSControlOptionSpec, options: [HTMLToIOSControlOptionSpec]) -> Bool {
+        let initial = Set(options.filter(\.selected).map(\.id))
+        return (multiSelections[controlID] ?? initial).contains(option.id)
+    }
+
+    func toggleMultiSelection(controlID: String, optionID: String, options: [HTMLToIOSControlOptionSpec]) {
+        let initial = Set(options.filter(\.selected).map(\.id))
+        var selected = multiSelections[controlID] ?? initial
+        if selected.contains(optionID) { selected.remove(optionID) } else { selected.insert(optionID) }
+        multiSelections[controlID] = selected
+    }
+
+    func multiSelectionTitle(controlID: String, options: [HTMLToIOSControlOptionSpec]) -> String {
+        let initial = Set(options.filter(\.selected).map(\.id))
+        let selected = multiSelections[controlID] ?? initial
+        let titles = options.filter { selected.contains($0.id) }.map(\.title)
+        return titles.isEmpty ? "None" : titles.joined(separator: "、")
     }
 
     func dateBinding(for nodeID: String, initialValue: String) -> Binding<Date> {
@@ -5534,6 +5569,27 @@ struct HTMLToIOSNativeNodeView: View {
             } else {
                 buttonContent
             }
+        case "disclosure":
+            let trigger = spec.children.first
+            DisclosureGroup(
+                isExpanded: store.flagBinding(
+                    for: spec.id + ".expanded",
+                    initialValue: spec.isInitiallySelected ?? false
+                )
+            ) {
+                ForEach(Array(spec.children.dropFirst())) { child in
+                    HTMLToIOSNativeNodeView(
+                        store: store,
+                        spec: child,
+                        textOverrides: textOverrides,
+                        typedRegistry: typedRegistry,
+                        bypassTypedNodeID: bypassTypedNodeID
+                    )
+                }
+            } label: {
+                Text(trigger?.text ?? spec.text)
+            }
+            .disabled(!spec.isEnabled)
         case "search-bar":
             HStack(spacing: spec.controlConfig?.itemSpacing ?? 8) {
                 Image(systemName: "magnifyingglass")
@@ -5716,14 +5772,19 @@ struct HTMLToIOSNativeNodeView: View {
             let options = spec.controlConfig?.options ?? []
             Menu {
                 ForEach(options) { option in
-                    Button(option.title) {
-                        let key = spec.id + "|" + option.id
-                        if store.flags.contains(key) { store.flags.remove(key) } else { store.flags.insert(key) }
+                    Button {
+                        store.toggleMultiSelection(controlID: spec.id, optionID: option.id, options: options)
+                    } label: {
+                        if store.isMultiSelected(controlID: spec.id, option: option, options: options) {
+                            Label(option.title, systemImage: "checkmark")
+                        } else {
+                            Text(option.title)
+                        }
                     }
                     .disabled(option.enabled == false)
                 }
             } label: {
-                Text(spec.text.isEmpty ? (options.first?.title ?? "") : spec.text)
+                Text(store.multiSelectionTitle(controlID: spec.id, options: options))
             }
             .accessibilityIdentifier(spec.id)
         case "date-input":
@@ -7313,7 +7374,10 @@ private enum HTMLToIOSUIKitDateParser {
         for format in ["yyyy-MM-dd", "yyyy-MM-dd'T'HH:mm", "HH:mm"] {
             let formatter = DateFormatter()
             formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            // HTML date/time and datetime-local values are wall-clock values,
+            // not UTC instants. Parse in the user's calendar/time zone.
+            formatter.calendar = Calendar(identifier: .gregorian)
+            formatter.timeZone = .current
             formatter.dateFormat = format
             if let date = formatter.date(from: value) { return date }
         }
@@ -7324,6 +7388,7 @@ private enum HTMLToIOSUIKitDateParser {
 final class HTMLToIOSUIKitState {
     var values: [String: String] = [:]
     var flags = Set<String>()
+    var multiSelections: [String: Set<String>] = [:]
     var hiddenNodeIDs = Set<String>()
     var selectedByState: [String: String] = [:]
     var selectionOverrides: [String: Bool] = [:]
@@ -7336,6 +7401,13 @@ final class HTMLToIOSUIKitState {
         guard let stateID = spec.selectionStateID else { return false }
         if let selected = selectedByState[stateID] { return selected == spec.id }
         return selectionOverrides[stateID + "|" + spec.id] ?? spec.isInitiallySelected ?? false
+    }
+
+    func toggleMultiSelection(controlID: String, optionID: String, initial: Set<String>) -> Set<String> {
+        var selected = multiSelections[controlID] ?? initial
+        if selected.contains(optionID) { selected.remove(optionID) } else { selected.insert(optionID) }
+        multiSelections[controlID] = selected
+        return selected
     }
 
     func perform(_ spec: HTMLToIOSActionSpec) {
@@ -8281,6 +8353,31 @@ final class HTMLToIOSNodeRenderer {
                 actionHandler(spec.action)
             }, for: .touchUpInside)
             view = button
+        case "disclosure":
+            let stack = UIStackView()
+            stack.axis = .vertical
+            stack.spacing = spec.style.spacing ?? 0
+            let trigger = spec.children.first
+            let button = HTMLToIOSStatefulButton(type: .system)
+            button.setTitle(trigger?.text ?? spec.text, for: .normal)
+            button.contentHorizontalAlignment = .leading
+            button.isEnabled = spec.isEnabled
+            let body = UIStackView()
+            body.axis = .vertical
+            body.spacing = spec.style.spacing ?? 0
+            for child in spec.children.dropFirst() {
+                body.addArrangedSubview(makeView(child))
+            }
+            body.isHidden = !(spec.isInitiallySelected ?? false)
+            button.accessibilityValue = body.isHidden ? "collapsed" : "expanded"
+            button.addAction(UIAction { [weak button, weak body] _ in
+                guard let button, let body else { return }
+                body.isHidden.toggle()
+                button.accessibilityValue = body.isHidden ? "collapsed" : "expanded"
+            }, for: .touchUpInside)
+            stack.addArrangedSubview(button)
+            stack.addArrangedSubview(body)
+            view = stack
         case "slider":
             let slider = HTMLToIOSMeasuredSlider()
             let config = spec.controlConfig
@@ -8386,7 +8483,14 @@ final class HTMLToIOSNodeRenderer {
             let options = spec.controlConfig?.options ?? []
             let selected = options.first(where: \.selected) ?? options.first
             let button = HTMLToIOSStatefulButton(type: .system)
-            button.setTitle(selected?.title ?? spec.text, for: .normal)
+            let initiallySelectedTitles = options.filter(\.selected).map(\.title)
+            let initialTitle = spec.semantic == "multi-select"
+                ? (initiallySelectedTitles.isEmpty ? "None" : initiallySelectedTitles.joined(separator: "、"))
+                : (selected?.title ?? spec.text)
+            button.setTitle(initialTitle, for: .normal)
+            button.accessibilityIdentifier = spec.id
+            button.accessibilityLabel = initialTitle
+            button.accessibilityValue = initialTitle
             button.contentHorizontalAlignment = .leading
             button.showsMenuAsPrimaryAction = true
             button.menu = UIMenu(children: options.map { option in
@@ -8396,17 +8500,23 @@ final class HTMLToIOSNodeRenderer {
                     state: option.selected ? .on : .off
                 ) { [state, weak button] action in
                     if spec.semantic == "multi-select" {
-                        let key = spec.id + "|" + option.id
-                        if state.flags.contains(key) {
-                            state.flags.remove(key)
-                            action.state = .off
-                        } else {
-                            state.flags.insert(key)
-                            action.state = .on
-                        }
+                        let selectedIDs = state.toggleMultiSelection(
+                            controlID: spec.id,
+                            optionID: option.id,
+                            initial: Set(options.filter(\.selected).map(\.id))
+                        )
+                        action.state = selectedIDs.contains(option.id) ? .on : .off
+                        let selectedTitles = options.filter { selectedIDs.contains($0.id) }.map(\.title)
+                        let renderedTitle = selectedTitles.isEmpty ? "None" : selectedTitles.joined(separator: "、")
+                        state.values[spec.id] = renderedTitle
+                        button?.setTitle(renderedTitle, for: .normal)
+                        button?.accessibilityLabel = renderedTitle
+                        button?.accessibilityValue = renderedTitle
                     } else {
                         state.values[spec.id] = option.value ?? option.id
                         button?.setTitle(option.title, for: .normal)
+                        button?.accessibilityLabel = option.title
+                        button?.accessibilityValue = option.title
                     }
                 }
             })
@@ -8615,8 +8725,13 @@ final class HTMLToIOSNodeRenderer {
         let renderedView = wrapInMargins(styledView, spec: spec)
         renderedView.isHidden = state.hiddenNodeIDs.contains(spec.id)
             || (spec.visibleWhenStateID != nil && !state.flags.contains(spec.visibleWhenStateID!))
-        renderedView.accessibilityIdentifier = spec.id
-        renderedView.accessibilityLabel = spec.accessibilityLabel ?? (spec.text.isEmpty ? nil : spec.text)
+        // Source geometry describes the border box, not the external margin wrapper.
+        // Keep semantic identity on the real rendered control/view so UI actions and
+        // accessibility values are not swallowed by a layout-only wrapper.
+        styledView.accessibilityIdentifier = spec.id
+        if let accessibilityLabel = spec.accessibilityLabel ?? (spec.text.isEmpty ? nil : spec.text) {
+            styledView.accessibilityLabel = accessibilityLabel
+        }
         if !suppressContextualActions { installContextualActions(spec.contextualActions, on: renderedView) }
         return renderedView
     }
@@ -11145,6 +11260,8 @@ final class {section_type}: UIView {{
         super.init(frame: .zero)
         backgroundColor = .clear
         let content = renderer.makeView(spec, bypassingTypedNodeID: spec.id)
+        isAccessibilityElement = false
+        accessibilityElements = [content]
         content.translatesAutoresizingMaskIntoConstraints = false
         addSubview(content)
         NSLayoutConstraint.activate([

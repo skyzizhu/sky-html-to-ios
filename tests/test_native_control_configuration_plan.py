@@ -15,6 +15,34 @@ VALIDATE = ROOT / "scripts" / "validate_native_control_configuration_plan.py"
 
 
 class NativeControlConfigurationPlanTests(unittest.TestCase):
+    def test_advanced_html_controls_are_part_of_the_shared_configuration_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            ir, plan = root / "ui-ir.json", root / "plan.json"
+            semantics = ["secure-input", "checkbox", "radio", "multi-select"]
+            ir.write_text(json.dumps({
+                "target": {"scale": 1},
+                "screens": [{"id": "form", "nodes": [
+                    {
+                        "id": f"form.{semantic}", "semanticType": semantic,
+                        "layout": {"rect": {"width": 120, "height": 44}}, "style": {},
+                        "nativeMapping": {"nativeControlDecision": {"decision": "system-control"}},
+                    }
+                    for semantic in semantics
+                ]}],
+            }), encoding="utf-8")
+            result = subprocess.run(
+                ["python3", str(BUILD), "--ir", str(ir), "--out", str(plan)],
+                text=True, capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            controls = json.loads(plan.read_text(encoding="utf-8"))["screens"][0]["controls"]
+            self.assertEqual([item["semantic"] for item in controls], semantics)
+            self.assertEqual(
+                [item["nativePrimitive"]["swiftUI"] for item in controls],
+                ["SecureField", "Toggle", "Button", "Menu"],
+            )
+
     def test_computed_geometry_colors_and_states_form_valid_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

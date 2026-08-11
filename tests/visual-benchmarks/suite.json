@@ -48,6 +48,21 @@
       "coverage": ["responsive-root", "search-bar", "horizontal-collection", "grid-collection", "aspect-ratio", "tab-bar"]
     },
     {
+      "id": "advanced-native-controls",
+      "html": "advanced-native-controls.html",
+      "level": 2,
+      "coverage": ["responsive-root", "secure-input", "email-keyboard", "telephone-keyboard", "date-picker", "time-picker", "color-picker", "checkbox", "radio-group", "multi-select", "activity-indicator", "paste-control", "disclosure", "calendar-view", "vertical-scroll"],
+      "expectedNative": {
+        "navigationBarRendering": "native",
+        "navigationTitleMode": "large",
+        "contentContainerKinds": ["scroll-view", "compositional-collection"],
+        "requiredUIKitControls": ["UITextField", "UIDatePicker", "UIColorWell", "UIButton", "UIActivityIndicatorView", "UIPasteControl", "UICalendarView"],
+        "requiredSwiftUIControls": ["SecureField", "TextField", "DatePicker", "ColorPicker", "Toggle", "Menu", "ProgressView", "PasteButton", "UIViewRepresentable"],
+        "minimumSystemControlRatio": 0.8,
+        "maximumCustomControlCount": 4
+      }
+    },
+    {
       "id": "settings-form",
       "html": "settings-form.html",
       "level": 2,

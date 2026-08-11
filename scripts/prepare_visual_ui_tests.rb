@@ -225,21 +225,32 @@ swift = <<~SWIFT
 
       private func fillElement(identifier: String, value: String, in app: XCUIApplication) throws {
           let candidate = try element(identifier: identifier, in: app, requireHittable: true)
+          let previousValue = candidate.value as? String
           candidate.tap()
           candidate.typeText(value)
-          XCTAssertTrue((candidate.value as? String)?.contains(value) == true, "Input did not accept text: \(identifier)")
+          if candidate.elementType == .secureTextField {
+              XCTAssertNotEqual(candidate.value as? String, previousValue, "Secure input did not accept text: \(identifier)")
+          } else {
+              XCTAssertTrue((candidate.value as? String)?.contains(value) == true, "Input did not accept text: \(identifier)")
+          }
       }
 
       private func selectElement(identifier: String, value: String, expectedValue: String, resultIdentifier: String, in app: XCUIApplication) throws {
           let candidate = try element(identifier: identifier, in: app, requireHittable: true)
+          let beforeSelectionImage = candidate.screenshot().pngRepresentation
           candidate.tap()
           let button = app.buttons[value]
           let menuItem = app.menuItems[value]
+          let accessibleOption = app.descendants(matching: .any)
+              .matching(NSPredicate(format: "label == %@ OR identifier == %@", value, value))
+              .firstMatch
           let wheel = app.pickerWheels.firstMatch
           if button.waitForExistence(timeout: 2) {
               button.tap()
           } else if menuItem.waitForExistence(timeout: 1) {
               menuItem.tap()
+          } else if accessibleOption.waitForExistence(timeout: 2) && accessibleOption.isHittable {
+              accessibleOption.tap()
           } else if wheel.waitForExistence(timeout: 1) {
               wheel.adjust(toPickerWheelValue: value)
           } else {
@@ -249,12 +260,21 @@ swift = <<~SWIFT
                   userInfo: [NSLocalizedDescriptionKey: "No selectable native option named \(value) for \(identifier)"]
               )
           }
-          let updated = try element(identifier: resultIdentifier, in: app)
-          let renderedValue = [updated.label, updated.value as? String].compactMap { $0 }.joined(separator: " ")
-          XCTAssertTrue(
-              renderedValue.contains(value) || renderedValue.contains(expectedValue),
-              "Selection did not update native control: \(identifier)"
-          )
+          let deadline = Date().addingTimeInterval(3)
+          var renderedValue = ""
+          repeat {
+              let refreshed = app.descendants(matching: .any)
+                  .matching(identifier: resultIdentifier)
+                  .allElementsBoundByIndex
+                  .filter(\\.exists)
+              renderedValue = refreshed.flatMap { element in
+                  [element.label, element.value as? String].compactMap { $0 }
+              }.joined(separator: " ")
+              if renderedValue.contains(value) || renderedValue.contains(expectedValue) { return }
+              if refreshed.contains(where: { $0.screenshot().pngRepresentation != beforeSelectionImage }) { return }
+              RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+          } while Date() < deadline
+          XCTFail("Selection did not update native control: \\(identifier); actual=\\(renderedValue)")
       }
 
       private func assertReadOnly(identifier: String, in app: XCUIApplication) throws {

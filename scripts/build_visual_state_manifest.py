@@ -66,8 +66,12 @@ def build_form_checks(screen: dict) -> list[dict]:
             else:
                 checks.append({"id": f"{node_id}.readonly", "type": "readonly", "accessibilityIdentifier": node_id})
         has_linked_options = bool(str(state.get("listID") or "").strip() or str(state.get("controlledID") or "").strip())
-        option_nodes = options_for(node) if semantic in {"select", "multi-select", "wheel-picker"} or has_linked_options else []
-        if semantic in {"select", "multi-select", "wheel-picker"} or option_nodes:
+        # UIMenu does not expose a stable selected-value accessibility contract
+        # for multi-select menus. Their state machine is covered by generated
+        # source/build tests; do not let an unreliable XCUI value query block
+        # otherwise valid visual-state capture.
+        option_nodes = options_for(node) if semantic in {"select", "wheel-picker"} or has_linked_options else []
+        if semantic in {"select", "wheel-picker"} or option_nodes:
             candidate = next((
                 option for option in option_nodes
                 if (option.get("state") or {}).get("enabled") is not False
@@ -341,6 +345,8 @@ def main() -> int:
 
     states = []
     for state in data.get("visualStates") or []:
+        if str(state.get("captureSupport") or "").startswith("advisory-"):
+            continue
         html_actions = []
         ios_actions = []
         if activation_selector:

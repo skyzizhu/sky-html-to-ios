@@ -34,6 +34,38 @@ def node(node_id: str, parent_id: str | None, semantic: str, rect: list[int], te
 
 
 class VisualValidationTests(unittest.TestCase):
+    def test_advisory_motion_checkpoints_are_not_scheduled_for_ui_capture(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = {
+                "schemaVersion": "1.2",
+                "source": {"entry": str(root / "prototype.html"), "viewport": {"width": 393, "height": 852}},
+                "target": {"viewportPt": {"width": 393, "height": 852}},
+                "screens": [{
+                    "id": "motion", "rootNodeId": "motion.root", "sourceSelector": "#motion",
+                    "systemChrome": {}, "regions": {},
+                    "nodes": [node("motion.root", None, "container", [0, 0, 393, 852])],
+                }],
+                "interactions": [],
+                "visualStates": [
+                    {"id": "initial", "required": True},
+                    {
+                        "id": "motion-50", "required": False, "animationProgress": 0.5,
+                        "captureSupport": "advisory-until-native-motion-hook-exists",
+                    },
+                ],
+            }
+            source, output = root / "ui-ir.json", root / "manifest.json"
+            source.write_text(json.dumps(payload), encoding="utf-8")
+            subprocess.run(
+                [sys.executable, str(MANIFEST_SCRIPT), str(source), "--out", str(output)],
+                check=True, text=True, capture_output=True,
+            )
+            self.assertEqual(
+                [item["id"] for item in json.loads(output.read_text(encoding="utf-8"))["states"]],
+                ["initial"],
+            )
+
     def test_ios_visual_taps_prefer_hittable_matches_after_state_changes(self) -> None:
         source = PREPARE_IOS_TESTS_SCRIPT.read_text(encoding="utf-8")
         self.assertIn("requireHittable: Bool = false", source)
@@ -44,6 +76,13 @@ class VisualValidationTests(unittest.TestCase):
         self.assertIn("Missing accessibility identifier after native scroll reveal", source)
         self.assertIn('domain: "HTMLToIOSVisualValidation"', source)
         self.assertIn("captureGeometry(name:", source)
+        self.assertIn("candidate.elementType == .secureTextField", source)
+        self.assertIn('label == %@ OR identifier == %@', source)
+        self.assertIn('actual=\\\\(renderedValue)', source)
+        self.assertIn('.allElementsBoundByIndex', source)
+        self.assertIn('.filter(\\\\.exists)', source)
+        self.assertIn('beforeSelectionImage', source)
+        self.assertIn('screenshot().pngRepresentation != beforeSelectionImage', source)
         self.assertIn('"-HTMLToIOSGeometryCapture", "1"', source)
         self.assertIn('manifest["geometryNodes"]', source)
         self.assertIn('uniformTypeIdentifier: "public.json"', source)
@@ -97,6 +136,32 @@ class VisualValidationTests(unittest.TestCase):
             self.assertEqual(checks[-1]["value"], "中文")
             self.assertEqual(checks[-1]["expectedValue"], "zh")
             self.assertEqual(checks[-1]["resultAccessibilityIdentifier"], "form.language")
+
+    def test_multi_select_does_not_create_unstable_xcui_value_check(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            multi = node("form.teams", "form.root", "multi-select", [20, 80, 353, 80])
+            option = node("form.teams.design", "form.teams", "option", [0, 0, 0, 0], "Design")
+            option["state"].update({"enabled": True, "selected": False, "value": "design"})
+            payload = {
+                "schemaVersion": "1.2",
+                "source": {"entry": str(root / "prototype.html"), "viewport": {"width": 393, "height": 852}},
+                "target": {"viewportPt": {"width": 393, "height": 852}},
+                "screens": [{
+                    "id": "form", "rootNodeId": "form.root", "sourceSelector": "#form",
+                    "systemChrome": {}, "regions": {},
+                    "nodes": [node("form.root", None, "container", [0, 0, 393, 852]), multi, option],
+                }],
+                "interactions": [],
+                "visualStates": [{"id": "initial", "required": True}],
+            }
+            source, output = root / "ui-ir.json", root / "manifest.json"
+            source.write_text(json.dumps(payload), encoding="utf-8")
+            subprocess.run(
+                [sys.executable, str(MANIFEST_SCRIPT), str(source), "--out", str(output)],
+                check=True, text=True, capture_output=True,
+            )
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["formChecks"], [])
             prepare_source = PREPARE_IOS_TESTS_SCRIPT.read_text(encoding="utf-8")
             self.assertIn('when "select"', prepare_source)
             self.assertIn("assertReadOnly(identifier:", prepare_source)

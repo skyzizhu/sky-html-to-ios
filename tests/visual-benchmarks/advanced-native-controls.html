@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Advanced native controls benchmark</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+    body { background: #d9dde4; color: #20242c; }
+    .screen { width: min(100vw, 393px); min-height: 100vh; margin: 0 auto; background: #f4f5f7; }
+    .status { height: 44px; padding: 12px 20px 0; display: flex; justify-content: space-between; font-size: 14px; font-weight: 650; }
+    .nav { height: 58px; padding: 4px 18px 10px; display: flex; align-items: center; justify-content: space-between; }
+    .nav h1 { margin: 0; font-size: 24px; }
+    .nav button { border: 0; color: #1769d2; background: transparent; font-size: 15px; font-weight: 650; }
+    .content { height: calc(100vh - 102px); overflow-y: auto; padding: 8px 16px 34px; }
+    .caption { margin: 16px 4px 8px; color: #747c89; font-size: 12px; font-weight: 650; }
+    .group { overflow: hidden; border: 1px solid #e0e3e8; border-radius: 14px; background: white; }
+    .row { min-height: 62px; padding: 10px 14px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; border-bottom: 1px solid #eceef2; }
+    .row:last-child { border-bottom: 0; }
+    .copy strong { display: block; margin-bottom: 3px; font-size: 14px; }
+    .copy small { display: block; color: #858c99; font-size: 11px; line-height: 15px; }
+    input[type="password"], input[type="email"], input[type="tel"] { width: 190px; height: 38px; padding: 0 10px; border: 1px solid #d6dae2; border-radius: 9px; background: #fafbfc; font-size: 13px; }
+    input[type="date"], input[type="time"] { width: 142px; height: 38px; padding: 0 8px; border: 1px solid #d6dae2; border-radius: 9px; background: #fafbfc; font: 12px inherit; }
+    input[type="color"] { width: 52px; height: 34px; padding: 3px; border: 1px solid #d6dae2; border-radius: 9px; background: #fafbfc; }
+    .choice-list { display: flex; gap: 13px; align-items: center; }
+    .choice-list label { display: flex; gap: 6px; align-items: center; font-size: 12px; white-space: nowrap; }
+    .choice-list input { width: 18px; height: 18px; accent-color: #1769d2; }
+    select[multiple] { width: 150px; height: 82px; padding: 5px; border: 1px solid #d6dae2; border-radius: 9px; background: #fafbfc; font-size: 12px; }
+    .system-actions { display: flex; gap: 10px; align-items: center; }
+    .spinner { width: 24px; height: 24px; border: 3px solid #dce5f5; border-top-color: #1769d2; border-radius: 50%; animation: spin .8s linear infinite; }
+    .paste { min-width: 82px; height: 36px; border: 0; border-radius: 9px; color: white; background: #1769d2; font-size: 13px; font-weight: 650; }
+    details { border: 1px solid #e0e3e8; border-radius: 14px; background: white; }
+    summary { min-height: 56px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; font-size: 14px; font-weight: 650; list-style: none; }
+    summary::after { content: "⌄"; color: #77808e; font-size: 18px; }
+    details[open] summary::after { transform: rotate(180deg); }
+    .disclosure-body { padding: 0 14px 14px; color: #747c89; font-size: 12px; line-height: 18px; }
+    .calendar { height: 210px; margin-top: 12px; border: 1px solid #e0e3e8; border-radius: 14px; background: white; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+<main class="screen" data-ios-app-root="true" data-ios-screen="advanced-controls" data-ios-screen-initial>
+  <div class="status"><span>9:41</span><span>● ◒ ▰</span></div>
+  <header class="nav"><h1>高级设置</h1><button>保存</button></header>
+  <section class="content" data-ios-scroll-root="vertical">
+    <div class="caption">账户与键盘</div>
+    <div class="group">
+      <div class="row"><div class="copy"><strong>访问密码</strong><small>使用系统安全输入</small></div><input id="password" type="password" value="native2026" autocomplete="current-password"></div>
+      <div class="row"><div class="copy"><strong>通知邮箱</strong><small>邮箱键盘与内容类型</small></div><input id="email" type="email" value="ios@example.com" autocomplete="email"></div>
+      <div class="row"><div class="copy"><strong>联系电话</strong><small>电话号码键盘</small></div><input id="phone" type="tel" value="13800138000" autocomplete="tel"></div>
+    </div>
+    <div class="caption">日期与选择</div>
+    <div class="group">
+      <div class="row"><div class="copy"><strong>开始日期</strong><small>限制可选日期范围</small></div><input id="start-date" type="date" value="2026-08-18" min="2026-08-01" max="2026-12-31"></div>
+      <div class="row"><div class="copy"><strong>提醒时间</strong><small>小时与分钟</small></div><input id="reminder-time" type="time" value="09:30"></div>
+      <div class="row"><div class="copy"><strong>主题颜色</strong><small>系统颜色选择器</small></div><input id="accent" type="color" value="#1769d2"></div>
+      <div class="row"><div class="copy"><strong>通知方式</strong><small>允许多项选择</small></div><div class="choice-list"><label><input id="notice-app" type="checkbox" checked>站内</label><label><input id="notice-mail" type="checkbox">邮件</label></div></div>
+      <div class="row"><div class="copy"><strong>同步策略</strong><small>单项选择</small></div><div class="choice-list" role="radiogroup"><label><input name="sync" type="radio" value="wifi" checked>Wi-Fi</label><label><input name="sync" type="radio" value="always">始终</label></div></div>
+      <div class="row"><div class="copy"><strong>可见团队</strong><small>原生多选菜单</small></div><select id="teams" multiple size="3"><option selected>产品</option><option selected>设计</option><option>研发</option><option disabled>访客</option></select></div>
+    </div>
+    <div class="caption">系统能力</div>
+    <div class="group">
+      <div class="row"><div class="copy"><strong>同步状态</strong><small>不确定进度与系统粘贴</small></div><div class="system-actions"><div class="spinner" role="progressbar" aria-label="正在同步"></div><button class="paste" data-ios-component="paste-control" data-ios-paste-display-mode="icon-and-label">粘贴</button></div></div>
+    </div>
+    <div class="caption">渐进展示</div>
+    <details open><summary>隐私说明</summary><div class="disclosure-body">输入内容仅用于这个原生页面的表单状态，不会由转换器推断或补充业务接口。</div></details>
+    <div class="calendar" data-ios-component="calendar-view" data-ios-calendar-selection="single-date" aria-label="日历"></div>
+  </section>
+</main>
+</body>
+</html>

@@ -3,10 +3,14 @@
 SYSTEM_CONTROLS = [
     {"uikit": "UIButton", "swiftUI": "Button", "semantic": "button", "discovery": "html-or-aria"},
     {"uikit": "UITextField", "swiftUI": "TextField", "semantic": "text-input", "discovery": "html-or-aria"},
+    {"uikit": "UITextField", "swiftUI": "SecureField", "semantic": "secure-input", "discovery": "html"},
     {"uikit": "UITextView", "swiftUI": "TextEditor", "semantic": "text-area", "discovery": "html-or-aria"},
     {"uikit": "UISearchTextField", "swiftUI": "TextField", "semantic": "search-input", "discovery": "html-or-aria"},
     {"uikit": "UISearchBar", "swiftUI": "UIViewRepresentable", "semantic": "search-bar", "discovery": "explicit-or-structural"},
     {"uikit": "UISwitch", "swiftUI": "Toggle", "semantic": "switch", "discovery": "aria-or-explicit"},
+    {"uikit": "UIButton", "swiftUI": "Toggle", "semantic": "checkbox", "discovery": "html-or-aria"},
+    {"uikit": "UIButton", "swiftUI": "Button", "semantic": "radio", "discovery": "html-or-aria"},
+    {"uikit": "UIButton", "swiftUI": "Menu", "semantic": "multi-select", "discovery": "html"},
     {"uikit": "UISlider", "swiftUI": "Slider", "semantic": "slider", "discovery": "html-or-aria"},
     {"uikit": "UIStepper", "swiftUI": "Stepper", "semantic": "stepper", "discovery": "explicit-or-composite"},
     {"uikit": "UISegmentedControl", "swiftUI": "Picker", "semantic": "segmented-control", "discovery": "explicit-or-structural"},
@@ -19,5 +23,5 @@ SYSTEM_CONTROLS = [
     {"uikit": "UIPasteControl", "swiftUI": "PasteButton", "semantic": "paste-control", "discovery": "explicit"},
     {"uikit": "UIRefreshControl", "swiftUI": ".refreshable", "semantic": "refresh-control", "discovery": "explicit-or-runtime-behavior"},
     {"uikit": "UICalendarView", "swiftUI": "UIViewRepresentable", "semantic": "calendar-view", "discovery": "explicit"},
+    {"uikit": "UIControl", "swiftUI": "DisclosureGroup", "semantic": "disclosure", "discovery": "html-or-aria"},
 ]
-
