@@ -4,6 +4,10 @@
 
 Skill 自身的回归开发不得只使用单个业务 HTML。运行 `scripts/run_visual_benchmark_suite.py` 对 `tests/visual-benchmarks/suite.json` 中的固定画板、响应式页面、列表、网格、表单、系统控件、横向集合、导航和底栏进行首次生成评测。任何通用规则修改都应报告每个 case 与全套平均值；单个样本提升但基准平均值下降时视为回归，禁止用页面 ID、文案、特定 selector 或资源名写定向补丁。
 
+固定基准按复杂度分级：L1 验证单个系统控件、输入状态和基础几何；L2 验证完整页面、导航、滚动、列表/网格、长文本和固定操作栏；L3 验证重复状态画板、状态去重、Sheet/Overlay、遮罩、dismiss 与状态动作。新增转换规则至少先通过受影响的最低等级，再进入全套回归。基准报告必须同时输出视觉保真度、原生结构校验和原生控件合理性，不允许靠改成大量自绘 View 提高像素分数，也不允许因为工程可编译就忽略页面内容缺失。
+
+`expectedNative` 用于声明与测试素材无关的原生质量契约，包括允许的 Content Container、系统导航策略、必需 UIKit/SwiftUI Primitive、最低系统控件比例和最大自定义控件数。每个案例必须满足：Xcode build 通过、`native-structure-validation.json` 通过、`expectedNative` 通过，之后视觉分数才有解释价值。日常修改可先运行单 case；发布前必须分别跑 UIKit 与 SwiftUI 全套或明确记录未运行的技术栈。
+
 视觉验收必须在对应逻辑 viewport、方向、外观和稳定数据状态下进行。HTML 位于固定展示板时允许源 viewport 与目标 viewport 不同，但归一化过程必须显式记录。
 
 同一业务页面的状态画板必须逐状态验收。manifest 中每个状态保留自己的 `htmlRootSelector`、`activeStateId`、`geometryNodes` 和 `validationRegions`；当状态画板本身是确定性静态表示时，HTML 截图直接裁切该画板，不再重复执行可能不存在的网页交互。iOS 侧仍执行 tap、swipe、dismiss 等原生动作并验证目标 accessibility identifier。

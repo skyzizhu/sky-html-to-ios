@@ -41,6 +41,25 @@ class NativeControlConfigurationPlanTests(unittest.TestCase):
                             "disabled": {"opacity": "0.4"},
                         },
                         "nativeMapping": {"nativeControlDecision": {"decision": "system-control"}},
+                    }, {
+                        "id": "home.switch.thumb",
+                        "parentId": "home.switch",
+                        "semanticType": "decoration",
+                        "style": {"backgroundColor": "rgb(250, 250, 250)"},
+                    }, {
+                        "id": "home.pages",
+                        "semanticType": "page-control",
+                        "layout": {"rect": {"width": 48, "height": 8}},
+                        "style": {"backgroundColor": "transparent", "gap": "5px"},
+                        "nativeMapping": {"nativeControlDecision": {"decision": "system-control"}},
+                    }, {
+                        "id": "home.page.0", "parentId": "home.pages", "semanticType": "container",
+                        "source": {"selector": ".pages i"},
+                        "style": {"backgroundColor": "rgb(190, 195, 205)"},
+                    }, {
+                        "id": "home.page.1", "parentId": "home.pages", "semanticType": "container",
+                        "source": {"selector": ".pages i.active"},
+                        "style": {"backgroundColor": "rgb(0, 122, 255)"},
                     }],
                 }],
             }), encoding="utf-8")
@@ -58,11 +77,17 @@ class NativeControlConfigurationPlanTests(unittest.TestCase):
             self.assertEqual(control["geometry"]["contentInsetsPt"], [2, 4, 2, 4])
             self.assertEqual(control["geometry"]["itemSpacingPt"], 6)
             self.assertEqual(control["appearance"]["fillTint"], "rgb(0, 122, 255)")
-            self.assertEqual(control["appearance"]["thumbTint"], "rgb(255, 255, 255)")
+            self.assertEqual(control["appearance"]["thumbTint"], "rgb(250, 250, 250)")
+            self.assertEqual(control["stateAppearances"]["selected"]["thumbTint"], "rgb(250, 250, 250)")
             self.assertEqual(control["appearance"]["trackTint"], "rgb(220, 220, 225)")
             self.assertEqual(control["behavior"]["stateNames"], ["checked", "disabled", "normal", "selected"])
             self.assertEqual(control["stateAppearances"]["selected"]["fillTint"], "rgb(0, 122, 255)")
             self.assertEqual(control["stateAppearances"]["checked"], control["stateAppearances"]["selected"])
+            page_control = payload["screens"][0]["controls"][1]
+            self.assertEqual(page_control["derivedConfiguration"], {"pageCount": 2, "currentPage": 1})
+            self.assertEqual(page_control["appearance"]["fillTint"], "rgb(0, 122, 255)")
+            self.assertEqual(page_control["appearance"]["trackTint"], "rgb(190, 195, 205)")
+            self.assertEqual(page_control["stateAppearances"]["normal"]["fillTint"], "rgb(0, 122, 255)")
             result = subprocess.run(
                 ["python3", str(VALIDATE), "--plan", str(plan), "--out", str(validation)],
                 text=True, capture_output=True,

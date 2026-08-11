@@ -483,10 +483,34 @@ def content_container_plan(
     lists = [node for node in content_nodes if node.get("semanticType") in {"list", "sectioned-list"}]
     structured_collections = data_tables + carousels + grids + lists
     vertical_scroll = [node for node in candidates if scroll_axis(node) in {"vertical", "both"}]
-    primary_vertical_scrolls = [
+    def has_vertical_scroll_ancestor(node: dict[str, Any]) -> bool:
+        current_id = str(node.get("parentId") or "")
+        while current_id:
+            if current_id == root_id:
+                return scroll_axis(nodes.get(current_id) or {}) in {"vertical", "both"}
+            current = nodes.get(current_id) or {}
+            if scroll_axis(current) in {"vertical", "both"}:
+                return True
+            current_id = str(current.get("parentId") or "")
+        return False
+
+    top_level_vertical_scrolls = [
         node for node in vertical_scroll
-        if str(node.get("id") or "") == root_id
-        and str(node.get("semanticType") or "") == "scroll"
+        if not has_vertical_scroll_ancestor(node)
+    ]
+    primary_vertical_scrolls = [
+        node for node in top_level_vertical_scrolls
+        if (
+            str(node.get("id") or "") == root_id
+            or (
+                str(node.get("parentId") or "") == root_id
+                and (
+                    viewport_height <= 0
+                    or css_number(((node.get("layout") or {}).get("rect") or {}).get("height"))
+                        >= viewport_height * 0.5
+                )
+            )
+        )
     ]
     direct_repeated = repeated_groups(root_id, nodes, children)
     primary_scroll_id = str(primary_vertical_scrolls[0].get("id") or "") if primary_vertical_scrolls else ""

@@ -112,7 +112,7 @@ def control_appearance(
         appearance["thumbTint"] = selected_foreground
     elif semantic in {"slider", "progress", "progress-view"}:
         appearance["trackTint"] = background
-        appearance["fillTint"] = selected_background or border or foreground
+        appearance["fillTint"] = accent or selected_background or border or foreground
         appearance["thumbTint"] = selected_foreground if semantic == "slider" else None
     elif semantic == "page-control":
         appearance["trackTint"] = background or disabled_foreground
@@ -160,7 +160,36 @@ INTRINSIC_SIZE_HINTS = {
 }
 
 
-def node_contract(node: dict[str, Any], scale: float, parent_semantic: str | None) -> dict[str, Any]:
+def authored_selectors(node: dict[str, Any]) -> list[str]:
+    authored = ((node.get("style") or {}).get("authoredLayout") or {})
+    selectors = [
+        str(record.get("selector") or "").lower()
+        for record in authored.values()
+        if isinstance(record, dict) and record.get("selector")
+    ]
+    source_selector = str((node.get("source") or {}).get("selector") or "").lower()
+    if source_selector:
+        selectors.append(source_selector)
+    return selectors
+
+
+def child_is_selected(node: dict[str, Any]) -> bool:
+    state = node.get("state") or {}
+    if state.get("selected") is True or state.get("checked") is True:
+        return True
+    selectors = authored_selectors(node)
+    return any(
+        re.search(r"(?:^|[.\[:_-])(selected|active|checked|current)(?:$|[.\]:_-])", selector)
+        for selector in selectors
+    )
+
+
+def node_contract(
+    node: dict[str, Any],
+    scale: float,
+    parent_semantic: str | None,
+    node_index: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
     semantic = str(node.get("semanticType") or "")
     style = node.get("style") or {}
     states = node.get("controlVisualStates") or {}
@@ -197,6 +226,53 @@ def node_contract(node: dict[str, Any], scale: float, parent_semantic: str | Non
     if expected_size:
         fit_status = "system-intrinsic-compatible" if max(value or 0 for value in delta.values()) <= 8 else "wrapper-recommended"
     existing_strategy = "system-control-with-wrapper" if decision.get("decision") == "system-control-with-wrapper" else "system-control"
+    child_nodes = [
+        child for child in node_index.values()
+        if str(child.get("parentId") or "") == str(node.get("id") or "")
+    ]
+    appearance = control_appearance(
+        semantic,
+        foreground,
+        background,
+        border,
+        selected_foreground,
+        selected_background,
+        disabled_foreground,
+        number((states.get("disabled") or {}).get("opacity"), 0.5),
+        first_color(style.get("accentColor")),
+    )
+    derived_configuration: dict[str, Any] = {}
+    if semantic in {"switch", "toggle"}:
+        thumb = next((
+            first_color((child.get("style") or {}).get("backgroundColor"), (child.get("style") or {}).get("background"))
+            for child in child_nodes
+            if first_color((child.get("style") or {}).get("backgroundColor"), (child.get("style") or {}).get("background"))
+        ), None)
+        if thumb:
+            appearance["thumbTint"] = thumb
+            for state_appearance in visual_states.values():
+                state_appearance["thumbTint"] = thumb
+    elif semantic == "page-control" and child_nodes:
+        selected_index = next((index for index, child in enumerate(child_nodes) if child_is_selected(child)), 0)
+        selected_child = child_nodes[selected_index]
+        unselected_child = next((child for index, child in enumerate(child_nodes) if index != selected_index), child_nodes[0])
+        appearance["fillTint"] = first_color(
+            (selected_child.get("style") or {}).get("backgroundColor"),
+            (selected_child.get("style") or {}).get("background"),
+            appearance.get("fillTint"),
+        )
+        appearance["trackTint"] = first_color(
+            (unselected_child.get("style") or {}).get("backgroundColor"),
+            (unselected_child.get("style") or {}).get("background"),
+            appearance.get("trackTint"),
+        )
+        for state_appearance in visual_states.values():
+            state_appearance["fillTint"] = appearance["fillTint"]
+            state_appearance["trackTint"] = appearance["trackTint"]
+        derived_configuration = {
+            "pageCount": len(child_nodes),
+            "currentPage": selected_index,
+        }
     return {
         "nodeId": str(node.get("id") or ""),
         "semantic": semantic,
@@ -223,17 +299,8 @@ def node_contract(node: dict[str, Any], scale: float, parent_semantic: str | Non
             "itemSpacingPt": max(number(style.get("gap")) * scale, 0),
             "preservesIntrinsicSize": bool(style.get("preservesIntrinsicWidth")) or semantic in {"switch", "toggle", "stepper", "date-input", "color-picker"},
         },
-        "appearance": control_appearance(
-            semantic,
-            foreground,
-            background,
-            border,
-            selected_foreground,
-            selected_background,
-            disabled_foreground,
-            number((states.get("disabled") or {}).get("opacity"), 0.5),
-            first_color(style.get("accentColor")),
-        ),
+        "appearance": appearance,
+        "derivedConfiguration": derived_configuration,
         "stateAppearances": visual_states,
         "behavior": {
             "preferredStyle": preferred_style(semantic, node),
@@ -260,6 +327,7 @@ def main() -> int:
                     node,
                     scale,
                     str((node_index.get(str(node.get("parentId") or "")) or {}).get("semanticType") or "") or None,
+                    node_index,
                 )
                 for node in screen.get("nodes") or []
                 if str(node.get("semanticType") or "") in SEMANTICS and node.get("id")

@@ -23,9 +23,13 @@ SPEC.loader.exec_module(MODULE)
 class VisualBenchmarkSuiteTests(unittest.TestCase):
     def test_suite_has_distinct_mobile_ui_coverage(self) -> None:
         suite = MODULE.load_suite(SUITE)
-        self.assertEqual(len(suite["cases"]), 3)
+        self.assertEqual(len(suite["cases"]), 6)
+        self.assertEqual({item["level"] for item in suite["cases"]}, {1, 2, 3})
         coverage = {token for item in suite["cases"] for token in item["coverage"]}
-        self.assertTrue({"table-view", "grid-collection", "text-field", "fixed-artboard", "responsive-root"}.issubset(coverage))
+        self.assertTrue({
+            "table-view", "grid-collection", "text-field", "text-view", "fixed-artboard",
+            "responsive-root", "native-navigation", "sheet", "state-deduplication",
+        }.issubset(coverage))
 
     def test_fixture_authoring_contracts_are_valid(self) -> None:
         suite = MODULE.load_suite(SUITE)
@@ -63,6 +67,39 @@ class VisualBenchmarkSuiteTests(unittest.TestCase):
             self.assertEqual(summary["fidelityPercent"], 91.25)
             self.assertEqual(summary["buildGate"], "passed")
             self.assertEqual(summary["requiredStateCount"], 1)
+
+    def test_native_quality_is_reported_separately_from_visual_fidelity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            case_dir = Path(temporary)
+            report_dir = case_dir / ".html-to-ios"
+            report_dir.mkdir(parents=True)
+            (report_dir / "native-architecture-plan.json").write_text(json.dumps({
+                "screens": [{
+                    "layers": {"contentContainer": {"kind": "scroll-view"}},
+                    "navigation": {"barRendering": "native"},
+                }],
+            }), encoding="utf-8")
+            (report_dir / "native-control-configuration-plan.json").write_text(json.dumps({
+                "screens": [{"controls": [{
+                    "strategy": "system-control",
+                    "nativePrimitive": {"uiKit": "UISwitch", "swiftUI": "Toggle"},
+                }]}],
+            }), encoding="utf-8")
+            (report_dir / "native-structure-validation.json").write_text(json.dumps({
+                "status": "passed",
+            }), encoding="utf-8")
+            quality = MODULE.native_quality_summary({
+                "expectedNative": {
+                    "contentContainerKinds": ["scroll-view"],
+                    "navigationBarRendering": "native",
+                    "requiredUIKitControls": ["UISwitch"],
+                    "minimumSystemControlRatio": 1.0,
+                    "maximumCustomControlCount": 0,
+                },
+            }, case_dir, "uikit")
+            self.assertEqual(quality["status"], "passed")
+            self.assertEqual(quality["systemControlRatio"], 1.0)
+            self.assertTrue(all(item["passed"] for item in quality["checks"]))
 
 
 if __name__ == "__main__":

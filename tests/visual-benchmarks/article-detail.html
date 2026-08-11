@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Article detail benchmark</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+    body { background: #d8dde4; color: #17191e; }
+    .screen { position: relative; width: 393px; height: 852px; overflow: hidden; background: #fff; }
+    .status { height: 55px; padding: 18px 23px 0; display: flex; justify-content: space-between; font-size: 14px; font-weight: 650; }
+    .native-nav { height: 52px; padding: 0 14px 8px; display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; text-align: center; }
+    .native-nav button { width: 38px; height: 38px; border: 0; background: transparent; font-size: 23px; }
+    .native-nav h1 { margin: 0; overflow: hidden; font-size: 17px; text-overflow: ellipsis; white-space: nowrap; }
+    .article { height: 674px; overflow-y: auto; padding: 8px 20px 112px; }
+    .eyebrow { color: #1769d2; font-size: 12px; font-weight: 700; }
+    h2 { margin: 8px 0 12px; font-size: 29px; line-height: 37px; letter-spacing: 0; }
+    .meta { display: flex; align-items: center; gap: 9px; color: #737b89; font-size: 12px; }
+    .avatar { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: white; background: #1f6f62; font-weight: 700; }
+    .cover { width: 100%; aspect-ratio: 16 / 10; margin: 20px 0; display: grid; place-items: center; overflow: hidden; border-radius: 14px; color: white; background: linear-gradient(135deg, #153e59, #2b8b78 65%, #d5cf73); font-size: 52px; }
+    .lead { margin: 0 0 16px; color: #3e4652; font-size: 17px; line-height: 28px; font-weight: 560; }
+    .article p { margin: 0 0 16px; color: #333843; font-size: 16px; line-height: 28px; }
+    .quote { margin: 22px 0; padding: 16px 17px; border-left: 4px solid #1769d2; border-radius: 0 12px 12px 0; color: #273142; background: #f0f5fc; font-size: 15px; line-height: 25px; }
+    .tags { display: flex; gap: 8px; margin-top: 22px; }
+    .tag { padding: 7px 11px; border-radius: 999px; color: #4f5968; background: #f0f2f5; font-size: 12px; white-space: nowrap; }
+    .actionbar { position: absolute; left: 0; right: 0; bottom: 0; height: 71px; padding: 9px 18px 18px; display: grid; grid-template-columns: 1fr 1fr 1.6fr; gap: 9px; border-top: 1px solid #e6e8ec; background: rgba(255,255,255,.97); }
+    .actionbar button { height: 44px; border: 1px solid #dfe2e7; border-radius: 11px; color: #343a45; background: white; font-size: 13px; }
+    .actionbar .primary { color: white; border-color: #1769d2; background: #1769d2; font-weight: 650; }
+  </style>
+</head>
+<body>
+<main class="screen" data-ios-app-root="true" data-ios-screen="article" data-ios-screen-initial>
+  <div class="status"><span>9:41</span><span>● ◒ ▰</span></div>
+  <header class="native-nav" data-ios-component="navigation-bar" data-ios-navigation-style="native">
+    <button aria-label="返回" data-ios-action="pop">‹</button><h1>设计方法</h1><button aria-label="更多">•••</button>
+  </header>
+  <article class="article" data-ios-scroll-root="vertical">
+    <div class="eyebrow">产品与体验</div>
+    <h2>从网页原型走向可靠的原生界面</h2>
+    <div class="meta"><div class="avatar">S</div><span>Sky Design · 8月11日 · 8 分钟阅读</span></div>
+    <div class="cover" role="img" aria-label="界面布局示意图">▦</div>
+    <p class="lead">高还原并不是把每个坐标写死，而是找到浏览器布局背后的约束，再用原生容器表达同一套关系。</p>
+    <p>一个页面通常由应用容器、页面区域、内容滚动容器、可复用项目和叶子控件共同组成。先判断所有权，再处理尺寸与样式，才能避免导航、底栏和内容互相挤压。</p>
+    <div class="quote">首次转换必须直接消费真实计算样式。截图对比可以发现偏差，但不应该成为模型理解布局的前提。</div>
+    <p>文字是最容易产生累计误差的部分。字体、字号、字重、行高、段落宽度和换行策略只要有一项不同，页面底部就会出现明显漂移。</p>
+    <p>对于列表、网格和横向卡片，应优先采用 Table、Collection 或对应的 SwiftUI Lazy 容器，并保留复用、滚动轴和尺寸估算能力。</p>
+    <div class="tags"><span class="tag">原生开发</span><span class="tag">自动布局</span><span class="tag">UI 还原</span></div>
+  </article>
+  <footer class="actionbar" data-ios-region="bottom-bar"><button>♡ 收藏</button><button>↗ 分享</button><button class="primary">继续阅读</button></footer>
+</main>
+</body>
+</html>

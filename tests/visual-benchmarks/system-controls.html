@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>System controls benchmark</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+    body { background: #dfe3e8; color: #191b20; }
+    .screen { width: 393px; height: 852px; overflow: hidden; background: #f4f5f7; }
+    .status { height: 54px; padding: 17px 22px 0; display: flex; justify-content: space-between; font-size: 14px; font-weight: 650; }
+    .nav { height: 54px; padding: 0 18px 10px; display: flex; align-items: center; justify-content: space-between; }
+    .nav h1 { margin: 0; font-size: 24px; line-height: 32px; }
+    .done { min-width: 62px; height: 36px; border: 0; border-radius: 10px; color: white; background: #1769d2; font-weight: 650; }
+    .content { height: 744px; overflow-y: auto; padding: 6px 16px 32px; }
+    .section-title { margin: 18px 4px 7px; color: #777f8e; font-size: 12px; font-weight: 650; }
+    .group { overflow: hidden; border: 1px solid #e1e4e9; border-radius: 13px; background: white; }
+    .row { min-height: 57px; padding: 10px 13px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #eceef2; }
+    .row:last-child { border-bottom: 0; }
+    .row label, .row .label { flex: 1; font-size: 14px; font-weight: 560; }
+    input[type="text"], input[type="search"] { width: 174px; height: 36px; padding: 0 10px; border: 1px solid #d7dbe2; border-radius: 9px; background: #fafbfc; font-size: 13px; }
+    textarea { width: 174px; height: 66px; padding: 9px 10px; resize: none; border: 1px solid #d7dbe2; border-radius: 9px; background: #fafbfc; font: 13px inherit; }
+    select { width: 132px; height: 36px; padding: 0 9px; border: 1px solid #d7dbe2; border-radius: 9px; background: #fafbfc; }
+    .switch { position: relative; width: 50px; height: 30px; border-radius: 999px; background: #30b567; }
+    .switch::after { content: ""; position: absolute; top: 3px; right: 3px; width: 24px; height: 24px; border-radius: 50%; background: white; box-shadow: 0 1px 4px rgba(0,0,0,.25); }
+    .segments { width: 180px; height: 34px; padding: 3px; display: grid; grid-template-columns: repeat(3, 1fr); border-radius: 9px; background: #eceff3; }
+    .segments span { display: grid; place-items: center; border-radius: 7px; color: #747c89; font-size: 11px; }
+    .segments .selected { color: #17191e; background: white; box-shadow: 0 1px 4px rgba(0,0,0,.14); }
+    input[type="range"] { width: 170px; accent-color: #1769d2; }
+    progress { width: 170px; height: 8px; accent-color: #1769d2; }
+    .stepper { display: grid; grid-template-columns: 34px 42px 34px; height: 34px; overflow: hidden; border: 1px solid #d5d9e0; border-radius: 9px; }
+    .stepper button { border: 0; background: #f7f8fa; font-size: 18px; }
+    .stepper span { display: grid; place-items: center; border-inline: 1px solid #d5d9e0; font-size: 13px; }
+    .pages { display: flex; gap: 6px; }
+    .pages i { width: 7px; height: 7px; border-radius: 50%; background: #c9cdd5; }
+    .pages i.active { width: 18px; border-radius: 999px; background: #1769d2; }
+  </style>
+</head>
+<body>
+<main class="screen" data-ios-app-root="true" data-ios-screen="controls" data-ios-screen-initial>
+  <div class="status"><span>9:41</span><span>● ◒ ▰</span></div>
+  <header class="nav"><h1>控件样式</h1><button class="done">完成</button></header>
+  <section class="content" data-ios-scroll-root="vertical">
+    <div class="section-title">输入</div>
+    <div class="group">
+      <div class="row"><label for="keyword">搜索</label><input id="keyword" type="search" placeholder="输入关键词"></div>
+      <div class="row"><label for="name">单行文本</label><input id="name" type="text" value="设计规范"></div>
+      <div class="row"><label for="note">多行文本</label><textarea id="note">保持文字、间距和控件语义一致。</textarea></div>
+      <div class="row"><label for="category">选择器</label><select id="category"><option>产品设计</option></select></div>
+    </div>
+    <div class="section-title">选择与调节</div>
+    <div class="group">
+      <div class="row"><span class="label">自动同步</span><div class="switch" role="switch" aria-checked="true"></div></div>
+      <div class="row"><span class="label">显示模式</span><div class="segments" data-ios-component="segmented-control"><span>紧凑</span><span class="selected">标准</span><span>宽松</span></div></div>
+      <div class="row"><label for="scale">缩放比例</label><input id="scale" type="range" min="0" max="100" value="58"></div>
+      <div class="row"><span class="label">重复次数</span><div class="stepper" data-ios-component="stepper"><button>−</button><span>3</span><button>＋</button></div></div>
+    </div>
+    <div class="section-title">状态</div>
+    <div class="group">
+      <div class="row"><span class="label">上传进度</span><progress value="68" max="100"></progress></div>
+      <div class="row"><span class="label">页面位置</span><div class="pages" data-ios-component="page-control"><i></i><i class="active"></i><i></i><i></i></div></div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

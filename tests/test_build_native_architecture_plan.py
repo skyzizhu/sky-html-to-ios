@@ -37,6 +37,50 @@ def make_ir(screen_id: str = "home") -> dict:
 
 
 class BuildNativeArchitecturePlanTests(unittest.TestCase):
+    def test_direct_dominant_scroll_child_owns_content_below_fixed_chrome(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = make_ir("controls")
+            screen = payload["screens"][0]
+            root_id = screen["rootNodeId"]
+            screen["nodes"] = [
+                {
+                    "id": root_id, "semanticType": "container",
+                    "layout": {"scrollAxis": "none", "rect": {"x": 0, "y": 0, "width": 393, "height": 852}},
+                    "style": {"position": "relative"},
+                },
+                {
+                    "id": "controls.status", "parentId": root_id, "semanticType": "container",
+                    "layout": {"scrollAxis": "none", "rect": {"x": 0, "y": 0, "width": 393, "height": 54}},
+                    "style": {"position": "static"},
+                },
+                {
+                    "id": "controls.nav", "parentId": root_id, "semanticType": "navigation-bar",
+                    "layout": {"scrollAxis": "none", "rect": {"x": 0, "y": 54, "width": 393, "height": 54}},
+                    "style": {"position": "static"},
+                },
+                {
+                    "id": "controls.content", "parentId": root_id, "semanticType": "scroll",
+                    "layout": {"scrollAxis": "vertical", "rect": {"x": 0, "y": 108, "width": 393, "height": 744}},
+                    "style": {"position": "static", "overflowY": "auto"},
+                },
+            ]
+            screen["regions"] = {
+                "topBar": {"nodeId": "controls.nav", "kind": "custom-navigation-bar"},
+                "bottomBar": None,
+            }
+            ir_path = root / "ui-ir.json"
+            output = root / "plan.json"
+            ir_path.write_text(json.dumps(payload), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), "--ir", str(ir_path), "--out", str(output), "--ui-stack", "uikit",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            content = json.loads(output.read_text(encoding="utf-8"))["screens"][0]["layers"]["contentContainer"]
+            self.assertEqual(content["nodeId"], "controls.content")
+            self.assertEqual(content["kind"], "scroll-view")
+            self.assertEqual(content["scrollAxis"], "vertical")
+
     def test_centered_single_track_artwork_grid_stays_static(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

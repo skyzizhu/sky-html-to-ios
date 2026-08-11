@@ -1972,6 +1972,14 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
                 "letterSpacing": scaled_css_value(source_placeholder_style.get("letterSpacing"), context.design_scale),
                 "opacity": min(max(number(source_placeholder_style.get("opacity"), 1), 0), 1),
             }
+    def option_selected(option_node: dict[str, Any]) -> bool:
+        option_state = option_node.get("state") or {}
+        explicit = first_non_none(option_state.get("selected"), option_state.get("checked"))
+        if explicit is not None:
+            return bool(explicit)
+        selector = str((option_node.get("source") or {}).get("selector") or "").lower().rsplit(">", 1)[-1]
+        return any(token in selector for token in (".selected", ".active", ".checked", ".current"))
+
     control_options = []
     if semantic in {"select", "multi-select", "wheel-picker"}:
         option_nodes = [
@@ -1986,7 +1994,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
                 control_options.append({
                     "id": str(option.get("id") or f"{node_id}.option-{len(control_options) + 1}"),
                     "title": title,
-                    "selected": bool((option.get("state") or {}).get("selected")),
+                    "selected": option_selected(option),
                 })
     else:
         for child in child_payloads:
@@ -2001,7 +2009,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
                 control_options.append({
                     "id": str(child.get("id") or f"{node_id}.option-{len(control_options) + 1}"),
                     "title": title,
-                    "selected": bool((context.nodes.get(str(child.get("id") or "")) or {}).get("state", {}).get("selected")),
+                    "selected": option_selected(context.nodes.get(str(child.get("id") or "")) or {}),
                 })
     control_config = None
     if semantic in {
@@ -2010,6 +2018,10 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         "progress", "progress-view", "meter", "activity-indicator", "page-control", "paste-control",
         "refresh-control", "calendar-view", "search-bar",
     }:
+        selected_option_index = next(
+            (index for index, option in enumerate(control_options) if option.get("selected")),
+            0,
+        )
         control_config = {
             "minimum": number(node_state.get("min"), 0),
             "maximum": number(node_state.get("max"), 100),
@@ -2023,7 +2035,10 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
                 len(control_options),
                 0,
             ),
-            "currentPage": max(int(number(node_state.get("currentPage"), number(node_state.get("value"), 0))), 0),
+            "currentPage": max(int(number(
+                node_state.get("currentPage"),
+                number(node_state.get("value"), selected_option_index),
+            )), 0),
             "pickerStyle": str(node_state.get("pickerStyle") or ""),
             "pasteDisplayMode": str(node_state.get("pasteDisplayMode") or "icon-and-label"),
             "calendarSelection": str(node_state.get("calendarSelection") or "single-date"),
@@ -2040,6 +2055,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         geometry = planned_control.get("geometry") or {}
         control_appearance = planned_control.get("appearance") or {}
         behavior = planned_control.get("behavior") or {}
+        derived_configuration = planned_control.get("derivedConfiguration") or {}
         control_config.update({
             "contentInsets": geometry.get("contentInsetsPt") or [0, 0, 0, 0],
             "itemSpacing": number(geometry.get("itemSpacingPt")),
@@ -2059,6 +2075,37 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "requiresWrapper": bool(behavior.get("requiresWrapper")),
             "stateAppearances": planned_control.get("stateAppearances") or {},
         })
+        control_config.update({
+            key: value for key, value in derived_configuration.items()
+            if key in {"pageCount", "currentPage"}
+        })
+    if control_config is not None and semantic == "switch":
+        thumb_tint = next((
+            (child.get("style") or {}).get("background")
+            for child in child_payloads
+            if child.get("semantic") in {"decoration", "container"}
+            and (child.get("style") or {}).get("background")
+        ), None)
+        if thumb_tint:
+            control_config["thumbTint"] = thumb_tint
+    if control_config is not None and semantic == "page-control" and child_payloads:
+        selected_index = next((
+            index for index, child in enumerate(child_payloads)
+            if option_selected(context.nodes.get(str(child.get("id") or "")) or {})
+        ), 0)
+        selected_child = child_payloads[selected_index]
+        unselected_child = next((
+            child for index, child in enumerate(child_payloads) if index != selected_index
+        ), child_payloads[0])
+        control_config.update({
+            "pageCount": len(child_payloads),
+            "currentPage": selected_index,
+            "fillTint": (selected_child.get("style") or {}).get("background") or control_config.get("fillTint"),
+            "trackTint": (unselected_child.get("style") or {}).get("background") or control_config.get("trackTint"),
+        })
+    if control_config is not None and semantic == "stepper" and not control_config.get("value"):
+        if len(control_options) >= 3:
+            control_config["value"] = str(control_options[len(control_options) // 2].get("title") or "")
     layout_spacing = (
         number(layout_container.get("gapPt"))
         if layout_container.get("gapPt") is not None
@@ -2330,7 +2377,9 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         "contextualActions": context.contextual_actions.get(node_id) or [],
         "visibleWhenStateID": None,
         "selectionStateID": selection.get("stateID"),
-        "isInitiallySelected": selection.get("initiallySelected"),
+        "isInitiallySelected": first_non_none(
+            selection.get("initiallySelected"), node_state.get("checked"), node_state.get("selected"),
+        ),
         "selectedForeground": selection.get("selectedForeground"),
         "selectedBackground": selection.get("selectedBackground"),
         "selectedGradientColors": selection.get("selectedGradientColors"),
@@ -5528,18 +5577,28 @@ struct HTMLToIOSNativeNodeView: View {
                 in: (config?.minimum ?? 0)...max(config?.maximum ?? 100, config?.minimum ?? 0),
                 step: config?.step ?? 1
             )
-            .modifier(HTMLToIOSOptionalTintModifier(value: nativeControlAppearance?.fillTint ?? config?.fillTint ?? config?.tint))
+            .modifier(HTMLToIOSOptionalTintModifier(value: nativeControlAppearance?.tint ?? config?.tint ?? config?.fillTint))
         case "stepper":
             let config = spec.controlConfig
-            Stepper(
-                spec.text,
-                value: store.numericBinding(
-                    for: spec.id,
-                    initialValue: Double(config?.value ?? "") ?? config?.minimum ?? 0
-                ),
-                in: (config?.minimum ?? 0)...max(config?.maximum ?? 100, config?.minimum ?? 0),
-                step: config?.step ?? 1
+            let value = store.numericBinding(
+                for: spec.id,
+                initialValue: Double(config?.value ?? "") ?? config?.minimum ?? 0
             )
+            ZStack {
+                Stepper(
+                    spec.text,
+                    value: value,
+                    in: (config?.minimum ?? 0)...max(config?.maximum ?? 100, config?.minimum ?? 0),
+                    step: config?.step ?? 1
+                )
+                .labelsHidden()
+                if let options = config?.options, options.count >= 3 {
+                    Text(value.wrappedValue.rounded() == value.wrappedValue
+                        ? String(Int(value.wrappedValue)) : String(value.wrappedValue))
+                        .font(.system(size: max(min(spec.style.fontSize ?? 13, 17), 10)))
+                }
+            }
+            .frame(minWidth: max(config?.sourceWidth ?? 94, 94))
             .modifier(HTMLToIOSOptionalTintModifier(value: nativeControlAppearance?.tint ?? config?.tint))
         case "segmented-control":
             let options = spec.controlConfig?.options ?? []
@@ -5661,7 +5720,7 @@ struct HTMLToIOSNativeNodeView: View {
                 value: max(value - minimum, 0),
                 total: max(maximum - minimum, 0.0001)
             )
-            .modifier(HTMLToIOSOptionalTintModifier(value: nativeControlAppearance?.fillTint ?? config?.fillTint ?? config?.tint))
+            .modifier(HTMLToIOSOptionalTintModifier(value: nativeControlAppearance?.tint ?? config?.tint ?? config?.fillTint))
         case "carousel":
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: verticalAlignment, spacing: contentSpacing) { dynamicOrOrderedContent }
@@ -8127,7 +8186,7 @@ final class HTMLToIOSNodeRenderer {
             slider.maximumValue = Float(max(config?.maximum ?? 100, config?.minimum ?? 0))
             slider.value = Float(Double(config?.value ?? "") ?? config?.minimum ?? 0)
             slider.isEnabled = spec.isEnabled
-            slider.minimumTrackTintColor = UIColor(htmlToIOS: config?.fillTint ?? config?.tint)
+            slider.minimumTrackTintColor = UIColor(htmlToIOS: config?.tint ?? config?.fillTint)
             slider.maximumTrackTintColor = UIColor(htmlToIOS: config?.trackTint)
             slider.thumbTintColor = UIColor(htmlToIOS: config?.thumbTint)
             slider.addAction(UIAction { [state, weak slider] _ in
@@ -8146,10 +8205,41 @@ final class HTMLToIOSNodeRenderer {
             stepper.value = Double(config?.value ?? "") ?? config?.minimum ?? 0
             stepper.isEnabled = spec.isEnabled
             stepper.tintColor = UIColor(htmlToIOS: config?.tint)
-            stepper.addAction(UIAction { [state, weak stepper] _ in
-                state.values[spec.id] = String(stepper?.value ?? 0)
+            let valueLabel: UILabel? = {
+                guard let options = config?.options, options.count >= 3 else { return nil }
+                let label = UILabel()
+                label.text = options[options.count / 2].title
+                label.font = UIFont.systemFont(ofSize: max(min(spec.style.fontSize ?? 13, 17), 10))
+                label.textColor = UIColor(htmlToIOS: spec.style.foreground)
+                label.textAlignment = .center
+                label.backgroundColor = UIColor(htmlToIOS: spec.style.background) ?? .systemBackground
+                return label
+            }()
+            stepper.addAction(UIAction { [state, weak stepper, weak valueLabel] _ in
+                let value = stepper?.value ?? 0
+                state.values[spec.id] = String(value)
+                valueLabel?.text = value.rounded() == value ? String(Int(value)) : String(value)
             }, for: .valueChanged)
-            row.addArrangedSubview(stepper)
+            if let valueLabel {
+                let container = UIView()
+                stepper.translatesAutoresizingMaskIntoConstraints = false
+                valueLabel.translatesAutoresizingMaskIntoConstraints = false
+                container.addSubview(stepper)
+                container.addSubview(valueLabel)
+                NSLayoutConstraint.activate([
+                    stepper.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+                    stepper.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+                    container.widthAnchor.constraint(greaterThanOrEqualToConstant: max(config?.sourceWidth ?? 94, 94)),
+                    container.heightAnchor.constraint(greaterThanOrEqualToConstant: max(config?.sourceHeight ?? 32, 32)),
+                    valueLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+                    valueLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+                    valueLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 28),
+                    valueLabel.heightAnchor.constraint(equalToConstant: max(config?.sourceHeight ?? 32, 32)),
+                ])
+                row.addArrangedSubview(container)
+            } else {
+                row.addArrangedSubview(stepper)
+            }
             view = row
         case "segmented-control":
             let options = spec.controlConfig?.options ?? []
@@ -8296,7 +8386,7 @@ final class HTMLToIOSNodeRenderer {
             let maximum = spec.controlConfig?.maximum ?? 1
             let value = Double(spec.controlConfig?.value ?? "") ?? minimum
             progress.progress = Float(min(max((value - minimum) / max(maximum - minimum, 0.0001), 0), 1))
-            progress.progressTintColor = UIColor(htmlToIOS: spec.controlConfig?.fillTint ?? spec.controlConfig?.tint)
+            progress.progressTintColor = UIColor(htmlToIOS: spec.controlConfig?.tint ?? spec.controlConfig?.fillTint)
             progress.trackTintColor = UIColor(htmlToIOS: spec.controlConfig?.trackTint)
             view = progress
         case "carousel", "scroll":
@@ -8598,6 +8688,12 @@ final class HTMLToIOSNodeRenderer {
 
     private func installRelativeConstraints(for view: UIView, spec: HTMLToIOSNodeSpec, in owner: UIView) {
         let contract = spec.layoutContract
+        if let stack = owner as? UIStackView,
+           ["parent-relative", "flexible", "equal-share"].contains(contract.mainAxisSizingMode ?? "") {
+            let axis: NSLayoutConstraint.Axis = stack.axis == .vertical ? .vertical : .horizontal
+            view.setContentHuggingPriority(.defaultLow, for: axis)
+            view.setContentCompressionResistancePriority(.defaultLow, for: axis)
+        }
         if contract.widthResolution == "parent-affine",
            contract.widthKind != "fixed",
            let multiplier = contract.widthMultiplier {
@@ -9759,7 +9855,12 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController, UIScrollViewDele
         let previousOffset = generatedScrollView?.contentOffset
         generatedScrollView = nil; generatedTopBar = nil; generatedBottomBar = nil
         view.subviews.forEach { $0.removeFromSuperview() }
+        // A nested source scroll node renders its own UIScrollView. The screen controller
+        // only supplies an outer scroll view when the generated root itself owns the axis.
         let usesOuterScroll = screen.contentContainer.kind == "scroll-view"
+            && screen.contentContainer.nodeId == screen.root.id
+        let hasNestedScrollOwner = screen.contentContainer.kind == "scroll-view"
+            && screen.contentContainer.nodeId != screen.root.id
         let renderer = HTMLToIOSNodeRenderer(
             state: generatedState,
             outerScrollOwnerNodeID: usesOuterScroll ? screen.contentContainer.nodeId : nil,
@@ -9784,10 +9885,13 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController, UIScrollViewDele
                             : 0)
                         + CGFloat(screen.systemNavigationContentSpacing)
                 ),
-                content.bottomAnchor.constraint(
-                    lessThanOrEqualTo: screen.safeArea.owner == "system" ? view.safeAreaLayoutGuide.bottomAnchor : view.bottomAnchor
-                )
             ])
+            let contentBottom = screen.safeArea.owner == "system" ? view.safeAreaLayoutGuide.bottomAnchor : view.bottomAnchor
+            constraints.append(
+                hasNestedScrollOwner
+                    ? content.bottomAnchor.constraint(equalTo: contentBottom)
+                    : content.bottomAnchor.constraint(lessThanOrEqualTo: contentBottom)
+            )
         } else {
             let scroll = UIScrollView()
             scroll.isDirectionalLockEnabled = true
@@ -11264,6 +11368,13 @@ def recursive_payload_evidence(value: Any) -> tuple[dict[str, dict[str, Any]], s
     identifiers: set[str] = set()
     order: list[str] = []
 
+    def evidence_score(item: dict[str, Any]) -> tuple[int, int, int]:
+        return (
+            int(isinstance(item.get("style"), dict)) + int(isinstance(item.get("layoutContract"), dict)),
+            sum(bool(item.get(key)) for key in ("children", "contentItems", "overlayChildren")),
+            len(item),
+        )
+
     def visit(item: Any) -> None:
         if isinstance(item, dict):
             node_id = item.get("id")
@@ -11271,7 +11382,9 @@ def recursive_payload_evidence(value: Any) -> tuple[dict[str, dict[str, Any]], s
                 identifiers.add(node_id)
                 order.append(node_id)
                 if "semantic" in item and "style" in item:
-                    nodes[node_id] = item
+                    current = nodes.get(node_id)
+                    if current is None or evidence_score(item) > evidence_score(current):
+                        nodes[node_id] = item
             for key in ("childID", "nodeId", "sourceNodeID", "targetNodeID"):
                 identifier = item.get(key)
                 if isinstance(identifier, str) and identifier:
@@ -12037,6 +12150,7 @@ def build_native_structure_manifest(
                         == item.get("mainAxisSizingMode")
                     and abs(number((generated_geometry_children.get(str(item.get("nodeId") or "")) or {}).get("mainAxisWeight")) - number(item.get("weight"))) <= 0.001
                     for item in planned_geometry.get("childContracts") or []
+                    if str(item.get("nodeId") or "") in expected_children
                 ),
             }
             optimization_reason = native_optimization_reason(

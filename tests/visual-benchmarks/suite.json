@@ -8,19 +8,67 @@
   },
   "cases": [
     {
+      "id": "system-controls",
+      "html": "system-controls.html",
+      "level": 1,
+      "coverage": ["responsive-root", "text-field", "text-view", "search-field", "select", "switch", "segmented-control", "slider", "stepper", "progress", "page-control", "vertical-scroll"],
+      "expectedNative": {
+        "contentContainerKinds": ["scroll-view", "compositional-collection"],
+        "requiredUIKitControls": ["UITextField", "UITextView", "UISwitch", "UISegmentedControl", "UISlider", "UIStepper", "UIProgressView", "UIPageControl"],
+        "requiredSwiftUIControls": ["TextField", "TextEditor", "Toggle", "Picker", "Slider", "Stepper", "ProgressView", "UIViewRepresentable"],
+        "minimumSystemControlRatio": 1.0,
+        "maximumCustomControlCount": 0
+      }
+    },
+    {
       "id": "dashboard-list",
       "html": "dashboard-list.html",
+      "level": 2,
       "coverage": ["custom-navigation", "table-view", "square-icons", "summary-card", "tab-bar", "vertical-scroll"]
     },
     {
       "id": "commerce-grid",
       "html": "commerce-grid.html",
+      "level": 2,
       "coverage": ["responsive-root", "search-bar", "horizontal-collection", "grid-collection", "aspect-ratio", "tab-bar"]
     },
     {
       "id": "settings-form",
       "html": "settings-form.html",
-      "coverage": ["fixed-artboard", "custom-navigation", "text-field", "select", "switch", "segmented-control", "slider", "fixed-action-bar"]
+      "level": 2,
+      "coverage": ["fixed-artboard", "custom-navigation", "text-field", "select", "switch", "segmented-control", "slider", "fixed-action-bar"],
+      "expectedNative": {
+        "requiredUIKitControls": ["UITextField", "UISwitch", "UISegmentedControl", "UISlider"],
+        "requiredSwiftUIControls": ["TextField", "Toggle", "Picker", "Slider"],
+        "minimumSystemControlRatio": 1.0,
+        "maximumCustomControlCount": 0
+      }
+    },
+    {
+      "id": "article-detail",
+      "html": "article-detail.html",
+      "level": 2,
+      "coverage": ["native-navigation", "long-form-text", "line-height", "aspect-ratio", "vertical-scroll", "fixed-action-bar"],
+      "expectedNative": {
+        "contentContainerKinds": ["scroll-view", "compositional-collection"],
+        "navigationBarRendering": "native",
+        "requiredUIKitControls": ["UIButton"],
+        "requiredSwiftUIControls": ["Button"],
+        "minimumSystemControlRatio": 1.0,
+        "maximumCustomControlCount": 0
+      }
+    },
+    {
+      "id": "state-presentation",
+      "html": "state-presentation.html",
+      "level": 3,
+      "coverage": ["fixed-artboard", "repeated-state-artboard", "state-deduplication", "sheet", "scrim", "detents", "dismiss", "square-icons"],
+      "expectedNative": {
+        "requiredUIKitControls": ["UIButton"],
+        "requiredSwiftUIControls": ["Button"],
+        "minimumSystemControlRatio": 1.0,
+        "maximumCustomControlCount": 0
+      }
     }
   ]
 }

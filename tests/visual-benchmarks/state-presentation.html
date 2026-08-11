@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>State presentation benchmark</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+    body { display: flex; gap: 28px; padding: 24px; background: #cfd4dc; color: #181b22; }
+    .screen { position: relative; width: 393px; min-width: 393px; height: 852px; overflow: hidden; background: #f5f6f8; }
+    .status { height: 55px; padding: 18px 23px 0; display: flex; justify-content: space-between; font-size: 14px; font-weight: 650; }
+    .nav { height: 54px; padding: 0 18px 10px; display: flex; align-items: center; justify-content: space-between; }
+    .nav h1 { margin: 0; font-size: 25px; }
+    .nav button { width: 38px; height: 38px; border: 0; border-radius: 10px; background: white; font-size: 19px; }
+    .content { padding: 10px 17px; }
+    .summary { padding: 20px; border-radius: 16px; color: white; background: #202942; }
+    .summary small { color: #bac4da; }
+    .summary strong { display: block; margin-top: 6px; font-size: 30px; }
+    .section-title { margin: 22px 2px 10px; display: flex; justify-content: space-between; align-items: center; }
+    .section-title h2 { margin: 0; font-size: 18px; }
+    .section-title span { color: #777f8e; font-size: 12px; }
+    .list { overflow: hidden; border: 1px solid #e2e5ea; border-radius: 14px; background: white; }
+    .row { min-height: 66px; padding: 11px 13px; display: grid; grid-template-columns: 42px 1fr auto; align-items: center; gap: 11px; border-bottom: 1px solid #eceef2; }
+    .row:last-child { border-bottom: 0; }
+    .icon { width: 42px; aspect-ratio: 1; display: grid; place-items: center; border-radius: 11px; background: #eef3ff; }
+    .row h3 { margin: 0 0 3px; font-size: 14px; }
+    .row p { margin: 0; color: #7c8493; font-size: 11px; }
+    .row b { font-size: 13px; white-space: nowrap; }
+    .open { width: 100%; height: 48px; margin-top: 18px; border: 0; border-radius: 12px; color: white; background: #1769d2; font-size: 15px; font-weight: 650; }
+    .scrim { position: absolute; inset: 0; background: rgba(16,20,29,.42); }
+    .sheet { position: absolute; left: 0; right: 0; bottom: 0; height: 430px; padding: 10px 18px 28px; border-radius: 22px 22px 0 0; background: white; box-shadow: 0 -12px 30px rgba(0,0,0,.13); }
+    .grabber { width: 38px; height: 5px; margin: 0 auto 16px; border-radius: 999px; background: #ccd0d7; }
+    .sheet h2 { margin: 0 0 7px; font-size: 21px; }
+    .sheet p { margin: 0 0 18px; color: #6e7685; font-size: 13px; line-height: 20px; }
+    .choice { min-height: 58px; padding: 10px 12px; display: flex; align-items: center; gap: 12px; border: 1px solid #e3e6eb; border-radius: 12px; margin-bottom: 9px; }
+    .choice i { width: 34px; aspect-ratio: 1; display: grid; place-items: center; border-radius: 9px; background: #edf3ff; font-style: normal; }
+    .choice span { flex: 1; font-size: 14px; font-weight: 600; }
+    .choice b { color: #1769d2; font-size: 12px; }
+    .sheet-actions { display: grid; grid-template-columns: 1fr 1.6fr; gap: 10px; margin-top: 18px; }
+    .sheet-actions button { height: 48px; border: 0; border-radius: 12px; font-size: 15px; font-weight: 650; }
+    .cancel { color: #353b46; background: #eef0f3; }
+    .confirm { color: white; background: #1769d2; }
+  </style>
+</head>
+<body data-ios-app-root="true">
+<main class="screen" data-ios-screen="wallet" data-ios-screen-initial>
+  <div class="status"><span>9:41</span><span>● ◒ ▰</span></div>
+  <header class="nav"><h1>我的钱包</h1><button aria-label="更多">•••</button></header>
+  <section class="content">
+    <article class="summary"><small>可用余额</small><strong>¥ 8,420.00</strong></article>
+    <div class="section-title"><h2>最近账户</h2><span>全部</span></div>
+    <div class="list"><div class="row"><div class="icon">卡</div><div><h3>日常银行卡</h3><p>尾号 4821</p></div><b>¥ 5,620</b></div><div class="row"><div class="icon">余</div><div><h3>平台余额</h3><p>即时到账</p></div><b>¥ 2,800</b></div></div>
+    <button class="open" data-ios-action="present-sheet" data-ios-target="wallet-transfer">发起转账</button>
+  </section>
+</main>
+<main class="screen" data-ios-screen="wallet-transfer" data-ios-state-owner="wallet" data-ios-state-kind="sheet">
+  <div class="status"><span>9:41</span><span>● ◒ ▰</span></div>
+  <header class="nav"><h1>我的钱包</h1><button aria-label="更多">•••</button></header>
+  <section class="content"><article class="summary"><small>可用余额</small><strong>¥ 8,420.00</strong></article><div class="section-title"><h2>最近账户</h2><span>全部</span></div><div class="list"><div class="row"><div class="icon">卡</div><div><h3>日常银行卡</h3><p>尾号 4821</p></div><b>¥ 5,620</b></div><div class="row"><div class="icon">余</div><div><h3>平台余额</h3><p>即时到账</p></div><b>¥ 2,800</b></div></div></section>
+  <div class="scrim"></div>
+  <section class="sheet" data-ios-component="sheet" data-ios-presentation-style="page-sheet" data-ios-detents="height:430,large">
+    <div class="grabber"></div><h2>选择转出账户</h2><p>转账前请确认账户余额与到账方式。</p>
+    <div class="choice"><i>卡</i><span>日常银行卡</span><b>已选择</b></div><div class="choice"><i>余</i><span>平台余额</span><b>选择</b></div>
+    <div class="sheet-actions"><button class="cancel" data-ios-action="dismiss">取消</button><button class="confirm" data-ios-action="dismiss">下一步</button></div>
+  </section>
+</main>
+</body>
+</html>

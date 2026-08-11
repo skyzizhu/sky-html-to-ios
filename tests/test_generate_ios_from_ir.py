@@ -458,7 +458,10 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("HTMLToIOSGeneratedCompositionalCollectionView", runtime)
             self.assertIn("UICollectionViewCompositionalLayout", runtime)
             self.assertIn('spec.nativeContainerKind == "table-view"', runtime)
-            self.assertIn("let usesOuterScroll = screen.contentContainer.kind == \"scroll-view\"", runtime)
+            self.assertIn("screen.contentContainer.nodeId == screen.root.id", runtime)
+            self.assertIn("let hasNestedScrollOwner = screen.contentContainer.kind == \"scroll-view\"", runtime)
+            self.assertIn("hasNestedScrollOwner", runtime)
+            self.assertIn("view.setContentHuggingPriority(.defaultLow, for: axis)", runtime)
             self.assertTrue((out / "Home/Models/HTMLToIOSHomeUIContract.swift").is_file())
             layout_contract = out / "Home/Models/HTMLToIOSHomeLayoutContract.swift"
             self.assertTrue(layout_contract.is_file())
@@ -631,6 +634,9 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             radio = node("controls.radio", root_node["id"], "radio", "Primary")
             file_input = node("controls.file", root_node["id"], "file-input", "Choose file")
             switch = node("controls.switch", root_node["id"], "switch", "Enabled")
+            switch["state"] = {"checked": True}
+            switch_thumb = node("controls.switch-thumb", switch["id"], "decoration")
+            switch_thumb["style"]["backgroundColor"] = "rgb(255, 255, 255)"
             search_input = node("controls.search-input", root_node["id"], "search-input")
             search_bar = node("controls.search-bar", root_node["id"], "search-bar")
             wheel_picker = node("controls.wheel", root_node["id"], "wheel-picker")
@@ -651,8 +657,24 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                         "option",
                         title,
                     )
-                    option["state"] = {"selected": index == 1}
+                    if parent is segmented:
+                        option["state"] = {}
+                        if index == 1:
+                            option["source"]["selector"] += ".selected"
+                    else:
+                        option["state"] = {"selected": index == 1}
                     option_nodes.append(option)
+            stepper_options = []
+            for index, title in enumerate(("-", "3", "+")):
+                option = node(f"controls.stepper-{index}", stepper["id"], "button" if index != 1 else "text", title)
+                stepper_options.append(option)
+            page_options = []
+            for index in range(4):
+                option = node(f"controls.page-{index}", page_control["id"], "container")
+                if index == 1:
+                    option["source"]["selector"] += ".active"
+                option["style"]["backgroundColor"] = "rgb(0, 122, 255)" if index == 1 else "rgb(200, 204, 212)"
+                page_options.append(option)
 
             payload["screens"][0]["nodes"].extend([
                 slider,
@@ -674,7 +696,10 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 paste_control,
                 refresh_control,
                 calendar,
+                switch_thumb,
                 *option_nodes,
+                *stepper_options,
+                *page_options,
             ])
             path = root / "controls.json"
             path.write_text(json.dumps(payload), encoding="utf-8")
@@ -697,8 +722,16 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 [item["title"] for item in generated_nodes[segmented["id"]]["controlConfig"]["options"]],
                 ["First", "Second"],
             )
+            self.assertEqual(
+                [item["selected"] for item in generated_nodes[segmented["id"]]["controlConfig"]["options"]],
+                [False, True],
+            )
             self.assertEqual(generated_nodes[page_control["id"]]["controlConfig"]["pageCount"], 4)
             self.assertEqual(generated_nodes[page_control["id"]]["controlConfig"]["currentPage"], 1)
+            self.assertEqual(generated_nodes[page_control["id"]]["controlConfig"]["fillTint"], "rgb(0, 122, 255)")
+            self.assertEqual(generated_nodes[page_control["id"]]["controlConfig"]["trackTint"], "rgb(200, 204, 212)")
+            self.assertTrue(generated_nodes[switch["id"]]["isInitiallySelected"])
+            self.assertEqual(generated_nodes[switch["id"]]["controlConfig"]["thumbTint"], "rgb(255, 255, 255)")
             self.assertEqual(generated_nodes[calendar["id"]]["controlConfig"]["calendarSelection"], "multi-date")
             self.assertEqual(generated_nodes[slider["id"]]["controlConfig"]["contentInsets"], [0, 0, 0, 0])
             self.assertEqual(generated_nodes[slider["id"]]["controlConfig"]["itemSpacing"], 8)
@@ -712,6 +745,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             for expected in (
                 "Slider(",
                 "Stepper(",
+                ".labelsHidden()",
                 ".pickerStyle(.segmented)",
                 ".pickerStyle(.menu)",
                 "DatePicker(",
@@ -738,6 +772,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             for expected in (
                 "UISlider()",
                 "UIStepper()",
+                "valueLabel?.text",
                 "UISegmentedControl(items:",
                 "UIDatePicker()",
                 "UIColorWell()",
@@ -2569,7 +2604,9 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn('screen.safeArea.owner == "system" && screen.sourceStatusBarHeight == nil', uikit_runtime)
             self.assertIn('? view.safeAreaLayoutGuide.topAnchor', uikit_runtime)
             self.assertIn(': view.topAnchor', uikit_runtime)
-            self.assertIn("content.bottomAnchor.constraint(\n                    lessThanOrEqualTo:", uikit_runtime)
+            self.assertIn("hasNestedScrollOwner", uikit_runtime)
+            self.assertIn("content.bottomAnchor.constraint(equalTo: contentBottom)", uikit_runtime)
+            self.assertIn("content.bottomAnchor.constraint(lessThanOrEqualTo: contentBottom)", uikit_runtime)
             self.assertIn("configureNavigationBar(for: controller, in: navigation)", uikit_navigation)
             self.assertIn("generatedShowsNavigationBar", uikit_navigation)
 

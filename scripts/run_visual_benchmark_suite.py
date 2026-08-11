@@ -30,6 +30,13 @@ def load_suite(path: Path) -> dict[str, Any]:
             raise ValueError("Visual benchmark case IDs must be present and unique")
         if not html.is_file():
             raise ValueError(f"Missing visual benchmark HTML: {html}")
+        if item.get("level") not in {1, 2, 3}:
+            raise ValueError(f"Visual benchmark case {case_id!r} must declare level 1, 2, or 3")
+        if not item.get("coverage"):
+            raise ValueError(f"Visual benchmark case {case_id!r} must declare coverage")
+        expected = item.get("expectedNative") or {}
+        if expected and not isinstance(expected, dict):
+            raise ValueError(f"Visual benchmark case {case_id!r} expectedNative must be an object")
         seen.add(case_id)
     return payload
 
@@ -44,7 +51,97 @@ def newest_review_bundles(case_dir: Path) -> list[Path]:
     return sorted(by_screen.values())
 
 
-def summarize_case(case_id: str, case_dir: Path, command_result: subprocess.CompletedProcess[str] | None = None) -> dict[str, Any]:
+def load_optional_json(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return payload if isinstance(payload, dict) else {}
+
+
+def native_quality_summary(case: dict[str, Any], case_dir: Path, ui_stack: str) -> dict[str, Any]:
+    report_dir = case_dir / ".html-to-ios"
+    architecture = load_optional_json(report_dir / "native-architecture-plan.json")
+    controls = load_optional_json(report_dir / "native-control-configuration-plan.json")
+    structure = load_optional_json(report_dir / "native-structure-validation.json")
+    expectations = case.get("expectedNative") or {}
+    architecture_screens = architecture.get("screens") or []
+    content_kinds = sorted({
+        str((((screen.get("layers") or {}).get("contentContainer") or {}).get("kind") or ""))
+        for screen in architecture_screens
+        if isinstance(screen, dict)
+    } - {""})
+    navigation_styles = sorted({
+        str(((screen.get("navigation") or {}).get("barRendering") or ""))
+        for screen in architecture_screens
+        if isinstance(screen, dict)
+    } - {""})
+    control_records = [
+        control
+        for screen in controls.get("screens") or []
+        for control in screen.get("controls") or []
+        if isinstance(control, dict)
+    ]
+    primitive_key = "uiKit" if ui_stack == "uikit" else "swiftUI"
+    primitives = sorted({
+        str((control.get("nativePrimitive") or {}).get(primitive_key) or "")
+        for control in control_records
+    } - {""})
+    system_count = sum(str(control.get("strategy") or "").startswith("system-control") for control in control_records)
+    custom_count = len(control_records) - system_count
+    system_ratio = system_count / len(control_records) if control_records else 1.0
+    checks: list[dict[str, Any]] = []
+
+    def add_check(name: str, expected: Any, actual: Any, passed: bool) -> None:
+        checks.append({"name": name, "expected": expected, "actual": actual, "passed": passed})
+
+    allowed_content = [str(item) for item in expectations.get("contentContainerKinds") or []]
+    if allowed_content:
+        add_check(
+            "content-container-kind", allowed_content, content_kinds,
+            bool(content_kinds) and all(item in allowed_content for item in content_kinds),
+        )
+    expected_navigation = expectations.get("navigationBarRendering")
+    if expected_navigation:
+        add_check(
+            "navigation-bar-rendering", expected_navigation, navigation_styles,
+            bool(navigation_styles) and all(item == expected_navigation for item in navigation_styles),
+        )
+    required_primitives = [
+        str(item) for item in (
+            expectations.get("requiredUIKitControls")
+            if ui_stack == "uikit" else expectations.get("requiredSwiftUIControls")
+        ) or []
+    ]
+    for primitive in required_primitives:
+        add_check("required-native-control", primitive, primitives, primitive in primitives)
+    minimum_ratio = float(expectations.get("minimumSystemControlRatio", 0))
+    add_check("minimum-system-control-ratio", minimum_ratio, round(system_ratio, 4), system_ratio >= minimum_ratio)
+    maximum_custom = int(expectations.get("maximumCustomControlCount", len(control_records)))
+    add_check("maximum-custom-control-count", maximum_custom, custom_count, custom_count <= maximum_custom)
+    structure_status = str(structure.get("status") or "missing")
+    add_check("native-structure-validation", "passed", structure_status, structure_status == "passed")
+    return {
+        "status": "passed" if checks and all(item["passed"] for item in checks) else "failed",
+        "contentContainerKinds": content_kinds,
+        "navigationBarRendering": navigation_styles,
+        "nativeControlPrimitives": primitives,
+        "controlCount": len(control_records),
+        "systemControlCount": system_count,
+        "customControlCount": custom_count,
+        "systemControlRatio": round(system_ratio, 4),
+        "checks": checks,
+    }
+
+
+def summarize_case(
+    case_id: str,
+    case_dir: Path,
+    command_result: subprocess.CompletedProcess[str] | None = None,
+    *,
+    case: dict[str, Any] | None = None,
+    ui_stack: str = "uikit",
+) -> dict[str, Any]:
+    case = case or {"id": case_id}
     report_path = case_dir / ".html-to-ios" / "orchestration-report.json"
     orchestration = json.loads(report_path.read_text(encoding="utf-8")) if report_path.is_file() else {}
     bundles = []
@@ -60,6 +157,7 @@ def summarize_case(case_id: str, case_dir: Path, command_result: subprocess.Comp
     )
     return {
         "id": case_id,
+        "level": case.get("level"),
         "workspace": str(case_dir.resolve()),
         "commandReturnCode": command_result.returncode if command_result is not None else None,
         "orchestrationStatus": orchestration.get("status") or "missing-report",
@@ -83,6 +181,7 @@ def summarize_case(case_id: str, case_dir: Path, command_result: subprocess.Comp
             }
             for item in required
         ],
+        "nativeQuality": native_quality_summary(case, case_dir, ui_stack),
     }
 
 
@@ -96,13 +195,13 @@ def markdown_report(report: dict[str, Any]) -> str:
         f"- Average fidelity: {report['summary']['averageFidelityPercent']}",
         f"- Exact 100% cases: {report['summary']['exactCaseCount']}",
         "",
-        "| Case | Build | Visual gate | Fidelity | Required states |",
-        "| --- | --- | --- | ---: | ---: |",
+        "| Case | Level | Build | Native quality | Visual gate | Fidelity | Required states |",
+        "| --- | ---: | --- | --- | --- | ---: | ---: |",
     ]
     for item in report["cases"]:
         fidelity = "n/a" if item["fidelityPercent"] is None else f"{item['fidelityPercent']:.4f}%"
         lines.append(
-            f"| {item['id']} | {item['buildGate']} | {item['visualDiffGate']} | {fidelity} | {item['requiredStateCount']} |"
+            f"| {item['id']} | {item['level']} | {item['buildGate']} | {item['nativeQuality']['status']} | {item['visualDiffGate']} | {fidelity} | {item['requiredStateCount']} |"
         )
     return "\n".join(lines) + "\n"
 
@@ -158,7 +257,7 @@ def main() -> int:
                 check=False,
             )
             (case_dir / "benchmark-run.log").write_text(result.stdout, encoding="utf-8")
-        summary = summarize_case(case_id, case_dir, result)
+        summary = summarize_case(case_id, case_dir, result, case=item, ui_stack=args.ui_stack)
         summary["coverage"] = item.get("coverage") or []
         cases.append(summary)
 
@@ -171,6 +270,7 @@ def main() -> int:
         "summary": {
             "caseCount": len(cases),
             "builtCaseCount": sum(item["buildGate"] == "passed" for item in cases),
+            "nativeQualityPassedCaseCount": sum(item["nativeQuality"]["status"] == "passed" for item in cases),
             "measuredCaseCount": len(measured),
             "averageFidelityPercent": round(sum(measured) / len(measured), 4) if measured else None,
             "minimumFidelityPercent": round(min(measured), 4) if measured else None,
