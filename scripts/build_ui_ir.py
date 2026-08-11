@@ -122,17 +122,33 @@ def text_behavior(node: dict, semantic: str) -> dict | None:
     style = node.get("style") or {}
     tag = str(node.get("tag") or "").lower()
     role = str(attrs.get("role") or "").lower()
+    input_type = str(attrs.get("type") or "text").strip().lower()
     control_hint = str(attrs.get("data-ios-text-control") or "").strip().lower()
     input_semantics = {"text-input", "secure-input", "search-input", "search-bar", "number-input", "text-area"}
-    is_input = semantic in input_semantics or tag in {"input", "textarea"} or role in {"textbox", "searchbox"}
+    textual_input_types = {"", "text", "email", "url", "tel", "password", "search", "number"}
+    native_text_input = tag == "textarea" or (tag == "input" and input_type in textual_input_types)
+    contenteditable_value = str(attrs.get("contenteditable") or "").strip().lower()
+    contenteditable = bool(first_known(
+        properties.get("isContentEditable"),
+        attr_present(attrs, "contenteditable") and contenteditable_value not in {"false", "0", "no", "off"},
+        False,
+    ))
+    aria_text_input = role in {"textbox", "searchbox"}
+    is_input = semantic in input_semantics or native_text_input or aria_text_input or contenteditable
     if not is_input and semantic not in {"text", "label", "heading"} and not control_hint:
         return None
     multiline_hint = explicit_bool(attrs, "data-ios-multiline")
     aria_multiline = explicit_bool(attrs, "aria-multiline")
     multiline = first_known(multiline_hint, aria_multiline, tag == "textarea" or semantic == "text-area")
-    readonly = bool(first_known(properties.get("readOnly"), attr_present(attrs, "readonly"), False))
-    enabled = not bool(first_known(properties.get("disabled"), attr_present(attrs, "disabled"), False))
     editable_hint = explicit_bool(attrs, "data-ios-editable")
+    readonly = bool(first_known(
+        True if editable_hint is False else None,
+        explicit_bool(attrs, "aria-readonly"),
+        properties.get("readOnly") if native_text_input else None,
+        attr_present(attrs, "readonly") if native_text_input else None,
+        False,
+    ))
+    enabled = not bool(first_known(properties.get("disabled"), attr_present(attrs, "disabled"), False))
     editable = bool(first_known(editable_hint, is_input and not readonly and enabled, False))
     selectable_hint = explicit_bool(attrs, "data-ios-selectable")
     source_selectable = str(style.get("userSelect") or "auto").lower() in {"text", "all"}
@@ -156,6 +172,12 @@ def text_behavior(node: dict, semantic: str) -> dict | None:
 
     return {
         "role": "input" if is_input else "display",
+        "sourceKind": (
+            "html-control" if native_text_input
+            else "contenteditable" if contenteditable
+            else "aria-widget" if aria_text_input
+            else "display-text"
+        ),
         "nativeControl": native_control,
         "editable": editable,
         "readOnly": readonly or not editable,
@@ -203,6 +225,7 @@ def data_binding(node: dict) -> dict | None:
 def semantic_mapping(node: dict, has_interaction: bool) -> dict:
     tag = str(node.get("tag") or "").lower()
     attrs = node.get("attributes") or {}
+    properties = node.get("properties") or {}
     role = str(attrs.get("role") or "").lower()
     input_type = str(attrs.get("type") or "text").lower()
     style = node.get("style") or {}
@@ -391,7 +414,12 @@ def semantic_mapping(node: dict, has_interaction: bool) -> dict:
             "unsupported" if unsupported else "native-fallback" if media else "native",
         )
 
-    if attrs.get("contenteditable") == "true":
+    contenteditable_value = str(attrs.get("contenteditable") or "").strip().lower()
+    if bool(first_known(
+        properties.get("isContentEditable"),
+        attr_present(attrs, "contenteditable") and contenteditable_value not in {"false", "0", "no", "off"},
+        False,
+    )):
         reasons.append("attribute:contenteditable")
         return result("text-area", "TextEditor", "UITextView", 0.94)
     if has_interaction:
@@ -2203,6 +2231,7 @@ def build_ir(data: dict, args) -> dict:
                 "checked": first_known(properties.get("checked"), attr_bool(attrs, "checked"), attr_bool(attrs, "aria-checked")),
                 "expanded": first_known(properties.get("open"), attr_bool(attrs, "open"), attr_bool(attrs, "aria-expanded")),
                 "readonly": first_known(properties.get("readOnly"), attr_present(attrs, "readonly")),
+                "selectedIndex": properties.get("selectedIndex"),
                 "required": first_known(properties.get("required"), attr_present(attrs, "required")),
                 "focused": properties.get("focused"),
                 "min": attrs.get("min"),

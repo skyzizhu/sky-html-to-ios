@@ -893,7 +893,7 @@ async function main() {
         ) ? styleObject(getComputedStyle(element, "::placeholder")) : null;
         const attributes = {};
         for (const name of [
-          "role", "aria-label", "aria-hidden", "aria-checked", "aria-selected", "aria-expanded", "aria-multiline",
+          "role", "aria-label", "aria-hidden", "aria-checked", "aria-selected", "aria-expanded", "aria-multiline", "aria-readonly",
           "aria-valuemin", "aria-valuemax", "aria-valuenow", "aria-controls", "aria-current", "aria-haspopup",
           "href", "target", "type", "name", "placeholder", "value", "disabled", "checked",
           "selected", "required", "readonly", "multiple", "min", "max", "step", "maxlength",
@@ -959,6 +959,8 @@ async function main() {
             readOnly: "readOnly" in element ? Boolean(element.readOnly) : null,
             required: "required" in element ? Boolean(element.required) : null,
             multiple: "multiple" in element ? Boolean(element.multiple) : null,
+            selectedIndex: "selectedIndex" in element ? Number(element.selectedIndex) : null,
+            isContentEditable: "isContentEditable" in element ? Boolean(element.isContentEditable) : null,
             open: "open" in element ? Boolean(element.open) : null,
             focused: document.activeElement === element,
           },

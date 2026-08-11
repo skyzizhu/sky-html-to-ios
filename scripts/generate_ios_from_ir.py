@@ -1995,6 +1995,12 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
                     "id": str(option.get("id") or f"{node_id}.option-{len(control_options) + 1}"),
                     "title": title,
                     "selected": option_selected(option),
+                    "value": str(first_non_none(
+                        (option.get("content") or {}).get("value"),
+                        (option.get("state") or {}).get("value"),
+                        title,
+                    )),
+                    "enabled": bool(first_non_none((option.get("state") or {}).get("enabled"), True)),
                 })
     else:
         for child in child_payloads:
@@ -2010,7 +2016,19 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
                     "id": str(child.get("id") or f"{node_id}.option-{len(control_options) + 1}"),
                     "title": title,
                     "selected": option_selected(context.nodes.get(str(child.get("id") or "")) or {}),
+                    "value": title,
+                    "enabled": bool(first_non_none(
+                        (context.nodes.get(str(child.get("id") or "")) or {}).get("state", {}).get("enabled"),
+                        True,
+                    )),
                 })
+    selected_index = int(number(node_state.get("selectedIndex"), -1))
+    if (
+        semantic in {"select", "wheel-picker"}
+        and not any(option.get("selected") for option in control_options)
+        and 0 <= selected_index < len(control_options)
+    ):
+        control_options[selected_index]["selected"] = True
     control_config = None
     if semantic in {
         "slider", "stepper", "select", "multi-select", "segmented-control",
@@ -3596,6 +3614,7 @@ struct HTMLToIOSNodeSpec: Codable, Identifiable {{
 
 struct HTMLToIOSTextBehaviorSpec: Codable {{
     let role: String?
+    let sourceKind: String?
     let nativeControl: String?
     let editable: Bool?
     let readOnly: Bool?
@@ -3701,6 +3720,8 @@ struct HTMLToIOSControlOptionSpec: Codable, Identifiable {{
     let id: String
     let title: String
     let selected: Bool
+    let value: String?
+    let enabled: Bool?
 }}
 
 struct HTMLToIOSContentItemSpec: Codable, Identifiable {{
@@ -5490,7 +5511,8 @@ struct HTMLToIOSNativeNodeView: View {
                 .onAppear {
                     if spec.textBehavior?.autofocus == true { isInputFocused = true }
                 }
-                .disabled(!spec.isEnabled || spec.textBehavior?.editable == false || spec.textBehavior?.enabled == false)
+                .allowsHitTesting(spec.textBehavior?.editable != false)
+                .disabled(!spec.isEnabled || spec.textBehavior?.enabled == false)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         case "text-field", "input", "search-field", "text-input", "search-input", "number-input":
@@ -5513,7 +5535,8 @@ struct HTMLToIOSNativeNodeView: View {
             .onAppear {
                 if spec.textBehavior?.autofocus == true { isInputFocused = true }
             }
-            .disabled(!spec.isEnabled || spec.textBehavior?.editable == false || spec.textBehavior?.enabled == false)
+            .allowsHitTesting(spec.textBehavior?.editable != false)
+            .disabled(!spec.isEnabled || spec.textBehavior?.enabled == false)
         case "secure-field", "secure-input":
             SecureField(
                 "",
@@ -5534,7 +5557,8 @@ struct HTMLToIOSNativeNodeView: View {
             .onAppear {
                 if spec.textBehavior?.autofocus == true { isInputFocused = true }
             }
-            .disabled(!spec.isEnabled || spec.textBehavior?.editable == false || spec.textBehavior?.enabled == false)
+            .allowsHitTesting(spec.textBehavior?.editable != false)
+            .disabled(!spec.isEnabled || spec.textBehavior?.enabled == false)
         case "text-area":
             let value = store.binding(
                 for: spec.id,
@@ -5556,7 +5580,8 @@ struct HTMLToIOSNativeNodeView: View {
                     .onAppear {
                         if spec.textBehavior?.autofocus == true { isInputFocused = true }
                     }
-                    .disabled(!spec.isEnabled || spec.textBehavior?.editable == false || spec.textBehavior?.enabled == false)
+                    .allowsHitTesting(spec.textBehavior?.editable != false)
+                    .disabled(!spec.isEnabled || spec.textBehavior?.enabled == false)
             }
         case "switch", "toggle":
             Toggle(spec.text, isOn: store.flagBinding(for: spec.id, initialValue: spec.isInitiallySelected ?? false))
@@ -5607,7 +5632,7 @@ struct HTMLToIOSNativeNodeView: View {
                 spec.text,
                 selection: store.selectionBinding(for: spec.id, initialValue: initial)
             ) {
-                ForEach(options) { option in Text(option.title).tag(option.id) }
+                ForEach(options) { option in Text(option.title).tag(option.id).disabled(option.enabled == false) }
             }
             .pickerStyle(.segmented)
             .modifier(HTMLToIOSOptionalTintModifier(value: nativeControlAppearance?.selectedTint ?? spec.controlConfig?.selectedTint ?? spec.controlConfig?.tint))
@@ -5615,7 +5640,7 @@ struct HTMLToIOSNativeNodeView: View {
             let options = spec.controlConfig?.options ?? []
             let initial = options.first(where: \.selected)?.id ?? options.first?.id ?? ""
             Picker(spec.text, selection: store.selectionBinding(for: spec.id, initialValue: initial)) {
-                ForEach(options) { option in Text(option.title).tag(option.id) }
+                ForEach(options) { option in Text(option.title).tag(option.id).disabled(option.enabled == false) }
             }
             .pickerStyle(.wheel)
             .modifier(HTMLToIOSOptionalTintModifier(value: nativeControlAppearance?.tint ?? spec.controlConfig?.tint))
@@ -5626,7 +5651,7 @@ struct HTMLToIOSNativeNodeView: View {
                 spec.text,
                 selection: store.selectionBinding(for: spec.id, initialValue: initial)
             ) {
-                ForEach(options) { option in Text(option.title).tag(option.id) }
+                ForEach(options) { option in Text(option.title).tag(option.id).disabled(option.enabled == false) }
             }
             .pickerStyle(.menu)
         case "multi-select":
@@ -5637,6 +5662,7 @@ struct HTMLToIOSNativeNodeView: View {
                         let key = spec.id + "|" + option.id
                         if store.flags.contains(key) { store.flags.remove(key) } else { store.flags.insert(key) }
                     }
+                    .disabled(option.enabled == false)
                 }
             } label: {
                 Text(spec.text.isEmpty ? (options.first?.title ?? "") : spec.text)
@@ -8305,10 +8331,22 @@ final class HTMLToIOSNodeRenderer {
             button.menu = UIMenu(children: options.map { option in
                 UIAction(
                     title: option.title,
+                    attributes: option.enabled == false ? .disabled : [],
                     state: option.selected ? .on : .off
-                ) { [state, weak button] _ in
-                    state.values[spec.id] = option.id
-                    button?.setTitle(option.title, for: .normal)
+                ) { [state, weak button] action in
+                    if spec.semantic == "multi-select" {
+                        let key = spec.id + "|" + option.id
+                        if state.flags.contains(key) {
+                            state.flags.remove(key)
+                            action.state = .off
+                        } else {
+                            state.flags.insert(key)
+                            action.state = .on
+                        }
+                    } else {
+                        state.values[spec.id] = option.value ?? option.id
+                        button?.setTitle(option.title, for: .normal)
+                    }
                 }
             })
             button.isEnabled = spec.isEnabled

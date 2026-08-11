@@ -662,7 +662,12 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                         if index == 1:
                             option["source"]["selector"] += ".selected"
                     else:
-                        option["state"] = {"selected": index == 1}
+                        option["state"] = {
+                            "selected": index == 1,
+                            "enabled": index == 1,
+                            "value": f"value-{index}",
+                        }
+                        option["content"]["value"] = f"value-{index}"
                     option_nodes.append(option)
             stepper_options = []
             for index, title in enumerate(("-", "3", "+")):
@@ -724,6 +729,14 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             )
             self.assertEqual(
                 [item["selected"] for item in generated_nodes[segmented["id"]]["controlConfig"]["options"]],
+                [False, True],
+            )
+            self.assertEqual(
+                [item["value"] for item in generated_nodes[select["id"]]["controlConfig"]["options"]],
+                ["value-0", "value-1"],
+            )
+            self.assertEqual(
+                [item["enabled"] for item in generated_nodes[select["id"]]["controlConfig"]["options"]],
                 [False, True],
             )
             self.assertEqual(generated_nodes[page_control["id"]]["controlConfig"]["pageCount"], 4)
@@ -792,6 +805,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "slider.minimumTrackTintColor",
                 "slider.setThumbImage(image, for: .normal)",
                 "segmented.selectedSegmentTintColor",
+                "attributes: option.enabled == false ? .disabled : []",
+                "state.values[spec.id] = option.value ?? option.id",
                 "pageControl.currentPageIndicatorTintColor",
                 "applyNativeControlStateAppearance",
                 "nativeControlStateName",
@@ -2673,6 +2688,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("maxLength: spec.textBehavior?.maxLength", swiftui_runtime)
             self.assertIn(".scrollDismissesKeyboard(.interactively)", swiftui_runtime)
             self.assertIn("HTMLToIOSInputPolicyModifier", swiftui_runtime)
+            self.assertIn(".allowsHitTesting(spec.textBehavior?.editable != false)", swiftui_runtime)
+            self.assertIn(".disabled(!spec.isEnabled || spec.textBehavior?.enabled == false)", swiftui_runtime)
             self.assertIn("prompt: inputPrompt", swiftui_runtime)
             self.assertIn(".padding(.horizontal, -5)", swiftui_runtime)
             self.assertIn("HTMLToIOSControlButtonStyle", swiftui_runtime)

@@ -843,6 +843,58 @@ class BuildUIIRTests(unittest.TestCase):
             self.assertFalse(by_runtime_id["article"]["textBehavior"]["editable"])
             self.assertTrue(by_runtime_id["article"]["textBehavior"]["selectable"])
 
+    def test_form_semantics_override_input_like_visual_appearance(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            nodes = [
+                render_node("app", None, "main", {"x": 0, "y": 0, "width": 393, "height": 852}),
+                render_node("editable", "app", "input", {"x": 20, "y": 40, "width": 353, "height": 44}),
+                render_node("bordered-label", "app", "div", {"x": 20, "y": 100, "width": 353, "height": 44}),
+                render_node("rich-input", "app", "div", {"x": 20, "y": 160, "width": 353, "height": 90}),
+                render_node("readonly-widget", "app", "div", {"x": 20, "y": 270, "width": 353, "height": 44}),
+                render_node("checkbox", "app", "input", {"x": 20, "y": 330, "width": 22, "height": 22}),
+            ]
+            nodes[1]["attributes"] = {"type": "text", "placeholder": "Type here"}
+            nodes[1]["properties"] = {"value": "", "readOnly": False, "disabled": False}
+            nodes[2]["text"] = "Display only"
+            nodes[2]["style"].update({"borderTopWidth": "1px", "borderRadius": "8px"})
+            nodes[3]["attributes"] = {"contenteditable": ""}
+            nodes[3]["properties"] = {"isContentEditable": True, "disabled": False}
+            nodes[3]["text"] = "Editable content"
+            nodes[4]["attributes"] = {"role": "textbox", "aria-readonly": "true"}
+            nodes[4]["text"] = "Read only widget"
+            nodes[5]["attributes"] = {"type": "checkbox"}
+            nodes[5]["properties"] = {"checked": True, "disabled": False}
+            source = root / "render-tree.json"
+            output = root / "ui-ir.json"
+            source.write_text(json.dumps({
+                "schemaVersion": "render-tree-1.2",
+                "source": {"kind": "html-file", "entry": "/tmp/form.html"},
+                "document": {"viewport": {"width": 393, "height": 852}},
+                "nodes": nodes,
+                "interactions": [],
+                "phoneCandidates": [],
+            }), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), str(source), "--out", str(output),
+                "--root-runtime-id", "app", "--screen-id", "form",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            generated = json.loads(output.read_text(encoding="utf-8"))
+            by_id = {item["source"]["runtimeId"]: item for item in generated["screens"][0]["nodes"]}
+            self.assertTrue(by_id["editable"]["textBehavior"]["editable"])
+            self.assertEqual(by_id["editable"]["textBehavior"]["sourceKind"], "html-control")
+            self.assertEqual(by_id["bordered-label"]["semanticType"], "text")
+            self.assertEqual(by_id["bordered-label"]["textBehavior"]["nativeControl"], "label")
+            self.assertFalse(by_id["bordered-label"]["textBehavior"]["editable"])
+            self.assertEqual(by_id["rich-input"]["semanticType"], "text-area")
+            self.assertTrue(by_id["rich-input"]["textBehavior"]["editable"])
+            self.assertEqual(by_id["rich-input"]["textBehavior"]["sourceKind"], "contenteditable")
+            self.assertFalse(by_id["readonly-widget"]["textBehavior"]["editable"])
+            self.assertTrue(by_id["readonly-widget"]["textBehavior"]["readOnly"])
+            self.assertEqual(by_id["checkbox"]["semanticType"], "checkbox")
+            self.assertIsNone(by_id["checkbox"]["textBehavior"])
+
 
 if __name__ == "__main__":
     unittest.main()

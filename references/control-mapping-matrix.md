@@ -82,6 +82,9 @@
 文本控件选择必须先判断行为，再匹配外观：
 
 - `input`、单行 `role=textbox` 使用 `TextField/UITextField`；不得因输入框高度较大就猜成多行。
+- 可编辑性首先由真实 DOM 语义决定：文本类 `input` 默认可编辑，`textarea` 默认可编辑且多行，`contenteditable` 与 `role=textbox|searchbox` 作为自定义输入证据；不要求存在 JS `input/change` 监听器。`readonly` 与 `aria-readonly=true` 才关闭编辑，`disabled` 同时关闭控件交互。
+- 边框、背景色、圆角、阴影、placeholder 风格和“看起来像输入框”的几何都只是视觉证据。普通 `label/span/p/div` 即使有输入框外观，也必须保持 `Text/UILabel`，除非来源存在上述编辑语义或显式 `data-ios-text-control`、`data-ios-editable`。
+- `select` 必须读取运行时 `value/selectedIndex` 以及每个 `option` 的 `value/selected/disabled`；单选映射 Picker/Menu，多选映射可多选列表或菜单，不得降级为不可编辑 Label 或普通 TextField。
 - `textarea`、`aria-multiline=true` 或明确的多行编辑区域使用 `TextEditor/UITextView`。
 - `readonly` 不会把输入控件降级成 Label。仍保留输入控件视觉和无障碍语义，同时关闭编辑；UIKit `UITextView.isEditable=false`，SwiftUI 对绑定控件禁用写入。
 - 普通静态文字默认使用 `Text/UILabel`。只有来源明确需要文字选择、文本容器内部独立滚动、交互式富文本，或 `data-ios-text-control=text-view` 时，才使用只读 `UITextView`/等价 SwiftUI 包装；只读 TextView 必须关闭编辑，并按来源决定 `isSelectable` 和 `isScrollEnabled`。
