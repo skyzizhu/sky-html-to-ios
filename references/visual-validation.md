@@ -95,6 +95,7 @@ Review bundle 同时输出 `fidelityPercent`、`targetFidelityPercent=100` 和 `
 - 动画采样帧在没有原生确定性采样钩子时为 advisory；不能把未受控的原生帧设为 required。
 - 交互覆盖与视觉相似度分开报告。
 - `interactionSequence` 是 HTML selector actions 与 iOS accessibility actions 的共同来源；先执行 screen activation，再执行 prerequisite 和目标动作，禁止两侧手写不同路径。
+- 表单语义验收不依赖截图：为可编辑输入生成真实 fill/typeText 检查，为 readonly 检查不出现键盘且值不变，为 disabled 检查原生 disabled 状态，为 select/datalist 通过同一 option 文案执行选择并验证显示值更新。截图仍只负责视觉结果。
 
 ## 固定画板归一化
 

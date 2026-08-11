@@ -1980,14 +1980,37 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         selector = str((option_node.get("source") or {}).get("selector") or "").lower().rsplit(">", 1)[-1]
         return any(token in selector for token in (".selected", ".active", ".checked", ".current"))
 
+    def descendant_option_nodes(owner_ids: list[str]) -> list[dict[str, Any]]:
+        pending = [child_id for owner_id in owner_ids for child_id in context.children.get(owner_id, [])]
+        found = []
+        visited = set()
+        while pending:
+            candidate_id = pending.pop(0)
+            if candidate_id in visited:
+                continue
+            visited.add(candidate_id)
+            candidate = context.nodes.get(candidate_id) or {}
+            candidate_semantic = str(candidate.get("semanticType") or "")
+            if candidate_semantic == "option":
+                found.append(candidate)
+            else:
+                pending.extend(context.children.get(candidate_id, []))
+        return found
+
+    linked_option_owner_ids = []
+    for linked_dom_id in (node_state.get("listID"), node_state.get("controlledID")):
+        linked_dom_id = str(linked_dom_id or "").strip()
+        if not linked_dom_id:
+            continue
+        linked_option_owner_ids.extend([
+            candidate_id
+            for candidate_id, candidate in context.nodes.items()
+            if str((candidate.get("source") or {}).get("domId") or "") == linked_dom_id
+        ])
+
     control_options = []
-    if semantic in {"select", "multi-select", "wheel-picker"}:
-        option_nodes = [
-            context.nodes[child_id]
-            for child_id in context.children.get(node_id, [])
-            if child_id in context.nodes
-            and str(context.nodes[child_id].get("semanticType") or "") in {"option", "option-group"}
-        ]
+    if semantic in {"select", "multi-select", "wheel-picker"} or linked_option_owner_ids:
+        option_nodes = descendant_option_nodes([node_id, *linked_option_owner_ids])
         for option in option_nodes:
             title = compact_text((option.get("content") or {}).get("text"))
             if title:
@@ -2035,7 +2058,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         "wheel-picker", "date-input", "radio", "checkbox", "switch", "color-picker", "file-input",
         "progress", "progress-view", "meter", "activity-indicator", "page-control", "paste-control",
         "refresh-control", "calendar-view", "search-bar",
-    }:
+    } or control_options:
         selected_option_index = next(
             (index for index, option in enumerate(control_options) if option.get("selected")),
             0,
@@ -4916,7 +4939,13 @@ private struct HTMLToIOSAccessibilityModifier: ViewModifier {
     let spec: HTMLToIOSNodeSpec
 
     @ViewBuilder func body(content: Content) -> some View {
-        if HTMLToIOSLaunchConfiguration.geometryCaptureEnabled {
+        let nativeFormElementOwnsIdentifier = [
+            "text-field", "input", "search-field", "text-input", "search-input", "number-input",
+            "secure-field", "secure-input", "text-area", "select", "picker", "multi-select", "wheel-picker",
+        ].contains(spec.semantic)
+        if nativeFormElementOwnsIdentifier {
+            content
+        } else if HTMLToIOSLaunchConfiguration.geometryCaptureEnabled {
             content
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier(spec.id)
@@ -5472,6 +5501,26 @@ struct HTMLToIOSNativeNodeView: View {
             .tracking(placeholder?.letterSpacing ?? spec.style.letterSpacing ?? 0)
     }
 
+    @ViewBuilder private var inputSuggestionMenu: some View {
+        if let options = spec.controlConfig?.options, !options.isEmpty {
+            Menu {
+                ForEach(options) { option in
+                    Button(option.title) {
+                        store.values[spec.id] = option.value ?? option.title
+                    }
+                    .disabled(option.enabled == false)
+                }
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color(htmlToIOS: spec.style.foreground).opacity(0.65))
+                    .frame(minWidth: 24, minHeight: 24)
+            }
+            .accessibilityLabel(spec.accessibilityLabel ?? spec.text)
+            .accessibilityIdentifier(spec.id + ".suggestions")
+        }
+    }
+
     @ViewBuilder private var content: some View {
         if effectiveScrollAxis != "none" && spec.semantic != "carousel" && spec.semantic != "scroll" {
             scrollContainer
@@ -5506,6 +5555,7 @@ struct HTMLToIOSNativeNodeView: View {
                 .textContentType(htmlToIOSTextContentType(spec.textBehavior?.contentType))
                 .submitLabel(htmlToIOSSubmitLabel(spec.textBehavior?.returnKey ?? spec.textBehavior?.submitLabel))
                 .modifier(HTMLToIOSInputPolicyModifier(behavior: spec.textBehavior))
+                .accessibilityIdentifier(spec.id)
                 .focused($isInputFocused)
                 .onSubmit { store.perform(spec.action) }
                 .onAppear {
@@ -5516,27 +5566,31 @@ struct HTMLToIOSNativeNodeView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         case "text-field", "input", "search-field", "text-input", "search-input", "number-input":
-            TextField(
-                "",
-                text: store.binding(
-                    for: spec.id,
-                    initialValue: spec.textBehavior?.initialValue ?? spec.text,
-                    maxLength: spec.textBehavior?.maxLength
-                ),
-                prompt: inputPrompt
-            )
-            .textFieldStyle(.plain)
-            .keyboardType(htmlToIOSKeyboardType(spec.textBehavior?.keyboardType))
-            .textContentType(htmlToIOSTextContentType(spec.textBehavior?.contentType))
-            .submitLabel(htmlToIOSSubmitLabel(spec.textBehavior?.returnKey ?? spec.textBehavior?.submitLabel))
-            .modifier(HTMLToIOSInputPolicyModifier(behavior: spec.textBehavior))
-            .focused($isInputFocused)
-            .onSubmit { store.perform(spec.action) }
-            .onAppear {
-                if spec.textBehavior?.autofocus == true { isInputFocused = true }
+            HStack(spacing: spec.controlConfig?.options.isEmpty == false ? 4 : 0) {
+                TextField(
+                    "",
+                    text: store.binding(
+                        for: spec.id,
+                        initialValue: spec.textBehavior?.initialValue ?? spec.text,
+                        maxLength: spec.textBehavior?.maxLength
+                    ),
+                    prompt: inputPrompt
+                )
+                .textFieldStyle(.plain)
+                .keyboardType(htmlToIOSKeyboardType(spec.textBehavior?.keyboardType))
+                .textContentType(htmlToIOSTextContentType(spec.textBehavior?.contentType))
+                .submitLabel(htmlToIOSSubmitLabel(spec.textBehavior?.returnKey ?? spec.textBehavior?.submitLabel))
+                .modifier(HTMLToIOSInputPolicyModifier(behavior: spec.textBehavior))
+                .accessibilityIdentifier(spec.id)
+                .focused($isInputFocused)
+                .onSubmit { store.perform(spec.action) }
+                .onAppear {
+                    if spec.textBehavior?.autofocus == true { isInputFocused = true }
+                }
+                .allowsHitTesting(spec.textBehavior?.editable != false)
+                .disabled(!spec.isEnabled || spec.textBehavior?.enabled == false)
+                inputSuggestionMenu
             }
-            .allowsHitTesting(spec.textBehavior?.editable != false)
-            .disabled(!spec.isEnabled || spec.textBehavior?.enabled == false)
         case "secure-field", "secure-input":
             SecureField(
                 "",
@@ -5552,6 +5606,7 @@ struct HTMLToIOSNativeNodeView: View {
             .textContentType(htmlToIOSTextContentType(spec.textBehavior?.contentType))
             .submitLabel(htmlToIOSSubmitLabel(spec.textBehavior?.returnKey ?? spec.textBehavior?.submitLabel))
             .modifier(HTMLToIOSInputPolicyModifier(behavior: spec.textBehavior))
+            .accessibilityIdentifier(spec.id)
             .focused($isInputFocused)
             .onSubmit { store.perform(spec.action) }
             .onAppear {
@@ -5576,6 +5631,7 @@ struct HTMLToIOSNativeNodeView: View {
                     .padding(.vertical, -8)
                     .keyboardType(htmlToIOSKeyboardType(spec.textBehavior?.keyboardType))
                     .modifier(HTMLToIOSInputPolicyModifier(behavior: spec.textBehavior))
+                    .accessibilityIdentifier(spec.id)
                     .focused($isInputFocused)
                     .onAppear {
                         if spec.textBehavior?.autofocus == true { isInputFocused = true }
@@ -5642,6 +5698,7 @@ struct HTMLToIOSNativeNodeView: View {
             Picker(spec.text, selection: store.selectionBinding(for: spec.id, initialValue: initial)) {
                 ForEach(options) { option in Text(option.title).tag(option.id).disabled(option.enabled == false) }
             }
+            .accessibilityIdentifier(spec.id)
             .pickerStyle(.wheel)
             .modifier(HTMLToIOSOptionalTintModifier(value: nativeControlAppearance?.tint ?? spec.controlConfig?.tint))
         case "select", "picker":
@@ -5653,6 +5710,7 @@ struct HTMLToIOSNativeNodeView: View {
             ) {
                 ForEach(options) { option in Text(option.title).tag(option.id).disabled(option.enabled == false) }
             }
+            .accessibilityIdentifier(spec.id)
             .pickerStyle(.menu)
         case "multi-select":
             let options = spec.controlConfig?.options ?? []
@@ -5667,6 +5725,7 @@ struct HTMLToIOSNativeNodeView: View {
             } label: {
                 Text(spec.text.isEmpty ? (options.first?.title ?? "") : spec.text)
             }
+            .accessibilityIdentifier(spec.id)
         case "date-input":
             let value = spec.controlConfig?.value ?? ""
             let components: DatePickerComponents = {
@@ -8134,6 +8193,7 @@ final class HTMLToIOSNodeRenderer {
             if spec.action != nil {
                 field.addAction(UIAction { [actionHandler] _ in actionHandler(spec.action) }, for: .primaryActionTriggered)
             }
+            configureSuggestions(field, spec: spec)
             view = field
         case "text-field", "input", "secure-field", "text-input", "number-input", "secure-input":
             let field = HTMLToIOSInsetTextField()
@@ -8163,6 +8223,7 @@ final class HTMLToIOSNodeRenderer {
             if spec.textBehavior?.autofocus == true {
                 DispatchQueue.main.async { [weak field] in field?.becomeFirstResponder() }
             }
+            configureSuggestions(field, spec: spec)
             view = field
         case "text-area":
             let textView = HTMLToIOSManagedTextView()
@@ -8172,7 +8233,7 @@ final class HTMLToIOSNodeRenderer {
             textView.contentInsets = contentInsets(spec)
             textView.backgroundColor = .clear
             textView.isEditable = spec.textBehavior?.editable == true
-            textView.isSelectable = spec.textBehavior?.selectable != false
+            textView.isSelectable = spec.textBehavior?.editable == true || spec.textBehavior?.selectable != false
             textView.isScrollEnabled = spec.textBehavior?.scrollable != false
             textView.isUserInteractionEnabled = spec.isEnabled && spec.textBehavior?.enabled != false
             textView.keyboardType = keyboardType(spec.textBehavior?.keyboardType)
@@ -9052,6 +9113,29 @@ final class HTMLToIOSNodeRenderer {
             bottom: padding.indices.contains(2) ? padding[2] : 0,
             right: padding.indices.contains(1) ? padding[1] : 0
         )
+    }
+
+    private func configureSuggestions(_ field: UITextField, spec: HTMLToIOSNodeSpec) {
+        guard let options = spec.controlConfig?.options, !options.isEmpty else { return }
+        let button = UIButton(type: .system)
+        button.setImage(UIImage(systemName: "chevron.down"), for: .normal)
+        button.tintColor = UIColor(htmlToIOS: spec.controlConfig?.tint ?? spec.style.foreground)
+        button.frame = CGRect(x: 0, y: 0, width: 28, height: max(spec.controlConfig?.sourceHeight ?? 28, 28))
+        button.showsMenuAsPrimaryAction = true
+        button.accessibilityIdentifier = spec.id + ".suggestions"
+        button.menu = UIMenu(children: options.map { option in
+            UIAction(
+                title: option.title,
+                attributes: option.enabled == false ? .disabled : []
+            ) { [state, weak field] _ in
+                let value = option.value ?? option.title
+                state.values[spec.id] = value
+                field?.text = value
+                field?.sendActions(for: .editingChanged)
+            }
+        })
+        field.rightView = button
+        field.rightViewMode = .always
     }
 
     private func attributedPlaceholder(_ spec: HTMLToIOSNodeSpec) -> NSAttributedString {
@@ -11544,9 +11628,33 @@ def build_native_merge_evidence(
             for option in (payload.get("controlConfig") or {}).get("options") or []
             if option.get("id") and str(option.get("id")) in ir_nodes
         ]
-        for source_id in option_source_ids:
+        owner_state = (ir_nodes.get(owner_id) or {}).get("state") or {}
+        linked_option_group_ids = [
+            candidate_id
+            for linked_dom_id in (owner_state.get("listID"), owner_state.get("controlledID"))
+            for candidate_id, candidate in ir_nodes.items()
+            if str(linked_dom_id or "").strip()
+            and str((candidate.get("source") or {}).get("domId") or "") == str(linked_dom_id).strip()
+        ]
+        linked_option_source_ids = list(dict.fromkeys([
+            *linked_option_group_ids,
+            *(source_id for group_id in linked_option_group_ids for source_id in descendants(group_id)),
+            *option_source_ids,
+        ]))
+        for source_id in linked_option_source_ids:
             evidence[source_id] = {
                 "strategy": "native-control-option-model-merged",
+                "ownerNodeId": owner_id,
+                "sourceNodeIds": linked_option_source_ids,
+                "nativePrimitive": (
+                    "native-text-input-suggestion-menu"
+                    if owner_state.get("listID")
+                    else "native-picker-option-model"
+                ),
+            }
+        if option_source_ids and payload.get("semantic") in {"select", "multi-select", "wheel-picker"}:
+            evidence[owner_id] = {
+                "strategy": "compound-control-merged",
                 "ownerNodeId": owner_id,
                 "sourceNodeIds": option_source_ids,
                 "nativePrimitive": "native-picker-option-model",

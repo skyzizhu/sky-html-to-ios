@@ -36,7 +36,13 @@ manifest = JSON.parse(File.read(manifest_path))
 abort "Unsupported visual state manifest" unless manifest["schemaVersion"] == "visual-state-manifest-1.0"
 
 def swift_string(value)
-  value.to_s.dump
+  escaped = value.to_s
+    .gsub("\\", "\\\\")
+    .gsub('"', '\\"')
+    .gsub("\r", "\\r")
+    .gsub("\n", "\\n")
+    .gsub("\t", "\\t")
+  "\"#{escaped}\""
 end
 
 def swift_identifier(value, index)
@@ -77,6 +83,9 @@ def action_source(action)
   when "fill"
     value = swift_string(action["value"] || "")
     "try fillElement(identifier: #{identifier}, value: #{value}, in: app)"
+  when "select"
+    value = swift_string(action["value"] || "")
+    "try selectElement(identifier: #{identifier}, value: #{value}, in: app)"
   when "check"
     "try setSwitch(identifier: #{identifier}, enabled: true, in: app)"
   when "uncheck"
@@ -96,6 +105,29 @@ state_methods = (manifest["states"] || []).each_with_index.map do |state, index|
           let app = #{launch_call}
   #{actions}
           capture(name: #{swift_string(state["id"] + ".png")}, app: app)
+      }
+  SWIFT
+end.join("\n")
+
+form_check_methods = (manifest["formChecks"] || []).each_with_index.map do |check, index|
+  identifier = swift_string(check["accessibilityIdentifier"])
+  body = case check["type"]
+         when "input"
+           "try fillElement(identifier: #{identifier}, value: #{swift_string(check["value"] || "HTMLToIOSTest")}, in: app)"
+         when "select"
+           result_identifier = swift_string(check["resultAccessibilityIdentifier"] || check["accessibilityIdentifier"])
+           "try selectElement(identifier: #{identifier}, value: #{swift_string(check["value"] || "")}, expectedValue: #{swift_string(check["expectedValue"] || check["value"] || "")}, resultIdentifier: #{result_identifier}, in: app)"
+         when "readonly"
+           "try assertReadOnly(identifier: #{identifier}, in: app)"
+         when "disabled"
+           "try assertDisabled(identifier: #{identifier}, in: app)"
+         else
+           abort "Unsupported form check: #{check["type"]}"
+         end
+  <<~SWIFT
+      func #{swift_identifier("form_#{check["id"]}", index + (manifest["states"] || []).length)}() throws {
+          let app = launchApp()
+          #{body}
       }
   SWIFT
 end.join("\n")
@@ -156,7 +188,12 @@ swift = <<~SWIFT
                   return candidate
               }
               if scrollAttempts < 5 {
-                  app.swipeUp(velocity: .slow)
+                  let firstVisible = matches.allElementsBoundByIndex.first(where: { $0.exists })
+                  if let firstVisible, firstVisible.frame.midY < app.frame.minY + 170 {
+                      app.swipeDown(velocity: .slow)
+                  } else {
+                      app.swipeUp(velocity: .slow)
+                  }
                   scrollAttempts += 1
               }
               RunLoop.current.run(until: Date().addingTimeInterval(0.1))
@@ -187,13 +224,50 @@ swift = <<~SWIFT
       }
 
       private func fillElement(identifier: String, value: String, in app: XCUIApplication) throws {
-          let candidate = try element(identifier: identifier, in: app)
+          let candidate = try element(identifier: identifier, in: app, requireHittable: true)
           candidate.tap()
-          if let current = candidate.value as? String, !current.isEmpty {
-              candidate.press(forDuration: 0.8)
-              app.menuItems["Select All"].tap()
-          }
           candidate.typeText(value)
+          XCTAssertTrue((candidate.value as? String)?.contains(value) == true, "Input did not accept text: \(identifier)")
+      }
+
+      private func selectElement(identifier: String, value: String, expectedValue: String, resultIdentifier: String, in app: XCUIApplication) throws {
+          let candidate = try element(identifier: identifier, in: app, requireHittable: true)
+          candidate.tap()
+          let button = app.buttons[value]
+          let menuItem = app.menuItems[value]
+          let wheel = app.pickerWheels.firstMatch
+          if button.waitForExistence(timeout: 2) {
+              button.tap()
+          } else if menuItem.waitForExistence(timeout: 1) {
+              menuItem.tap()
+          } else if wheel.waitForExistence(timeout: 1) {
+              wheel.adjust(toPickerWheelValue: value)
+          } else {
+              throw NSError(
+                  domain: "HTMLToIOSVisualValidation",
+                  code: 2,
+                  userInfo: [NSLocalizedDescriptionKey: "No selectable native option named \(value) for \(identifier)"]
+              )
+          }
+          let updated = try element(identifier: resultIdentifier, in: app)
+          let renderedValue = [updated.label, updated.value as? String].compactMap { $0 }.joined(separator: " ")
+          XCTAssertTrue(
+              renderedValue.contains(value) || renderedValue.contains(expectedValue),
+              "Selection did not update native control: \(identifier)"
+          )
+      }
+
+      private func assertReadOnly(identifier: String, in app: XCUIApplication) throws {
+          let candidate = try element(identifier: identifier, in: app)
+          let before = candidate.value as? String
+          candidate.tap()
+          XCTAssertFalse(app.keyboards.firstMatch.waitForExistence(timeout: 1), "Readonly control opened a keyboard: \(identifier)")
+          XCTAssertEqual(candidate.value as? String, before, "Readonly control value changed: \(identifier)")
+      }
+
+      private func assertDisabled(identifier: String, in app: XCUIApplication) throws {
+          let candidate = try element(identifier: identifier, in: app)
+          XCTAssertFalse(candidate.isEnabled, "Disabled control is enabled: \(identifier)")
       }
 
       private func setSwitch(identifier: String, enabled: Bool, in app: XCUIApplication) throws {
@@ -271,6 +345,7 @@ swift = <<~SWIFT
       }
 
   #{state_methods}
+  #{form_check_methods}
   }
 SWIFT
 

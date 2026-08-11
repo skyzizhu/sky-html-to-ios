@@ -17,6 +17,81 @@ CONTROL_SEMANTICS = {
 ASSET_SEMANTICS = {"icon", "image", "video"}
 
 
+def build_form_checks(screen: dict) -> list[dict]:
+    nodes = {str(node.get("id")): node for node in screen.get("nodes") or []}
+    children: dict[str, list[str]] = {}
+    dom_ids: dict[str, list[str]] = {}
+    for node_id, node in nodes.items():
+        children.setdefault(str(node.get("parentId") or ""), []).append(node_id)
+        dom_id = str((node.get("source") or {}).get("domId") or "").strip()
+        if dom_id:
+            dom_ids.setdefault(dom_id, []).append(node_id)
+
+    def options_for(node: dict) -> list[dict]:
+        state = node.get("state") or {}
+        owners = [str(node.get("id") or "")]
+        for linked_id in (state.get("listID"), state.get("controlledID")):
+            owners.extend(dom_ids.get(str(linked_id or "").strip(), []))
+        pending = [child_id for owner in owners for child_id in children.get(owner, [])]
+        options = []
+        visited = set()
+        while pending:
+            candidate_id = pending.pop(0)
+            if candidate_id in visited:
+                continue
+            visited.add(candidate_id)
+            candidate = nodes.get(candidate_id) or {}
+            if candidate.get("semanticType") == "option":
+                options.append(candidate)
+            else:
+                pending.extend(children.get(candidate_id, []))
+        return options
+
+    checks = []
+    for node_id, node in nodes.items():
+        semantic = str(node.get("semanticType") or "")
+        state = node.get("state") or {}
+        behavior = node.get("textBehavior") or {}
+        enabled = state.get("enabled") is not False
+        if semantic in {"text-input", "search-input", "secure-input", "number-input", "text-area"}:
+            if not enabled:
+                checks.append({"id": f"{node_id}.disabled", "type": "disabled", "accessibilityIdentifier": node_id})
+            elif behavior.get("editable") is True:
+                checks.append({
+                    "id": f"{node_id}.input",
+                    "type": "input",
+                    "accessibilityIdentifier": node_id,
+                    "value": "HTMLToIOSTest",
+                })
+            else:
+                checks.append({"id": f"{node_id}.readonly", "type": "readonly", "accessibilityIdentifier": node_id})
+        has_linked_options = bool(str(state.get("listID") or "").strip() or str(state.get("controlledID") or "").strip())
+        option_nodes = options_for(node) if semantic in {"select", "multi-select", "wheel-picker"} or has_linked_options else []
+        if semantic in {"select", "multi-select", "wheel-picker"} or option_nodes:
+            candidate = next((
+                option for option in option_nodes
+                if (option.get("state") or {}).get("enabled") is not False
+                and (option.get("state") or {}).get("selected") is not True
+            ), next((option for option in option_nodes if (option.get("state") or {}).get("enabled") is not False), None))
+            if enabled and candidate:
+                title = str((candidate.get("content") or {}).get("text") or "").strip()
+                value = str((candidate.get("content") or {}).get("value") or (candidate.get("state") or {}).get("value") or title)
+                if title:
+                    checks.append({
+                        "id": f"{node_id}.select",
+                        "type": "select",
+                        "accessibilityIdentifier": (
+                            f"{node_id}.suggestions"
+                            if semantic in {"text-input", "search-input", "number-input"}
+                            else node_id
+                        ),
+                        "resultAccessibilityIdentifier": node_id,
+                        "value": title,
+                        "expectedValue": value,
+                    })
+    return checks
+
+
 def numeric(value, default: float = 0.0) -> float:
     try:
         result = float(value)
@@ -402,6 +477,7 @@ def main() -> int:
             screen_context=screen_context,
         ),
         "states": states,
+        "formChecks": build_form_checks(screen),
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

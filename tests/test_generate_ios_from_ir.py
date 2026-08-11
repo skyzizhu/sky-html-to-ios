@@ -638,6 +638,11 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             switch_thumb = node("controls.switch-thumb", switch["id"], "decoration")
             switch_thumb["style"]["backgroundColor"] = "rgb(255, 255, 255)"
             search_input = node("controls.search-input", root_node["id"], "search-input")
+            suggestion_input = node("controls.city", root_node["id"], "text-input")
+            suggestion_input["state"] = {"listID": "cities", "enabled": True}
+            suggestion_group = node("controls.cities", root_node["id"], "option-group")
+            suggestion_group["source"]["domId"] = "cities"
+            suggestion_group["state"] = {"initiallyVisible": False}
             search_bar = node("controls.search-bar", root_node["id"], "search-bar")
             wheel_picker = node("controls.wheel", root_node["id"], "wheel-picker")
             activity = node("controls.activity", root_node["id"], "activity-indicator")
@@ -669,6 +674,12 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                         }
                         option["content"]["value"] = f"value-{index}"
                     option_nodes.append(option)
+            suggestion_options = []
+            for index, title in enumerate(("Beijing", "Shanghai")):
+                option = node(f"controls.city-{index}", suggestion_group["id"], "option", title)
+                option["content"]["value"] = title.lower()
+                option["state"] = {"selected": False, "enabled": index == 0, "value": title.lower()}
+                suggestion_options.append(option)
             stepper_options = []
             for index, title in enumerate(("-", "3", "+")):
                 option = node(f"controls.stepper-{index}", stepper["id"], "button" if index != 1 else "text", title)
@@ -694,6 +705,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 file_input,
                 switch,
                 search_input,
+                suggestion_input,
+                suggestion_group,
                 search_bar,
                 wheel_picker,
                 activity,
@@ -703,6 +716,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 calendar,
                 switch_thumb,
                 *option_nodes,
+                *suggestion_options,
                 *stepper_options,
                 *page_options,
             ])
@@ -738,6 +752,10 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertEqual(
                 [item["enabled"] for item in generated_nodes[select["id"]]["controlConfig"]["options"]],
                 [False, True],
+            )
+            self.assertEqual(
+                [item["value"] for item in generated_nodes[suggestion_input["id"]]["controlConfig"]["options"]],
+                ["beijing", "shanghai"],
             )
             self.assertEqual(generated_nodes[page_control["id"]]["controlConfig"]["pageCount"], 4)
             self.assertEqual(generated_nodes[page_control["id"]]["controlConfig"]["currentPage"], 1)
@@ -776,6 +794,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "HTMLToIOSOptionalTintModifier",
                 "HTMLToIOSNativeIntrinsicSizeModifier",
                 "nativeControlAppearance",
+                "inputSuggestionMenu",
             ):
                 self.assertIn(expected, swiftui_runtime)
 
@@ -807,6 +826,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "segmented.selectedSegmentTintColor",
                 "attributes: option.enabled == false ? .disabled : []",
                 "state.values[spec.id] = option.value ?? option.id",
+                "configureSuggestions(field, spec: spec)",
+                "field.rightViewMode = .always",
                 "pageControl.currentPageIndicatorTintColor",
                 "applyNativeControlStateAppearance",
                 "nativeControlStateName",
@@ -2690,6 +2711,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("HTMLToIOSInputPolicyModifier", swiftui_runtime)
             self.assertIn(".allowsHitTesting(spec.textBehavior?.editable != false)", swiftui_runtime)
             self.assertIn(".disabled(!spec.isEnabled || spec.textBehavior?.enabled == false)", swiftui_runtime)
+            self.assertIn("nativeFormElementOwnsIdentifier", swiftui_runtime)
+            self.assertIn(".accessibilityIdentifier(spec.id)", swiftui_runtime)
             self.assertIn("prompt: inputPrompt", swiftui_runtime)
             self.assertIn(".padding(.horizontal, -5)", swiftui_runtime)
             self.assertIn("HTMLToIOSControlButtonStyle", swiftui_runtime)
@@ -2700,6 +2723,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             self.assertIn("let textView = HTMLToIOSManagedTextView()", uikit_runtime)
             self.assertIn("textView.isEditable = spec.textBehavior?.editable == true", uikit_runtime)
+            self.assertIn("textView.isSelectable = spec.textBehavior?.editable == true || spec.textBehavior?.selectable != false", uikit_runtime)
             self.assertIn("field.borderStyle = .none", uikit_runtime)
             self.assertIn("scroll.keyboardDismissMode = .interactive", uikit_runtime)
             self.assertIn("field.returnKeyType = returnKeyType", uikit_runtime)

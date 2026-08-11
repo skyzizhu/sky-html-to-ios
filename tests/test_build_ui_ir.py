@@ -70,6 +70,42 @@ def render_node(
 
 
 class BuildUIIRTests(unittest.TestCase):
+    def test_explicit_scroll_root_survives_without_current_overflow(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            app = render_node("app", None, "main", {"x": 0, "y": 0, "width": 393, "height": 852})
+            content = render_node(
+                "content",
+                "app",
+                "section",
+                {"x": 0, "y": 100, "width": 393, "height": 752},
+            )
+            content["style"]["overflowX"] = "auto"
+            content["style"]["overflowY"] = "auto"
+            content["attributes"]["data-ios-scroll-root"] = "vertical"
+            source = root / "render-tree.json"
+            output = root / "ui-ir.json"
+            source.write_text(json.dumps({
+                "schemaVersion": "render-tree-1.2",
+                "source": {"kind": "html-file", "entry": "/tmp/example.html"},
+                "document": {"viewport": {"width": 393, "height": 852}},
+                "nodes": [app, content],
+                "interactions": [],
+                "phoneCandidates": [],
+            }), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), str(source), "--out", str(output),
+                "--root-runtime-id", "app", "--screen-id", "form",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            generated = json.loads(output.read_text(encoding="utf-8"))
+            by_runtime = {
+                item["source"]["runtimeId"]: item
+                for item in generated["screens"][0]["nodes"]
+            }
+            self.assertEqual(by_runtime["content"]["layout"]["scrollAxis"], "vertical")
+            self.assertFalse(by_runtime["content"]["layout"]["scrollMetrics"]["overflowsVertically"])
+
     def test_semantic_root_selector_resolves_extracted_context_runtime_id(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -853,6 +889,10 @@ class BuildUIIRTests(unittest.TestCase):
                 render_node("rich-input", "app", "div", {"x": 20, "y": 160, "width": 353, "height": 90}),
                 render_node("readonly-widget", "app", "div", {"x": 20, "y": 270, "width": 353, "height": 44}),
                 render_node("checkbox", "app", "input", {"x": 20, "y": 330, "width": 22, "height": 22}),
+                render_node("city", "app", "input", {"x": 20, "y": 380, "width": 353, "height": 44}),
+                render_node("cities", "app", "datalist", {"x": 0, "y": 0, "width": 0, "height": 0}),
+                render_node("beijing", "cities", "option", {"x": 0, "y": 0, "width": 0, "height": 0}),
+                render_node("shanghai", "cities", "option", {"x": 0, "y": 0, "width": 0, "height": 0}),
             ]
             nodes[1]["attributes"] = {"type": "text", "placeholder": "Type here"}
             nodes[1]["properties"] = {"value": "", "readOnly": False, "disabled": False}
@@ -865,6 +905,18 @@ class BuildUIIRTests(unittest.TestCase):
             nodes[4]["text"] = "Read only widget"
             nodes[5]["attributes"] = {"type": "checkbox"}
             nodes[5]["properties"] = {"checked": True, "disabled": False}
+            nodes[6]["attributes"] = {"type": "text", "list": "cities", "placeholder": "Choose or type"}
+            nodes[6]["properties"] = {"value": "", "readOnly": False, "disabled": False}
+            nodes[7]["domId"] = "cities"
+            nodes[7]["visible"] = False
+            nodes[8]["attributes"] = {"value": "beijing"}
+            nodes[8]["properties"] = {"value": "beijing", "selected": False, "disabled": False}
+            nodes[8]["text"] = "北京"
+            nodes[8]["visible"] = False
+            nodes[9]["attributes"] = {"value": "shanghai", "disabled": ""}
+            nodes[9]["properties"] = {"value": "shanghai", "selected": False, "disabled": True}
+            nodes[9]["text"] = "上海"
+            nodes[9]["visible"] = False
             source = root / "render-tree.json"
             output = root / "ui-ir.json"
             source.write_text(json.dumps({
@@ -894,6 +946,9 @@ class BuildUIIRTests(unittest.TestCase):
             self.assertTrue(by_id["readonly-widget"]["textBehavior"]["readOnly"])
             self.assertEqual(by_id["checkbox"]["semanticType"], "checkbox")
             self.assertIsNone(by_id["checkbox"]["textBehavior"])
+            self.assertEqual(by_id["city"]["semanticType"], "text-input")
+            self.assertEqual(by_id["city"]["state"]["listID"], "cities")
+            self.assertEqual(by_id["cities"]["semanticType"], "option-group")
 
 
 if __name__ == "__main__":

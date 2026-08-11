@@ -92,7 +92,20 @@ def build_screen_graph(screen: dict[str, Any]) -> dict[str, Any]:
                 childNodeId=node_id,
             )
         node_rect = rect(node)
-        if node_rect and node_rect["height"] > 0 and close(node_rect["width"], node_rect["height"]):
+        semantic = str(node.get("semanticType") or "")
+        style = node.get("style") or {}
+        explicit_aspect_ratio = str(style.get("aspectRatio") or "").strip().lower() not in {"", "auto", "none"}
+        compact_square_candidate = bool(
+            node_rect
+            and max(node_rect["width"], node_rect["height"]) <= 160
+        )
+        semantic_square_candidate = semantic in {"image", "icon", "avatar", "decoration", "checkbox", "radio", "color-picker"}
+        if (
+            node_rect
+            and node_rect["height"] > 0
+            and close(node_rect["width"], node_rect["height"])
+            and (compact_square_candidate or semantic_square_candidate or explicit_aspect_ratio)
+        ):
             append_relation(
                 relations,
                 f"{screen_id}.square.{len(relations)}",

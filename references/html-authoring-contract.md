@@ -81,6 +81,8 @@
 
 优先使用标准 HTML 的 `name`、`autofocus`、`maxlength`、`enterkeyhint`、`autocapitalize`、`spellcheck`、`pattern`、`readonly` 和 `disabled`。这些字段只用于消除语义歧义，不能替代 `input`、`textarea` 或 ARIA。普通展示文字不需要标注。
 
+可输入且带建议的字段使用标准 `input[list] + datalist`；自定义组合框使用 `role="combobox"` 并通过 `aria-controls` 指向 `role="listbox"`。不要用带边框的普通 `div` 模拟输入能力，也不要为了转换器额外复制一份可见选项。
+
 - `data-ios-node-id="screen.role.name"`：跨状态稳定的 accessibility/test ID。
 - `data-ios-component="..."`：原生语义提示，例如 `button`、`text-field`、`text-editor`、`search-field`、`search-bar`、`switch`、`checkbox`、`segmented-control`、`picker`、`wheel-picker`、`date-picker`、`color-picker`、`slider`、`stepper`、`page-control`、`progress`、`activity-indicator`、`paste-control`、`refresh-control`、`calendar-view`、`table`、`collection`、`navigation-bar`、`tab-bar`、`sheet`、`alert`。
 - `data-ios-project-component="Module.ComponentName"`：已确认应复用的现有 SwiftUI/UIKit 项目组件；只有组件发现报告中存在该类型时才直接采用。

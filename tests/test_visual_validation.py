@@ -40,6 +40,7 @@ class VisualValidationTests(unittest.TestCase):
         self.assertIn("matches.allElementsBoundByIndex.first(where: { $0.exists && $0.isHittable })", source)
         self.assertIn("requireHittable: true", source)
         self.assertIn("app.swipeUp(velocity: .slow)", source)
+        self.assertIn("app.swipeDown(velocity: .slow)", source)
         self.assertIn("Missing accessibility identifier after native scroll reveal", source)
         self.assertIn('domain: "HTMLToIOSVisualValidation"', source)
         self.assertIn("captureGeometry(name:", source)
@@ -47,6 +48,61 @@ class VisualValidationTests(unittest.TestCase):
         self.assertIn('manifest["geometryNodes"]', source)
         self.assertIn('uniformTypeIdentifier: "public.json"', source)
         self.assertNotIn('XCTFail("Element exists but is not hittable', source)
+
+    def test_form_checks_cover_editable_readonly_disabled_and_selection_controls(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            editable = node("form.name", "form.root", "text-input", [20, 80, 353, 44])
+            editable["textBehavior"] = {"role": "input", "editable": True}
+            readonly = node("form.code", "form.root", "text-input", [20, 140, 353, 44])
+            readonly["textBehavior"] = {"role": "input", "editable": False, "readOnly": True}
+            disabled = node("form.locked", "form.root", "text-input", [20, 200, 353, 44])
+            disabled["textBehavior"] = {"role": "input", "editable": False}
+            disabled["state"]["enabled"] = False
+            select = node("form.language", "form.root", "select", [20, 260, 353, 44])
+            first = node("form.language.en", "form.language", "option", [0, 0, 0, 0], "English")
+            first["state"].update({"enabled": True, "selected": True, "value": "en"})
+            first["content"]["value"] = "en"
+            second = node("form.language.zh", "form.language", "option", [0, 0, 0, 0], "中文")
+            second["state"].update({"enabled": True, "selected": False, "value": "zh"})
+            second["content"]["value"] = "zh"
+            payload = {
+                "schemaVersion": "1.2",
+                "source": {"entry": str(root / "prototype.html"), "viewport": {"width": 393, "height": 852}},
+                "target": {"viewportPt": {"width": 393, "height": 852}},
+                "screens": [{
+                    "id": "form", "rootNodeId": "form.root", "sourceSelector": "#form",
+                    "systemChrome": {}, "regions": {},
+                    "nodes": [node("form.root", None, "container", [0, 0, 393, 852]), editable, readonly, disabled, select, first, second],
+                }],
+                "interactions": [],
+                "visualStates": [{"id": "initial", "required": True}],
+            }
+            source, output = root / "ui-ir.json", root / "manifest.json"
+            source.write_text(json.dumps(payload), encoding="utf-8")
+            subprocess.run(
+                [sys.executable, str(MANIFEST_SCRIPT), str(source), "--out", str(output)],
+                check=True, text=True, capture_output=True,
+            )
+            checks = json.loads(output.read_text(encoding="utf-8"))["formChecks"]
+            self.assertEqual(
+                [(item["type"], item["accessibilityIdentifier"]) for item in checks],
+                [
+                    ("input", "form.name"),
+                    ("readonly", "form.code"),
+                    ("disabled", "form.locked"),
+                    ("select", "form.language"),
+                ],
+            )
+            self.assertEqual(checks[-1]["value"], "中文")
+            self.assertEqual(checks[-1]["expectedValue"], "zh")
+            self.assertEqual(checks[-1]["resultAccessibilityIdentifier"], "form.language")
+            prepare_source = PREPARE_IOS_TESTS_SCRIPT.read_text(encoding="utf-8")
+            self.assertIn('when "select"', prepare_source)
+            self.assertIn("assertReadOnly(identifier:", prepare_source)
+            self.assertIn("assertDisabled(identifier:", prepare_source)
+            self.assertIn("escaped = value.to_s", prepare_source)
+            self.assertNotIn("value.to_s.dump", prepare_source)
 
     def test_fixed_artboard_validation_geometry_uses_cover_center_crop(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

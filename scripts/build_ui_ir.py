@@ -363,6 +363,7 @@ def semantic_mapping(node: dict, has_interaction: bool) -> dict:
         "details": ("disclosure", "DisclosureGroup", "Expandable UIControl"),
         "summary": ("disclosure-trigger", "Disclosure Button", "Disclosure UIControl"),
         "option": ("option", "Picker option", "UIAction/picker row"),
+        "datalist": ("option-group", "Suggestion options", "UIMenu suggestion options"),
         "optgroup": ("option-group", "Picker section", "Picker/table section"),
         "fieldset": ("form-group", "Form section container", "Form section UIView"),
         "legend": ("label", "Text", "UILabel"),
@@ -2115,6 +2116,11 @@ def build_ir(data: dict, args) -> dict:
         confidence = mapping["nativeMapping"]["confidence"]
         text_metrics = node.get("textMetrics") or {}
         scroll = scroll_contract(node)
+        declared_scroll_axis = str(attrs.get("data-ios-scroll-root") or "").strip().lower()
+        if declared_scroll_axis in {"horizontal", "vertical", "both"}:
+            scroll["axis"] = declared_scroll_axis
+            scroll["horizontalAllowed"] = declared_scroll_axis in {"horizontal", "both"}
+            scroll["verticalAllowed"] = declared_scroll_axis in {"vertical", "both"}
         binding_contract = data_binding(node)
         if node.get("rectEstimated"):
             warnings.append({
@@ -2232,6 +2238,9 @@ def build_ir(data: dict, args) -> dict:
                 "expanded": first_known(properties.get("open"), attr_bool(attrs, "open"), attr_bool(attrs, "aria-expanded")),
                 "readonly": first_known(properties.get("readOnly"), attr_present(attrs, "readonly")),
                 "selectedIndex": properties.get("selectedIndex"),
+                "listID": attrs.get("list"),
+                "controlledID": attrs.get("aria-controls"),
+                "controlSize": attrs.get("size"),
                 "required": first_known(properties.get("required"), attr_present(attrs, "required")),
                 "focused": properties.get("focused"),
                 "min": attrs.get("min"),

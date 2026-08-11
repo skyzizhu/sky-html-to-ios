@@ -78,6 +78,7 @@ def make_ir() -> dict:
         node("home.filter.1", "home.filters", "button", 16, 90, 88, 36),
         node("home.filter.2", "home.filters", "button", 112, 90, 88, 36),
         node("home.filter.3", "home.filters", "button", 208, 90, 88, 36),
+        node("home.large-card", "home.root", "container", 16, 150, 361, 355),
     ]
     return {
         "schemaVersion": "1.2",
@@ -130,6 +131,7 @@ class LayoutRelationGraphTests(unittest.TestCase):
             )
             relation_kinds = [(item["kind"], item["nodeIds"]) for item in screen["relations"]]
             self.assertIn(("square-aspect", ["home.icon"]), relation_kinds)
+            self.assertNotIn(("square-aspect", ["home.large-card"]), relation_kinds)
             self.assertIn(("scroll-axis-ownership", ["home.root"]), relation_kinds)
             self.assertIn(("scroll-axis-ownership", ["home.filters"]), relation_kinds)
             first_sequence = next(

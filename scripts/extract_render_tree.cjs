@@ -896,7 +896,7 @@ async function main() {
           "role", "aria-label", "aria-hidden", "aria-checked", "aria-selected", "aria-expanded", "aria-multiline", "aria-readonly",
           "aria-valuemin", "aria-valuemax", "aria-valuenow", "aria-controls", "aria-current", "aria-haspopup",
           "href", "target", "type", "name", "placeholder", "value", "disabled", "checked",
-          "selected", "required", "readonly", "multiple", "min", "max", "step", "maxlength",
+          "selected", "required", "readonly", "multiple", "min", "max", "step", "maxlength", "minlength", "size", "list",
           "pattern", "autocomplete", "inputmode", "enterkeyhint", "autocapitalize", "spellcheck",
           "contenteditable", "open", "tabindex", "autofocus",
           "for", "accept", "capture", "onclick", "action",

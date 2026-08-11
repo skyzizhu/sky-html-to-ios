@@ -29,6 +29,19 @@
       "expectedNative": {"navigationTitleMode": "large"}
     },
     {
+      "id": "form-semantics",
+      "html": "form-semantics.html",
+      "level": 1,
+      "coverage": ["responsive-root", "editable-input", "readonly-input", "disabled-input", "text-area", "datalist", "select", "bordered-display-label", "vertical-scroll"],
+      "expectedNative": {
+        "navigationTitleMode": "large",
+        "requiredUIKitControls": ["UITextField", "UITextView", "UIButton"],
+        "requiredSwiftUIControls": ["TextField", "TextEditor", "Picker"],
+        "minimumSystemControlRatio": 1.0,
+        "maximumCustomControlCount": 0
+      }
+    },
+    {
       "id": "commerce-grid",
       "html": "commerce-grid.html",
       "level": 2,
