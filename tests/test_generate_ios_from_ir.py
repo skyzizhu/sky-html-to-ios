@@ -770,7 +770,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.run_generator([path], uikit_dir, ui_stack="uikit", control_configuration_plan=control_plan)
             uikit_runtime = (uikit_dir / RUNTIME_FILE).read_text(encoding="utf-8")
             for expected in (
-                "UISlider()",
+                "HTMLToIOSMeasuredSlider()",
+                "override func thumbRect(forBounds bounds:",
                 "UIStepper()",
                 "valueLabel?.text",
                 "UISegmentedControl(items:",
@@ -789,11 +790,14 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "UIRefreshControl()",
                 "UICalendarView()",
                 "slider.minimumTrackTintColor",
+                "slider.setThumbImage(image, for: .normal)",
                 "segmented.selectedSegmentTintColor",
                 "pageControl.currentPageIndicatorTintColor",
                 "applyNativeControlStateAppearance",
                 "nativeControlStateName",
                 "setContentCompressionResistancePriority(.required",
+                'contract.widthKind == "fixed"',
+                'contract.heightKind == "fixed"',
             ):
                 self.assertIn(expected, uikit_runtime)
 

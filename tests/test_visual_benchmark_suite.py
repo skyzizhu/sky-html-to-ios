@@ -88,10 +88,16 @@ class VisualBenchmarkSuiteTests(unittest.TestCase):
             (report_dir / "native-structure-validation.json").write_text(json.dumps({
                 "status": "passed",
             }), encoding="utf-8")
+            payload = case_dir / "Fixture" / "Generated" / "HTMLToIOS" / "Resources" / "Payload"
+            payload.mkdir(parents=True)
+            (payload / "HTMLToIOSGeneratedPayload.json").write_text(json.dumps({
+                "screens": [{"navigation": {"titleMode": "large"}}],
+            }), encoding="utf-8")
             quality = MODULE.native_quality_summary({
                 "expectedNative": {
                     "contentContainerKinds": ["scroll-view"],
                     "navigationBarRendering": "native",
+                    "navigationTitleMode": "large",
                     "requiredUIKitControls": ["UISwitch"],
                     "minimumSystemControlRatio": 1.0,
                     "maximumCustomControlCount": 0,
@@ -99,6 +105,7 @@ class VisualBenchmarkSuiteTests(unittest.TestCase):
             }, case_dir, "uikit")
             self.assertEqual(quality["status"], "passed")
             self.assertEqual(quality["systemControlRatio"], 1.0)
+            self.assertEqual(quality["navigationTitleModes"], ["large"])
             self.assertTrue(all(item["passed"] for item in quality["checks"]))
 
 

@@ -13,6 +13,7 @@
       "level": 1,
       "coverage": ["responsive-root", "text-field", "text-view", "search-field", "select", "switch", "segmented-control", "slider", "stepper", "progress", "page-control", "vertical-scroll"],
       "expectedNative": {
+        "navigationTitleMode": "large",
         "contentContainerKinds": ["scroll-view", "compositional-collection"],
         "requiredUIKitControls": ["UITextField", "UITextView", "UISwitch", "UISegmentedControl", "UISlider", "UIStepper", "UIProgressView", "UIPageControl"],
         "requiredSwiftUIControls": ["TextField", "TextEditor", "Toggle", "Picker", "Slider", "Stepper", "ProgressView", "UIViewRepresentable"],
@@ -24,7 +25,8 @@
       "id": "dashboard-list",
       "html": "dashboard-list.html",
       "level": 2,
-      "coverage": ["custom-navigation", "table-view", "square-icons", "summary-card", "tab-bar", "vertical-scroll"]
+      "coverage": ["custom-navigation", "table-view", "square-icons", "summary-card", "tab-bar", "vertical-scroll"],
+      "expectedNative": {"navigationTitleMode": "large"}
     },
     {
       "id": "commerce-grid",
@@ -38,6 +40,7 @@
       "level": 2,
       "coverage": ["fixed-artboard", "custom-navigation", "text-field", "select", "switch", "segmented-control", "slider", "fixed-action-bar"],
       "expectedNative": {
+        "navigationTitleMode": "inline",
         "requiredUIKitControls": ["UITextField", "UISwitch", "UISegmentedControl", "UISlider"],
         "requiredSwiftUIControls": ["TextField", "Toggle", "Picker", "Slider"],
         "minimumSystemControlRatio": 1.0,
@@ -52,6 +55,7 @@
       "expectedNative": {
         "contentContainerKinds": ["scroll-view", "compositional-collection"],
         "navigationBarRendering": "native",
+        "navigationTitleMode": "inline",
         "requiredUIKitControls": ["UIButton"],
         "requiredSwiftUIControls": ["Button"],
         "minimumSystemControlRatio": 1.0,

@@ -675,6 +675,53 @@ class BuildUIIRTests(unittest.TestCase):
             self.assertTrue(screen["navigation"]["renderingDecision"]["hasTopActions"])
             self.assertEqual(screen["navigation"]["renderingDecision"]["topActionCount"], 1)
 
+    def test_navigation_title_mode_uses_leading_large_and_centered_compact_geometry(self) -> None:
+        def convert(nodes: list[dict], interactions: list[dict]) -> dict:
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                source = root / "render-tree.json"
+                output = root / "ui-ir.json"
+                source.write_text(json.dumps({
+                    "schemaVersion": "render-tree-1.2",
+                    "source": {"kind": "html-file", "entry": "/tmp/example.html"},
+                    "document": {"viewport": {"width": 393, "height": 852}},
+                    "nodes": nodes,
+                    "interactions": interactions,
+                    "phoneCandidates": [],
+                }), encoding="utf-8")
+                result = subprocess.run([
+                    "python3", str(SCRIPT), str(source), "--out", str(output),
+                    "--root-runtime-id", "app", "--screen-id", "home",
+                ], text=True, capture_output=True, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+                return json.loads(output.read_text(encoding="utf-8"))["screens"][0]
+
+        large_nodes = [
+            render_node("app", None, "main", {"x": 0, "y": 0, "width": 393, "height": 852}),
+            render_node("header", "app", "header", {"x": 0, "y": 47, "width": 393, "height": 58}, direction="row"),
+            render_node("title", "header", "h1", {"x": 20, "y": 58, "width": 92, "height": 36}),
+            render_node("action", "header", "button", {"x": 337, "y": 56, "width": 36, "height": 36}),
+            render_node("content", "app", "section", {"x": 0, "y": 105, "width": 393, "height": 747}),
+        ]
+        large_nodes[2]["text"] = "概览"
+        large_nodes[2]["style"].update({"fontSize": "28px", "textAlign": "start"})
+        large = convert(large_nodes, [{"sourceRuntimeId": "action", "sourceTag": "button", "trigger": "tap"}])
+        self.assertEqual(large["navigation"]["titleMode"], "large")
+        self.assertIn("leading-title-geometry", large["navigation"]["renderingDecision"]["titleModeEvidence"])
+
+        inline_nodes = [
+            render_node("app", None, "main", {"x": 0, "y": 0, "width": 393, "height": 852}),
+            render_node("header", "app", "header", {"x": 0, "y": 47, "width": 393, "height": 52}, direction="row"),
+            render_node("back", "header", "button", {"x": 14, "y": 54, "width": 38, "height": 38}),
+            render_node("title", "header", "h1", {"x": 154, "y": 63, "width": 85, "height": 22}),
+            render_node("content", "app", "section", {"x": 0, "y": 99, "width": 393, "height": 753}),
+        ]
+        inline_nodes[3]["text"] = "设计方法"
+        inline_nodes[3]["style"].update({"fontSize": "17px", "textAlign": "center"})
+        inline = convert(inline_nodes, [{"sourceRuntimeId": "back", "sourceTag": "button", "trigger": "tap"}])
+        self.assertEqual(inline["navigation"]["titleMode"], "inline")
+        self.assertIn("centered-title", inline["navigation"]["renderingDecision"]["titleModeEvidence"])
+
     def test_complex_search_header_remains_custom_navigation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

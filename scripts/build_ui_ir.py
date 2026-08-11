@@ -1570,11 +1570,39 @@ def build_bar_contracts(
         priority = 3 if semantic == "heading" else 2 if semantic in {"label", "text"} else 1
         title_candidates.append((priority, font_size, text, node_id))
     detected_title = max(title_candidates, default=(0, 0, "", ""), key=lambda item: (item[0], item[1]))
-    title_mode = str(top_hints.get("title-mode") or root_attrs.get("data-ios-title-mode") or "")
-    if not title_mode:
-        # Font size alone is not large-title evidence. Many HTML prototypes draw
-        # a 26-30pt title inside a conventional single-row navigation bar.
-        title_mode = "inline"
+    declared_title_mode = str(top_hints.get("title-mode") or root_attrs.get("data-ios-title-mode") or "")
+    title_mode = declared_title_mode
+    title_mode_evidence: list[str] = []
+    if title_mode:
+        title_mode_evidence.append("explicit-title-mode")
+    else:
+        title_node = node_by_id.get(detected_title[3]) or {}
+        title_style = title_node.get("style") or {}
+        title_rect = (title_node.get("layout") or {}).get("rect") or {}
+        top_rect = (top_node.get("layout") or {}).get("rect") or {}
+        root_rect = (root.get("layout") or {}).get("rect") or root.get("rect") or {}
+        root_width = max(numeric(root_rect.get("width"), 393), 1)
+        top_x = numeric(top_rect.get("x"), numeric(root_rect.get("x")))
+        top_width = numeric(top_rect.get("width"), root_width)
+        title_x = numeric(title_rect.get("x"), top_x)
+        title_width = numeric(title_rect.get("width"))
+        title_center = title_x + title_width / 2
+        top_center = top_x + top_width / 2
+        title_align = str(title_style.get("textAlign") or "start").lower()
+        leading_edge = title_x <= top_x + max(32, top_width * 0.12)
+        centered = abs(title_center - top_center) <= max(12, top_width * 0.04)
+        large_font = detected_title[1] >= 22
+        leading_title = leading_edge and title_align in {"", "start", "left", "natural"}
+        if large_font and leading_title and not centered:
+            title_mode = "large"
+            title_mode_evidence.extend(["large-title-font", "leading-title-geometry"])
+        else:
+            title_mode = "inline"
+            title_mode_evidence.append("inline-title-geometry")
+            if centered:
+                title_mode_evidence.append("centered-title")
+            if not large_font:
+                title_mode_evidence.append("compact-title-font")
     top_style = top_node.get("style") or {}
     top_border_widths = top_style.get("borderWidths") or []
     top_border_colors = top_style.get("borderColors") or []
@@ -1590,6 +1618,8 @@ def build_bar_contracts(
             "declaredStyle": declared_style or None,
             "forceCustom": force_custom,
             **navigation_fit,
+            "titleMode": title_mode,
+            "titleModeEvidence": title_mode_evidence,
         },
         "appearance": {
             "background": top_style.get("backgroundColor"),

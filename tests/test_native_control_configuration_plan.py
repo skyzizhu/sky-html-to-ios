@@ -60,6 +60,14 @@ class NativeControlConfigurationPlanTests(unittest.TestCase):
                         "id": "home.page.1", "parentId": "home.pages", "semanticType": "container",
                         "source": {"selector": ".pages i.active"},
                         "style": {"backgroundColor": "rgb(0, 122, 255)"},
+                    }, {
+                        "id": "home.slider", "semanticType": "slider",
+                        "layout": {"rect": {"width": 170, "height": 16}},
+                        "style": {
+                            "color": "rgb(20, 20, 20)", "backgroundColor": "rgb(230, 232, 236)",
+                            "accentColor": "rgb(0, 122, 255)",
+                        },
+                        "nativeMapping": {"nativeControlDecision": {"decision": "system-control"}},
                     }],
                 }],
             }), encoding="utf-8")
@@ -88,6 +96,8 @@ class NativeControlConfigurationPlanTests(unittest.TestCase):
             self.assertEqual(page_control["appearance"]["fillTint"], "rgb(0, 122, 255)")
             self.assertEqual(page_control["appearance"]["trackTint"], "rgb(190, 195, 205)")
             self.assertEqual(page_control["stateAppearances"]["normal"]["fillTint"], "rgb(0, 122, 255)")
+            slider = payload["screens"][0]["controls"][2]
+            self.assertEqual(slider["appearance"]["thumbTint"], "rgb(0, 122, 255)")
             result = subprocess.run(
                 ["python3", str(VALIDATE), "--plan", str(plan), "--out", str(validation)],
                 text=True, capture_output=True,

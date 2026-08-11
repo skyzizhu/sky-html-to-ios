@@ -63,6 +63,8 @@ def native_quality_summary(case: dict[str, Any], case_dir: Path, ui_stack: str) 
     architecture = load_optional_json(report_dir / "native-architecture-plan.json")
     controls = load_optional_json(report_dir / "native-control-configuration-plan.json")
     structure = load_optional_json(report_dir / "native-structure-validation.json")
+    payload_paths = sorted(case_dir.glob("*/Generated/HTMLToIOS/Resources/Payload/HTMLToIOSGeneratedPayload.json"))
+    generated_payload = load_optional_json(payload_paths[0]) if payload_paths else {}
     expectations = case.get("expectedNative") or {}
     architecture_screens = architecture.get("screens") or []
     content_kinds = sorted({
@@ -73,6 +75,11 @@ def native_quality_summary(case: dict[str, Any], case_dir: Path, ui_stack: str) 
     navigation_styles = sorted({
         str(((screen.get("navigation") or {}).get("barRendering") or ""))
         for screen in architecture_screens
+        if isinstance(screen, dict)
+    } - {""})
+    navigation_title_modes = sorted({
+        str(((screen.get("navigation") or {}).get("titleMode") or ""))
+        for screen in generated_payload.get("screens") or []
         if isinstance(screen, dict)
     } - {""})
     control_records = [
@@ -106,6 +113,12 @@ def native_quality_summary(case: dict[str, Any], case_dir: Path, ui_stack: str) 
             "navigation-bar-rendering", expected_navigation, navigation_styles,
             bool(navigation_styles) and all(item == expected_navigation for item in navigation_styles),
         )
+    expected_title_mode = expectations.get("navigationTitleMode")
+    if expected_title_mode:
+        add_check(
+            "navigation-title-mode", expected_title_mode, navigation_title_modes,
+            bool(navigation_title_modes) and all(item == expected_title_mode for item in navigation_title_modes),
+        )
     required_primitives = [
         str(item) for item in (
             expectations.get("requiredUIKitControls")
@@ -124,6 +137,7 @@ def native_quality_summary(case: dict[str, Any], case_dir: Path, ui_stack: str) 
         "status": "passed" if checks and all(item["passed"] for item in checks) else "failed",
         "contentContainerKinds": content_kinds,
         "navigationBarRendering": navigation_styles,
+        "navigationTitleModes": navigation_title_modes,
         "nativeControlPrimitives": primitives,
         "controlCount": len(control_records),
         "systemControlCount": system_count,

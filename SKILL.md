@@ -79,6 +79,8 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 68. 一个滚动轴只能有一个原生 owner。来源主滚动节点已经 lowering 为 `ScrollView`/`UIScrollView` 时，Screen Container 禁止再次包装同轴外层 Scroll；根内容必须占满可用高度，滚动节点以 flexible/parent-relative 主轴策略接收固定导航、搜索栏或工具栏之外的剩余空间。只有 Screen Root 本身拥有滚动轴时才由 Screen Container 提供外层 Scroll。
 69. 控件内部状态配置必须在 `native-control-configuration-plan.json` 中归一化。开关 thumb、分页点数量/当前项/选中与未选中颜色、分段选中项等可由直接子节点和通用 selected/active/checked/current 证据推导；基础 appearance 与 normal/selected/checked 状态 appearance 必须同步，禁止初始化正确后又被状态机旧值覆盖。
 70. Skill 回归使用 L1 控件、L2 完整页面、L3 状态与弹层的固定 HTML 基准。每个案例分别检查构建、原生结构、系统控件比例/必需 Primitive 和视觉保真度；像素分数提升不得以降低原生架构合理性为代价，单个案例定向补丁不得进入通用转换规则。
+71. 系统导航标题模式必须由显式契约或来源几何决定。`data-ios-title-mode` 优先；否则大字号且靠 leading 的页面标题映射 large title，居中紧凑标题、返回栏标题映射 inline，并把字号、中心偏差和 leading 证据写入 `renderingDecision`。禁止在无显式契约时把所有页面统一写死为 inline 或 large。
+72. 系统控件必须同时消费语义和有界几何。计算布局已经证明控件固定宽高时，即使 CSS 未直接声明 `width/height`，原生控件或 wrapper 仍消费该尺寸，禁止被父 Stack 任意拉伸。Slider 等系统控件允许通过官方 tint、thumb image 和保留系统事件/无障碍的轻量子类适配来源内部尺寸；不得为视觉微调重写完整手势或状态机。
 
 ## 支持范围
 

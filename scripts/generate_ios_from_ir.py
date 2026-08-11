@@ -6971,6 +6971,21 @@ private final class HTMLToIOSCSSShapeLayer: CAShapeLayer {
     var edgeIndex: Int?
 }
 
+private final class HTMLToIOSMeasuredSlider: UISlider {
+    var sourceThumbDiameter: CGFloat?
+
+    override func thumbRect(forBounds bounds: CGRect, trackRect rect: CGRect, value: Float) -> CGRect {
+        let systemRect = super.thumbRect(forBounds: bounds, trackRect: rect, value: value)
+        guard let diameter = sourceThumbDiameter, diameter > 0 else { return systemRect }
+        return CGRect(
+            x: systemRect.midX - diameter / 2,
+            y: systemRect.midY - diameter / 2,
+            width: diameter,
+            height: diameter
+        )
+    }
+}
+
 private func htmlToIOSCSSRoundedPath(
     in rect: CGRect,
     radiiX sourceX: [CGFloat],
@@ -8180,7 +8195,7 @@ final class HTMLToIOSNodeRenderer {
             }, for: .touchUpInside)
             view = button
         case "slider":
-            let slider = UISlider()
+            let slider = HTMLToIOSMeasuredSlider()
             let config = spec.controlConfig
             slider.minimumValue = Float(config?.minimum ?? 0)
             slider.maximumValue = Float(max(config?.maximum ?? 100, config?.minimum ?? 0))
@@ -8189,6 +8204,19 @@ final class HTMLToIOSNodeRenderer {
             slider.minimumTrackTintColor = UIColor(htmlToIOS: config?.tint ?? config?.fillTint)
             slider.maximumTrackTintColor = UIColor(htmlToIOS: config?.trackTint)
             slider.thumbTintColor = UIColor(htmlToIOS: config?.thumbTint)
+            if let sourceHeight = config?.sourceHeight,
+               sourceHeight >= 10, sourceHeight < 24,
+               let thumbColor = UIColor(htmlToIOS: config?.thumbTint ?? config?.tint ?? config?.fillTint) {
+                let diameter = max(sourceHeight - 2, 12)
+                slider.sourceThumbDiameter = diameter
+                let renderer = UIGraphicsImageRenderer(size: CGSize(width: diameter, height: diameter))
+                let image = renderer.image { context in
+                    thumbColor.setFill()
+                    context.cgContext.fillEllipse(in: CGRect(x: 0, y: 0, width: diameter, height: diameter))
+                }
+                slider.setThumbImage(image, for: .normal)
+                slider.setThumbImage(image, for: .highlighted)
+            }
             slider.addAction(UIAction { [state, weak slider] _ in
                 state.values[spec.id] = String(slider?.value ?? 0)
             }, for: .valueChanged)
@@ -8693,6 +8721,18 @@ final class HTMLToIOSNodeRenderer {
             let axis: NSLayoutConstraint.Axis = stack.axis == .vertical ? .vertical : .horizontal
             view.setContentHuggingPriority(.defaultLow, for: axis)
             view.setContentCompressionResistancePriority(.defaultLow, for: axis)
+        }
+        if spec.controlConfig != nil,
+           contract.widthKind == "fixed",
+           spec.style.fixedWidth == nil,
+           let width = contract.widthConstant, width > 0 {
+            view.widthAnchor.constraint(equalToConstant: width).isActive = true
+        }
+        if spec.controlConfig != nil,
+           contract.heightKind == "fixed",
+           spec.style.fixedHeight == nil,
+           let height = contract.heightConstant, height > 0 {
+            view.heightAnchor.constraint(equalToConstant: height).isActive = true
         }
         if contract.widthResolution == "parent-affine",
            contract.widthKind != "fixed",

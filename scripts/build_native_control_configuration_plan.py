@@ -113,7 +113,7 @@ def control_appearance(
     elif semantic in {"slider", "progress", "progress-view"}:
         appearance["trackTint"] = background
         appearance["fillTint"] = accent or selected_background or border or foreground
-        appearance["thumbTint"] = selected_foreground if semantic == "slider" else None
+        appearance["thumbTint"] = (accent or selected_background or border) if semantic == "slider" else None
     elif semantic == "page-control":
         appearance["trackTint"] = background or disabled_foreground
         appearance["fillTint"] = selected_background or selected_foreground or border or foreground
