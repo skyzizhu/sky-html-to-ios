@@ -903,6 +903,8 @@ def build_screen(
         container_plan = container_by_id.get(source_id) or {}
         grid_tracks_plan = (container_plan.get("grid") or {}).get("columnTracks") or []
         adaptive_track = adaptive_track_contract(grid_tracks_plan)
+        if adaptive_track and adaptive_track.get("minimumItemWidthPt") is not None:
+            adaptive_track["minimumItemWidthPt"] = number(adaptive_track["minimumItemWidthPt"]) * design_scale
         column_count = (
             1 if section_kind == "list" or horizontal
             else (0 if adaptive_track else len(grid_tracks_plan)) or inferred_column_count(item_nodes)
@@ -1011,7 +1013,7 @@ def build_screen(
             "columnCount": max(column_count, 1),
             "adaptiveColumns": adaptive_track,
             "responsiveBreakpoints": responsive_breakpoints,
-            "contentInsetsPt": edges(source_style.get("padding")),
+            "contentInsetsPt": [value * design_scale for value in edges(source_style.get("padding"))],
             "lineSpacingPt": max(number(container_plan.get("rowGapPt")), 0),
             "interItemSpacingPt": max(number(container_plan.get("columnGapPt")), 0),
             "mainAxisSpacingPt": max(number(container_plan.get("columnGapPt" if horizontal else "rowGapPt")), 0),

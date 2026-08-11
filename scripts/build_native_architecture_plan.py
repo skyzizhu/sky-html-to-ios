@@ -524,7 +524,7 @@ def content_container_plan(
         repeated = bool(repeated_groups(node_id, nodes, children))
         return (
             semantic in {"carousel", "collection", "data-table"}
-            or semantic == "grid" and not presentational_grid(node) and (item_count >= 4 or repeated)
+            or semantic == "grid" and not presentational_grid(node) and item_count >= 4
             or semantic in {"list", "sectioned-list"} and (semantic == "sectioned-list" or item_count >= 5 or repeated)
         )
 
@@ -753,7 +753,7 @@ def content_container_plan(
         elif semantic == "grid":
             node_kind = "static-grid" if is_presentational_grid else (
                 "collection-view"
-                if (selected_native_owner or not has_vertical_scroll_ancestor) and (item_count >= 4 or has_repeated_items)
+                if selected_native_owner or (not has_vertical_scroll_ancestor and item_count >= 4)
                 else "static-grid"
             )
         elif semantic in {"list", "sectioned-list"}:

@@ -248,6 +248,15 @@ class NativeStructureManifestTests(unittest.TestCase):
             self.assertIsNotNone(icon)
             self.assertEqual(icon["style"]["fixedWidth"], 24)
             self.assertEqual(icon["style"]["fixedHeight"], 24)
+            filters = find(generated, "home.filters")
+            self.assertIsNotNone(filters)
+            self.assertEqual(filters["collectionLayout"]["itemSizing"]["widthPt"], 88)
+            self.assertEqual(filters["collectionLayout"]["itemSizing"]["estimatedHeightPt"], 36)
+            manifest = json.loads(outputs[3].read_text(encoding="utf-8"))
+            collection = manifest["screens"][0]["layoutPlanConsumption"]["collections"][0]
+            self.assertEqual(collection["status"], "consumed")
+            self.assertTrue(collection["checks"]["breakpoints"])
+            self.assertTrue(collection["checks"]["insets"])
 
     def test_per_corner_and_per_edge_appearance_survives_native_lowering(self) -> None:
         for ui_stack in ("swiftui", "uikit"):

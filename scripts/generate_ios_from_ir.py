@@ -2067,7 +2067,7 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             {
                 **context.collection_layouts[node_id],
                 "contentInsetsPt": [
-                    number(value) * context.design_scale
+                    number(value)
                     for value in context.collection_layouts[node_id].get("contentInsetsPt") or [0, 0, 0, 0]
                 ],
                 "lineSpacingPt": number(context.collection_layouts[node_id].get("lineSpacingPt")),
@@ -2075,30 +2075,30 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
                 "mainAxisSpacingPt": number(context.collection_layouts[node_id].get("mainAxisSpacingPt")),
                 "crossAxisSpacingPt": number(context.collection_layouts[node_id].get("crossAxisSpacingPt")),
                 "headerHeightPt": (
-                    number(context.collection_layouts[node_id].get("headerHeightPt")) * context.design_scale
+                    number(context.collection_layouts[node_id].get("headerHeightPt"))
                     if context.collection_layouts[node_id].get("headerHeightPt") is not None else None
                 ),
                 "footerHeightPt": (
-                    number(context.collection_layouts[node_id].get("footerHeightPt")) * context.design_scale
+                    number(context.collection_layouts[node_id].get("footerHeightPt"))
                     if context.collection_layouts[node_id].get("footerHeightPt") is not None else None
                 ),
                 "itemSizing": {
                     **(context.collection_layouts[node_id].get("itemSizing") or {}),
                     "widthPt": (
-                        number((context.collection_layouts[node_id].get("itemSizing") or {}).get("widthPt")) * context.design_scale
+                        number((context.collection_layouts[node_id].get("itemSizing") or {}).get("widthPt"))
                         if (context.collection_layouts[node_id].get("itemSizing") or {}).get("widthPt") is not None else None
                     ),
                     "heightPt": (
-                        number((context.collection_layouts[node_id].get("itemSizing") or {}).get("heightPt")) * context.design_scale
+                        number((context.collection_layouts[node_id].get("itemSizing") or {}).get("heightPt"))
                         if (context.collection_layouts[node_id].get("itemSizing") or {}).get("heightPt") is not None else None
                     ),
-                    "estimatedHeightPt": number((context.collection_layouts[node_id].get("itemSizing") or {}).get("estimatedHeightPt"), 72) * context.design_scale,
+                    "estimatedHeightPt": number((context.collection_layouts[node_id].get("itemSizing") or {}).get("estimatedHeightPt"), 72),
                 },
                 "adaptiveColumns": (
                     {
                         **context.collection_layouts[node_id]["adaptiveColumns"],
                         "minimumItemWidthPt": (
-                            number(context.collection_layouts[node_id]["adaptiveColumns"].get("minimumItemWidthPt")) * context.design_scale
+                            number(context.collection_layouts[node_id]["adaptiveColumns"].get("minimumItemWidthPt"))
                             if context.collection_layouts[node_id]["adaptiveColumns"].get("minimumItemWidthPt") is not None else None
                         ),
                     }
@@ -2107,18 +2107,18 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
                 "responsiveBreakpoints": [
                     {
                         **item,
-                        "containerWidthPt": number(item.get("containerWidthPt")) * context.design_scale,
-                        "itemWidthPt": number(item.get("itemWidthPt")) * context.design_scale if item.get("itemWidthPt") is not None else None,
-                        "itemHeightPt": number(item.get("itemHeightPt")) * context.design_scale if item.get("itemHeightPt") is not None else None,
+                        "containerWidthPt": number(item.get("containerWidthPt")),
+                        "itemWidthPt": number(item.get("itemWidthPt")) if item.get("itemWidthPt") is not None else None,
+                        "itemHeightPt": number(item.get("itemHeightPt")) if item.get("itemHeightPt") is not None else None,
                     }
                     for item in context.collection_layouts[node_id].get("responsiveBreakpoints") or []
                 ],
                 "itemSizingByNodeId": {
                     item_id: {
                         **sizing,
-                        "widthPt": number(sizing.get("widthPt")) * context.design_scale if sizing.get("widthPt") is not None else None,
-                        "heightPt": number(sizing.get("heightPt")) * context.design_scale if sizing.get("heightPt") is not None else None,
-                        "estimatedHeightPt": number(sizing.get("estimatedHeightPt"), 72) * context.design_scale,
+                        "widthPt": number(sizing.get("widthPt")) if sizing.get("widthPt") is not None else None,
+                        "heightPt": number(sizing.get("heightPt")) if sizing.get("heightPt") is not None else None,
+                        "estimatedHeightPt": number(sizing.get("estimatedHeightPt"), 72),
                     }
                     for item_id, sizing in (context.collection_layouts[node_id].get("itemSizingByNodeId") or {}).items()
                 },
@@ -12074,7 +12074,7 @@ def build_native_structure_manifest(
             generated = payload_node.get("collectionLayout") or {}
             planned_sizing = collection_plan.get("itemSizing") or {}
             generated_sizing = generated.get("itemSizing") or {}
-            expected_insets = [number(value) * design_scale for value in collection_plan.get("contentInsetsPt") or []]
+            expected_insets = [number(value) for value in collection_plan.get("contentInsetsPt") or []]
             checks = {
                 "containerKind": generated.get("nativeContainerKind") == collection_plan.get("nativeContainerKind"),
                 "layoutEngine": generated.get("layoutEngine") == collection_plan.get("layoutEngine"),
@@ -12091,13 +12091,13 @@ def build_native_structure_manifest(
                     not collection_plan.get("adaptiveColumns") and not generated.get("adaptiveColumns")
                 ) or (
                     (generated.get("adaptiveColumns") or {}).get("mode") == (collection_plan.get("adaptiveColumns") or {}).get("mode")
-                    and abs(number((generated.get("adaptiveColumns") or {}).get("minimumItemWidthPt")) - number((collection_plan.get("adaptiveColumns") or {}).get("minimumItemWidthPt")) * design_scale) <= 0.01
+                    and abs(number((generated.get("adaptiveColumns") or {}).get("minimumItemWidthPt")) - number((collection_plan.get("adaptiveColumns") or {}).get("minimumItemWidthPt"))) <= 0.01
                 ),
                 "breakpoints": [
                     (round(number(item.get("containerWidthPt")), 3), int(item.get("columnCount") or 0))
                     for item in generated.get("responsiveBreakpoints") or []
                 ] == [
-                    (round(number(item.get("containerWidthPt")) * design_scale, 3), int(item.get("columnCount") or 0))
+                    (round(number(item.get("containerWidthPt")), 3), int(item.get("columnCount") or 0))
                     for item in collection_plan.get("responsiveBreakpoints") or []
                 ],
                 "insets": all(

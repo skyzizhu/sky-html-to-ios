@@ -82,6 +82,55 @@ class BuildNativeArchitecturePlanTests(unittest.TestCase):
             self.assertEqual(strategy["kind"], "static-grid")
             self.assertFalse(strategy["usesReuse"])
 
+    def test_three_item_fixed_grid_stays_static_even_when_items_repeat(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = make_ir("metrics")
+            screen = payload["screens"][0]
+            root_id = screen["rootNodeId"]
+            screen["nodes"][0].update({
+                "semanticType": "container",
+                "layout": {"scrollAxis": "none", "rect": {"x": 0, "y": 0, "width": 393, "height": 852}},
+            })
+            grid_id = "metrics.summary"
+            screen["nodes"].append({
+                "id": grid_id, "parentId": root_id, "semanticType": "grid",
+                "layout": {"scrollAxis": "none", "rect": {"x": 24, "y": 180, "width": 345, "height": 72}},
+                "style": {"display": "grid", "gridTemplateColumns": "repeat(3, 1fr)", "gap": "1px"},
+            })
+            for index in range(3):
+                item_id = f"{grid_id}.item.{index}"
+                screen["nodes"].extend([
+                    {
+                        "id": item_id, "parentId": grid_id, "semanticType": "container",
+                        "layout": {"rect": {"x": 24 + index * 115, "y": 180, "width": 114, "height": 72}},
+                        "style": {"display": "block", "position": "static"},
+                    },
+                    {
+                        "id": f"{item_id}.value", "parentId": item_id, "semanticType": "text",
+                        "layout": {"rect": {"x": 36 + index * 115, "y": 190, "width": 80, "height": 24}},
+                        "style": {"display": "block", "position": "static"},
+                        "content": {"text": str(index + 1)},
+                    },
+                    {
+                        "id": f"{item_id}.label", "parentId": item_id, "semanticType": "text",
+                        "layout": {"rect": {"x": 36 + index * 115, "y": 220, "width": 80, "height": 18}},
+                        "style": {"display": "block", "position": "static"},
+                        "content": {"text": "Metric"},
+                    },
+                ])
+            ir_path = root / "ui-ir.json"
+            output = root / "plan.json"
+            ir_path.write_text(json.dumps(payload), encoding="utf-8")
+            result = subprocess.run([
+                "python3", str(SCRIPT), "--ir", str(ir_path), "--out", str(output), "--ui-stack", "uikit",
+            ], text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            content = json.loads(output.read_text(encoding="utf-8"))["screens"][0]["layers"]["contentContainer"]
+            strategy = next(item for item in content["nodeStrategies"] if item["nodeId"] == grid_id)
+            self.assertEqual(strategy["kind"], "static-grid")
+            self.assertFalse(strategy["usesReuse"])
+
     def test_authored_percentage_width_remains_parent_filling(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
