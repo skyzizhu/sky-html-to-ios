@@ -3209,6 +3209,15 @@ def build_screen(
         "containerHeightPolicy": "full-parent-bounds",
         "subtractFromContainerDimensions": False,
     }
+    occupancy_source = scroll_attachment.get("viewportOccupancy") if isinstance(scroll_attachment.get("viewportOccupancy"), dict) else {}
+    viewport_occupancy_payload = {
+        "framePolicy": str(occupancy_source.get("framePolicy") or "fill-available-bounds"),
+        "bottomBarRelationship": str(occupancy_source.get("bottomBarRelationship") or ("overlay" if bottom_bar_placement == "viewport-overlay" else "docked" if bottom_bar_id else "none")),
+        "bottomReservationOwner": str(occupancy_source.get("bottomReservationOwner") or "none"),
+        "sourceBottomPadding": number(occupancy_source.get("sourceBottomPaddingPt")),
+        "additionalBottomContentInset": number(occupancy_source.get("additionalBottomContentInsetPt")),
+        "subtractBottomBarFromFrame": bool(occupancy_source.get("subtractBottomBarFromFrame", False)),
+    }
     source = ir.get("source") or {}
     target = ir.get("target") or {}
     screen_context = source.get("screenContext") or {}
@@ -3256,6 +3265,7 @@ def build_screen(
         "systemNavigationContentSpacing": system_navigation_content_spacing,
         "systemNavigationGeometry": system_navigation_geometry,
         "safeArea": safe_area_payload,
+        "viewportOccupancy": viewport_occupancy_payload,
         "contentContainer": {
             "nodeId": str(content_container.get("nodeId") or root_id),
             "kind": str(content_container.get("kind") or "scroll-view"),
@@ -3311,6 +3321,7 @@ struct HTMLToIOSScreenSpec: Codable, Identifiable {{
     let systemNavigationContentSpacing: Double
     let systemNavigationGeometry: HTMLToIOSSystemNavigationGeometrySpec?
     let safeArea: HTMLToIOSSafeAreaSpec
+    let viewportOccupancy: HTMLToIOSViewportOccupancySpec
     let contentContainer: HTMLToIOSContentContainerSpec
     let navigation: HTMLToIOSNavigationSpec
     let root: HTMLToIOSNodeSpec
@@ -3368,6 +3379,15 @@ struct HTMLToIOSSafeAreaSpec: Codable {{
     let containerWidthPolicy: String
     let containerHeightPolicy: String
     let subtractFromContainerDimensions: Bool
+}}
+
+struct HTMLToIOSViewportOccupancySpec: Codable {{
+    let framePolicy: String
+    let bottomBarRelationship: String
+    let bottomReservationOwner: String
+    let sourceBottomPadding: Double
+    let additionalBottomContentInset: Double
+    let subtractBottomBarFromFrame: Bool
 }}
 
 enum HTMLToIOSLaunchConfiguration {{
@@ -6627,6 +6647,7 @@ struct HTMLToIOSGeneratedScreenView: View {
 
     private var navigationContent: some View {
         scrollContent
+        .padding(.bottom, CGFloat(screen.viewportOccupancy.additionalBottomContentInset))
         .padding(.top, CGFloat(screen.systemNavigationContentSpacing))
         .navigationTitle(screen.navigation.title)
         .navigationBarTitleDisplayMode(screen.navigation.titleMode == "large" ? .large : .inline)
@@ -6658,6 +6679,7 @@ struct HTMLToIOSGeneratedScreenView: View {
                 GeometryReader { proxy in
                     topAdjustedNavigationContent
                         .frame(width: proxy.size.width, height: proxy.size.height)
+                        .ignoresSafeArea(.container, edges: .bottom)
                         .overlay(alignment: .bottom) {
                             bottomBarContent
                                 .offset(y: proxy.safeAreaInsets.bottom + CGFloat(screen.fixedArtboardCropInsets?[2] ?? 0))
@@ -8226,7 +8248,13 @@ final class HTMLToIOSNodeRenderer {
                 button.setAttributedTitle(attributedText(displayText(spec), spec: spec), for: .normal)
                 button.titleLabel?.numberOfLines = spec.style.textLineLimit ?? 0
                 button.titleLabel?.lineBreakMode = lineBreakMode(spec)
-                button.contentHorizontalAlignment = .leading
+                switch spec.style.textAlignment {
+                case "center": button.contentHorizontalAlignment = .center
+                case "right", "end", "flex-end": button.contentHorizontalAlignment = .trailing
+                case "justified": button.contentHorizontalAlignment = .fill
+                default: button.contentHorizontalAlignment = .leading
+                }
+                button.contentVerticalAlignment = .center
                 button.isEnabled = spec.isEnabled
                 button.addAction(UIAction { [actionHandler] _ in actionHandler(spec.action) }, for: .touchUpInside)
                 view = button
@@ -10051,7 +10079,9 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController, UIScrollViewDele
         let insets = UIEdgeInsets(
             top: (screen.topBarPlacement == "safe-area-inset" ? (generatedTopBar?.bounds.height ?? 0) : 0) + sourceTopCalibration,
             left: 0,
-            bottom: screen.bottomBarPlacement == "safe-area-inset" ? (generatedBottomBar?.bounds.height ?? 0) : 0,
+            bottom: screen.bottomBarPlacement == "safe-area-inset"
+                ? (generatedBottomBar?.bounds.height ?? 0)
+                : CGFloat(screen.viewportOccupancy.additionalBottomContentInset),
             right: 0
         )
         if scroll.contentInset != insets { scroll.contentInset = insets }
@@ -10168,7 +10198,9 @@ class HTMLToIOSGeneratedScreenViewController: UIViewController, UIScrollViewDele
                         + CGFloat(screen.systemNavigationContentSpacing)
                 ),
             ])
-            let contentBottom = screen.safeArea.owner == "system" ? view.safeAreaLayoutGuide.bottomAnchor : view.bottomAnchor
+            let contentBottom = screen.bottomBarPlacement == "viewport-overlay"
+                ? view.bottomAnchor
+                : (screen.safeArea.owner == "system" ? view.safeAreaLayoutGuide.bottomAnchor : view.bottomAnchor)
             constraints.append(
                 hasNestedScrollOwner
                     ? content.bottomAnchor.constraint(equalTo: contentBottom)
@@ -10752,6 +10784,7 @@ final class HTMLToIOSGeneratedCoordinator: NSObject, UITabBarControllerDelegate 
                     systemNavigationContentSpacing: 0,
                     systemNavigationGeometry: nil,
                     safeArea: HTMLToIOSSafeAreaSpec(owner: "system", contentInsetAdjustment: "automatic", containerWidthPolicy: "full-parent-bounds", containerHeightPolicy: "full-parent-bounds", subtractFromContainerDimensions: false),
+                    viewportOccupancy: HTMLToIOSViewportOccupancySpec(framePolicy: "fill-available-bounds", bottomBarRelationship: "none", bottomReservationOwner: "none", sourceBottomPadding: 0, additionalBottomContentInset: 0, subtractBottomBarFromFrame: false),
                     contentContainer: HTMLToIOSContentContainerSpec(nodeId: presentation.node.id, kind: "static-view", scrollAxis: "none", usesCellReuse: false),
                     navigation: HTMLToIOSNavigationSpec(style: "hidden", title: "", titleMode: "inline", scrollEdgeAppearance: "automatic", backButton: "system", appearance: nil, toolbarItems: []),
                     root: presentation.node,
@@ -12875,6 +12908,10 @@ def build_native_structure_manifest(
                 "safeArea": {
                     "planned": scroll_contract.get("safeArea"),
                     "generated": payload_screen.get("safeArea"),
+                },
+                "viewportOccupancy": {
+                    "planned": scroll_contract.get("viewportOccupancy"),
+                    "generated": payload_screen.get("viewportOccupancy"),
                 },
                 "regions": scroll_region_consumption,
             },

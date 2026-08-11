@@ -134,6 +134,13 @@ class LayoutRelationGraphTests(unittest.TestCase):
             self.assertNotIn(("square-aspect", ["home.large-card"]), relation_kinds)
             self.assertIn(("scroll-axis-ownership", ["home.root"]), relation_kinds)
             self.assertIn(("scroll-axis-ownership", ["home.filters"]), relation_kinds)
+            leading_lane = next(
+                item for item in screen["alignmentLanes"]
+                if item["alignment"] == "leading"
+                and {"home.icon", "home.filter.1"}.issubset(item["nodeIds"])
+            )
+            self.assertEqual(leading_lane["coordinatePt"], 16)
+            self.assertGreaterEqual(len(leading_lane["parentNodeIds"]), 2)
             first_sequence = next(
                 item for item in screen["relations"]
                 if item["kind"] == "visual-sequence" and item.get("containerNodeId") == "home.toolbar"

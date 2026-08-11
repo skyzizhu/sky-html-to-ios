@@ -80,10 +80,10 @@ description: 将本地或可运行的移动端 HTML/CSS/JavaScript 高保真原�
 47. `native-appearance-plan.json` 负责节点外观，文字占位尺寸仍由 `native-layout-plan.json` 负责；`native-interaction-motion-plan.json` 负责每个动作和动画的唯一 owner 与 executor。生成器必须消费这些计划并在结构清单中记录哈希与消费状态。
 48. 总控先原子化写入 canonical orchestration report，再向 stdout 输出摘要。stdout/日志消费者提前关闭导致的 `BrokenPipeError` 只能停止终端输出，禁止把已通过的转换和构建状态覆盖成 failed。
 49. NavigationBar 与 App 级 TabBar 必须执行 system-first 视觉适配门禁。页面顶部出现返回按钮或页面级操作按钮时，默认映射为系统 NavigationBar；标准主 Tab 默认映射为 `TabView`/`UITabBarController`。只有缺少导航语义、系统容器无法表达来源布局或存在显式强制契约时才允许隐藏或自定义。系统容器接管后必须移除来源栏后代，禁止双栏和重复 Safe Area。
-50. 对齐、间距和负 margin 必须先归一化再由两套原生栈共同消费。实测 border-box 间距是首次生成的权威值，margin 只能消费一次，`space-between/around/evenly` 不得退化成固定空白；负 margin 必须保留以表达 full-bleed 等父级 padding 抵消关系。
+50. 对齐、间距和负 margin 必须先归一化再由两套原生栈共同消费。跨父容器的同坐标边缘形成 Alignment Lane；实测 border-box 间距是首次生成的权威值，margin 只能消费一次，`space-between/around/evenly` 不得退化成固定空白；负 margin 必须保留以表达 full-bleed 等父级 padding 抵消关系。
 51. 系统 NavigationBar 接管后，系统 Safe Area 与状态栏 inset 是唯一顶部系统空间；只保留来源导航栏底边到首个业务内容节点的真实间距。宽容器填充、轴向对齐和 authored `aspect-ratio` 必须进入 UIKit/SwiftUI 共同门禁。
 52. 节点 `widthFraction` 必须相对直接父内容盒计算；接近父宽的普通流节点映射为填充，absolute/fixed、Overlay、横向 item、动画和紧凑文字保留各自尺寸语义。
-53. 固定 border-box 只约束外框。盒内位置必须联合消费容器 axis、`justify-content`、`align-items`、Grid 对齐和文字对齐；Screen Root 高度只用于验收，不得固化为导致整页漂移的运行时 frame。
+53. 固定 border-box 只约束外框。盒内位置必须联合消费容器 axis、`justify-content`、`align-items`、Grid 对齐、文字对齐和子内容剩余空间；Screen Root 高度只用于验收，根容器必须填满可用屏幕。Overlay 底栏不得缩短容器，来源 padding 与原生 inset 只能由一方预留。
 54. JavaScript/CSS 状态变化必须由隔离 probe 的 before/after 证据生成可逆 State Variant；Sheet/Popover/Overlay 必须保留来源 panel 与内部状态身份，交给唯一 Scroll 或 Presentation owner。
 55. HTML 中带点击行为的非按钮元素也必须由原生事件宿主承担点击。Popover 的触发器 anchor 与 panel rect 分开保存，禁止用触发器尺寸压缩弹层。
 56. 每个线性容器只有一份 `geometrySystem`，按父内容盒、intrinsic 子项、父相对尺寸、剩余空间和交叉轴对齐顺序求解；`equal-share` 只来自明确强证据，两套生成器不得重新猜测。

@@ -352,6 +352,22 @@ def main() -> int:
                     "SAFE_AREA_OWNER_NOT_CONSUMED", screen_id,
                     "Generated native structure does not preserve the planned Safe Area owner.",
                 ))
+            planned_occupancy = planned_scroll.get("viewportOccupancy") or {}
+            generated_occupancy = (consumed_scroll.get("viewportOccupancy") or {}).get("generated") or {}
+            occupancy_pairs = (
+                ("framePolicy", "framePolicy"),
+                ("bottomBarRelationship", "bottomBarRelationship"),
+                ("bottomReservationOwner", "bottomReservationOwner"),
+                ("sourceBottomPaddingPt", "sourceBottomPadding"),
+                ("additionalBottomContentInsetPt", "additionalBottomContentInset"),
+                ("subtractBottomBarFromFrame", "subtractBottomBarFromFrame"),
+            )
+            for planned_key, generated_key in occupancy_pairs:
+                if planned_key in planned_occupancy and str(planned_occupancy.get(planned_key)) != str(generated_occupancy.get(generated_key)):
+                    issues.append(issue(
+                        "VIEWPORT_OCCUPANCY_NOT_CONSUMED", screen_id,
+                        f"Generated viewport occupancy {generated_key} differs from planned {planned_key}.",
+                    ))
             for edge, record in ((consumed_scroll.get("regions") or {}).items()):
                 if record.get("status") != "consumed":
                     issues.append(issue(

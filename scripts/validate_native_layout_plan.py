@@ -89,6 +89,27 @@ def main() -> int:
         plan_nodes = {str(item.get("nodeId") or ""): item for item in screen_plan.get("nodes") or []}
         if set(ir_nodes) != set(plan_nodes):
             add("LAYOUT_NODE_SET_MISMATCH", screen_id, "Every UI IR node must have one box-model plan.")
+        graph_lanes = {
+            str(item.get("laneId") or ""): item
+            for item in (graph_screens.get(screen_id) or {}).get("alignmentLanes") or []
+            if item.get("laneId")
+        }
+        plan_lanes = {
+            str(item.get("laneId") or ""): item
+            for item in screen_plan.get("alignmentLanes") or []
+            if item.get("laneId")
+        }
+        if set(graph_lanes) != set(plan_lanes):
+            add("ALIGNMENT_LANE_SET_MISMATCH", screen_id, "Cross-container alignment lanes changed during native lowering.")
+        for lane_id, lane in plan_lanes.items():
+            lane_nodes = [str(item) for item in lane.get("nodeIds") or []]
+            if len(lane_nodes) < 2 or any(node_id not in plan_nodes for node_id in lane_nodes):
+                add("INVALID_ALIGNMENT_LANE", screen_id, "Alignment lanes require at least two existing native nodes.", lane_id)
+            if float(lane.get("maxDeviationPt") or 0) > float(lane.get("tolerancePt") or 0):
+                add("ALIGNMENT_LANE_EXCEEDS_TOLERANCE", screen_id, "Alignment lane geometry exceeds its source tolerance.", lane_id)
+            for node_id in lane_nodes:
+                if lane_id not in (plan_nodes.get(node_id) or {}).get("alignmentLaneIds", []):
+                    add("NODE_ALIGNMENT_LANE_MISSING", screen_id, "Native node does not retain its shared alignment-lane evidence.", node_id)
         architecture_relations = {
             str(item.get("containerNodeId") or ""): item
             for item in ((((architecture_screens.get(screen_id) or {}).get("layers") or {}).get("contentContainer") or {}).get("layoutRelations") or [])
@@ -217,6 +238,15 @@ def main() -> int:
                 add("INVALID_CONTENT_ASPECT_RATIO", screen_id, "Content aspect ratio must be positive.", node_id)
             if content_geometry.get("singleLine") is True and int(content_geometry.get("lineCount") or 1) > 1:
                 add("SINGLE_LINE_CONTENT_CONFLICT", screen_id, "Single-line content cannot declare multiple measured lines.", node_id)
+            if str(content_geometry.get("horizontalAlignment") or "normal") not in {
+                "normal", "start", "left", "center", "end", "right", "flex-start", "flex-end",
+                "space-between", "space-around", "space-evenly",
+            }:
+                add("INVALID_CONTENT_HORIZONTAL_ALIGNMENT", screen_id, "Content horizontal alignment is not executable.", node_id)
+            if str(content_geometry.get("verticalAlignment") or "normal") not in {
+                "normal", "start", "top", "center", "end", "bottom", "flex-start", "flex-end", "baseline", "stretch",
+            }:
+                add("INVALID_CONTENT_VERTICAL_ALIGNMENT", screen_id, "Content vertical alignment is not executable.", node_id)
             if box.get("boxSizing") not in {"border-box", "content-box"}:
                 add("UNSUPPORTED_BOX_SIZING", screen_id, "Box sizing must be border-box or content-box.", node_id)
             for key in ("borderBoxWidthPt", "borderBoxHeightPt", "contentWidthPt", "contentHeightPt"):

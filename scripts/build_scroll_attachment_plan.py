@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +42,25 @@ def load(path: Path) -> dict[str, Any]:
 
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def number(value: Any) -> float:
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+        return float(value)
+    if isinstance(value, str):
+        match = re.fullmatch(r"\s*(-?(?:\d+(?:\.\d*)?|\.\d+))(?:px|pt)?\s*", value, re.IGNORECASE)
+        if match:
+            return float(match.group(1))
+    return 0.0
+
+
+def bottom_padding(node: dict[str, Any]) -> float:
+    padding = (node.get("style") or {}).get("padding")
+    if isinstance(padding, list) and len(padding) >= 3:
+        return max(number(padding[2]), 0)
+    if isinstance(padding, dict):
+        return max(number(padding.get("bottom")), 0)
+    return 0.0
 
 
 def screen_map(paths: list[Path]) -> dict[str, dict[str, Any]]:
@@ -198,6 +219,23 @@ def build_screen(
     )
     top = region_contract("top", regions.get("top") or {}, nodes, children, report, safe_owner, root_scroll_owner_id)
     bottom = region_contract("bottom", regions.get("bottom") or {}, nodes, children, report, safe_owner, root_scroll_owner_id)
+    bottom_node = nodes.get(str(bottom.get("nodeId") or "")) or {}
+    bottom_rect = (bottom_node.get("layout") or {}).get("rect") or {}
+    bottom_height = max(number(bottom_rect.get("height")), 0)
+    source_bottom_padding = bottom_padding(root_node)
+    bottom_relationship = "overlay" if bottom.get("attachment") == "viewport-overlay" else "docked" if bottom.get("nodeId") else "none"
+    if bottom_relationship == "overlay" and source_bottom_padding > 0:
+        reservation_owner = "source-padding"
+        additional_bottom_inset = 0.0
+    elif bottom_relationship == "overlay":
+        reservation_owner = "native-content-inset"
+        additional_bottom_inset = bottom_height
+    elif bottom_relationship == "docked":
+        reservation_owner = "native-safe-area-inset"
+        additional_bottom_inset = 0.0
+    else:
+        reservation_owner = "none"
+        additional_bottom_inset = 0.0
     node_contracts = []
     for node_id, node in nodes.items():
         position = str((node.get("layout") or {}).get("position") or (node.get("style") or {}).get("position") or "static")
@@ -231,6 +269,17 @@ def build_screen(
             "owner": safe_owner,
             "contentInsetAdjustment": str((architecture.get("scroll") or {}).get("contentInsetAdjustment") or "automatic"),
             "subtractFromContainerDimensions": False,
+        },
+        "viewportOccupancy": {
+            "framePolicy": "fill-available-bounds",
+            "widthOwner": "screen-container",
+            "heightOwner": "screen-container",
+            "bottomBarRelationship": bottom_relationship,
+            "bottomReservationOwner": reservation_owner,
+            "sourceBottomPaddingPt": round(source_bottom_padding, 4),
+            "bottomBarHeightPt": round(bottom_height, 4),
+            "additionalBottomContentInsetPt": round(additional_bottom_inset, 4),
+            "subtractBottomBarFromFrame": bottom_relationship == "docked",
         },
         "regions": {"top": top, "bottom": bottom},
         "nodes": node_contracts,

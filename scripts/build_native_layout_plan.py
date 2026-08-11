@@ -769,6 +769,14 @@ def build_screen(
         if isinstance(item, dict) and item.get("containerNodeId")
     }
     graph_relations_by_container: dict[str, list[str]] = {}
+    alignment_lanes = [
+        item for item in graph.get("alignmentLanes") or []
+        if isinstance(item, dict) and item.get("laneId")
+    ]
+    alignment_lane_ids_by_node: dict[str, list[str]] = {}
+    for lane in alignment_lanes:
+        for node_id in lane.get("nodeIds") or []:
+            alignment_lane_ids_by_node.setdefault(str(node_id), []).append(str(lane["laneId"]))
     for relation in graph.get("relations") or []:
         container_id = str(relation.get("containerNodeId") or relation.get("parentNodeId") or "")
         if container_id:
@@ -892,6 +900,7 @@ def build_screen(
         }
         node_plans.append({
             "nodeId": node_id,
+            "alignmentLaneIds": sorted(alignment_lane_ids_by_node.get(node_id) or []),
             "appearance": appearance_contract(style, measured),
             "contentGeometry": content_geometry_contract(
                 node,
@@ -1195,12 +1204,14 @@ def build_screen(
             "scrollAxis": content.get("scrollAxis"),
         },
         "containers": containers,
+        "alignmentLanes": alignment_lanes,
         "nodes": node_plans,
         "collectionLayouts": collection_layouts,
         "compoundControls": compounds,
         "stateLayouts": state_layouts,
         "summary": {
             "containerCount": len(containers),
+            "alignmentLaneCount": len(alignment_lanes),
             "nodeCount": len(node_plans),
             "collectionLayoutCount": len(collection_layouts),
             "compoundControlCount": len(compounds),

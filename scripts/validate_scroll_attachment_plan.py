@@ -37,6 +37,19 @@ def main() -> int:
             add("ROOT_BIDIRECTIONAL_SCROLL_REQUIRES_EXPLICIT_REVIEW", screen_id, "Page roots may not scroll on both axes without an explicit specialized canvas or data-table contract.", root_owner)
         if (screen.get("safeArea") or {}).get("subtractFromContainerDimensions") is not False:
             add("SAFE_AREA_DOUBLE_SUBTRACTION", screen_id, "Safe Area must not be subtracted from scroll container dimensions.")
+        occupancy = screen.get("viewportOccupancy") or {}
+        if occupancy.get("framePolicy") != "fill-available-bounds":
+            add("ROOT_CONTAINER_DOES_NOT_FILL_VIEWPORT", screen_id, "The page content container must fill the available screen bounds.", root_owner)
+        relationship = str(occupancy.get("bottomBarRelationship") or "none")
+        reservation_owner = str(occupancy.get("bottomReservationOwner") or "")
+        if relationship == "overlay" and occupancy.get("subtractBottomBarFromFrame") is not False:
+            add("OVERLAY_BAR_SHRINKS_CONTAINER", screen_id, "An overlay bottom bar must not reduce the page container frame.", root_owner)
+        if relationship == "overlay" and reservation_owner not in {"source-padding", "native-content-inset"}:
+            add("BOTTOM_RESERVATION_OWNER_INVALID", screen_id, "Overlay bottom spacing must have exactly one explicit owner.", root_owner)
+        if reservation_owner == "source-padding" and float(occupancy.get("additionalBottomContentInsetPt") or 0) != 0:
+            add("BOTTOM_SPACE_DOUBLE_RESERVED", screen_id, "Source padding and native bottom content inset cannot both reserve overlay space.", root_owner)
+        if reservation_owner == "native-content-inset" and float(occupancy.get("sourceBottomPaddingPt") or 0) != 0:
+            add("BOTTOM_SPACE_DOUBLE_RESERVED", screen_id, "Native bottom content inset requires zero source bottom padding.", root_owner)
         for edge, region in (screen.get("regions") or {}).items():
             node_id = region.get("nodeId")
             if not node_id:

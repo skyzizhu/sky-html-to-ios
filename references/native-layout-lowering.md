@@ -32,6 +32,8 @@
 - measured width/height、aspect ratio、flex grow/shrink 和 compression resistance；
 - 关系图中支撑该决策的 relation IDs。
 
+跨父容器但处于同一页面坐标系的 leading、trailing 或 center-x 边缘必须形成 `alignmentLanes`。例如 section header 与其下方横向 Collection 的首个 item 即使父节点不同，也应共享同一 leading lane。Lane 记录目标坐标、参与节点、不同父容器数量、最大偏差和容差；Native Layout Plan 必须逐节点保留 lane ID。不得分别从每个局部容器重新猜一份 padding，也不得用视觉截图纠正本可由 DOM 几何确定的跨容器对齐。
+
 SwiftUI 使用这些证据选择 Stack/Grid/Overlay、spacing、frame 和 layout priority。UIKit 使用相同证据配置 `UIStackView`、Auto Layout、Table/Collection item sizing 与 hugging/compression priority。禁止技术栈各自重排子节点。
 
 固定 border-box 的尺寸与盒内内容对齐是两个独立契约。SwiftUI 所有 fixed/min/max frame 必须显式传入由容器 axis、`justify-content`、`align-items`、Grid `justify-items` 和文字 `text-align` 推导的 Alignment，不能使用 `.frame` 的默认居中；UIKit 使用同一证据配置 Stack alignment/distribution 与文字 alignment。横向复合控件中的 flexible 文本槽先获取剩余宽度，再在槽内按来源 left/center/right 对齐，禁止扩展槽位后把文字默认居中。
@@ -124,6 +126,8 @@ Payload 必须保存容器的 `stackDistributionMode` 与 `geometrySolveOrder`�
 
 对齐值先归一化为 `start|center|end|stretch|baseline`，再按轴映射。横向 Stack 的 cross-axis 对应 top/center/bottom/fill/firstBaseline，纵向 Stack 对应 leading/center/trailing/fill；`text-align` 只控制文字绘制，不能偷偷改变容器子项对齐。Grid 的 `justify-items` 与 `align-items` 分别控制水平和垂直 item 对齐。
 
+控件 border box 与控件内容具有独立对齐层。普通 `button`、`UIControl`、胶囊和卡片先读取 computed `text-align`、`justify-content`、`align-items`，再用子内容左右/上下剩余空间做几何校验；两侧剩余空间在容差内相等时确认 center，单侧贴边时确认 start/end。浏览器原生按钮的默认居中可作为语义 fallback，但不得覆盖明确 CSS 或实测几何。UIKit 不得把所有按钮统一设为 `.leading`，SwiftUI 不得依赖未声明的 `.frame` 默认值。
+
 同页状态使用 `stateLayouts` 保存 insert/remove/replace 对应的目标父容器、生成节点布局和原节点基线布局。状态节点仍消费普通 Node Layout Contract；状态变化不得另建一套截图坐标或独立页面。
 
 没有重复状态画板时，JavaScript/CSS class toggle 仍可能改变目标节点几何。隔离浏览器 probe 的 before/after width、height 与 overflow 差异必须生成可逆的 layout-only State Variant；首次触发应用尺寸/滚动覆盖，再次触发恢复基线。内容没有变化时禁止用空 items 覆盖并删除原子树。若被选作 Screen Content Root 的节点位于 HTML 可滚动祖先内，而该祖先不进入原生内容树，则将其唯一纵向或横向 Scroll ownership 继承到 Screen Root，并保留来源 runtime ID/selector 证据。
@@ -171,6 +175,7 @@ UIKit 页面级 typed wrapper 和模块 ContentView 必须在加入 Screen Conta
 8. 复合槽位唯一、完整并保持视觉顺序。
 9. 每个容器的 paint order 完整、唯一并满足全部 overlap-order 关系；stacking context owner 和 overflow clip owner 必须闭合。
 10. 每个容器具有完整 `geometrySystem`，其 owner、axis、视觉子项顺序、尺寸模式、equal-share 权重和五阶段求解顺序可执行。
+11. 跨容器 Alignment Lane 与每个节点的 lane membership 完整一致，且最大偏差不超过来源容差；内容水平/垂直对齐值可被两套原生栈执行。
 
 生成后，`native-structure-manifest.json` 再逐容器核对算法、axis、child order、row/column gap、wrap、alignment 和 distribution，逐集合核对 item order、尺寸模式、列数、supplementary、pinning、insets、间距和滚动隔离，逐节点核对尺寸/定位契约，逐状态核对布局操作，并逐复合控件核对 `compoundLayout` 与 `contentItems`。Manifest 还必须证明生成运行时具备并消费当前页面要求的相对约束、显式 Grid placement、集合尺寸、pinned supplementary 和状态重排能力。任一项未消费时不得接入 Xcode target。
 

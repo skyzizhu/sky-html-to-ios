@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import statistics
 from pathlib import Path
 from typing import Any
 
@@ -243,6 +244,61 @@ def build_screen_graph(screen: dict[str, Any]) -> dict[str, Any]:
                     frontPaintKey=list(right_key if front_id == right_id else left_key),
                 )
 
+    alignment_lanes: list[dict[str, Any]] = []
+    for alignment in ("leading", "trailing", "center-x"):
+        measurements: list[tuple[str, str, float]] = []
+        for node_id, node in nodes.items():
+            measured = rect(node)
+            parent_id = str(node.get("parentId") or "")
+            if not measured or not parent_id:
+                continue
+            coordinate = (
+                measured["x"]
+                if alignment == "leading"
+                else measured["x"] + measured["width"]
+                if alignment == "trailing"
+                else measured["x"] + measured["width"] / 2
+            )
+            measurements.append((node_id, parent_id, coordinate))
+        measurements.sort(key=lambda item: item[2])
+        pending = list(measurements)
+        while pending:
+            seed = pending.pop(0)
+            group = [seed]
+            remaining = []
+            for candidate in pending:
+                current_center = statistics.median(item[2] for item in group)
+                if abs(candidate[2] - current_center) <= TOLERANCE_PT:
+                    group.append(candidate)
+                else:
+                    remaining.append(candidate)
+            pending = remaining
+            parent_ids = {item[1] for item in group}
+            if len(group) < 2 or len(parent_ids) < 2:
+                continue
+            coordinate = statistics.median(item[2] for item in group)
+            lane = {
+                "laneId": f"{screen_id}.lane.{alignment}.{len(alignment_lanes)}",
+                "alignment": alignment,
+                "coordinatePt": round(coordinate, 4),
+                "nodeIds": [item[0] for item in group],
+                "parentNodeIds": sorted(parent_ids),
+                "maxDeviationPt": round(max(abs(item[2] - coordinate) for item in group), 4),
+                "tolerancePt": TOLERANCE_PT,
+            }
+            alignment_lanes.append(lane)
+            append_relation(
+                relations,
+                lane["laneId"],
+                "alignment-lane",
+                lane["nodeIds"],
+                alignment=alignment,
+                coordinatePt=lane["coordinatePt"],
+                parentNodeIds=lane["parentNodeIds"],
+                maxDeviationPt=lane["maxDeviationPt"],
+                tolerancePt=TOLERANCE_PT,
+            )
+
     return {
         "screenId": screen_id,
         "rootNodeId": screen.get("rootNodeId"),
@@ -260,6 +316,7 @@ def build_screen_graph(screen: dict[str, Any]) -> dict[str, Any]:
             for node_id, node in nodes.items()
         ],
         "containers": container_relations,
+        "alignmentLanes": alignment_lanes,
         "relations": relations,
         "summary": {
             "nodeCount": len(nodes),
@@ -269,6 +326,7 @@ def build_screen_graph(screen: dict[str, Any]) -> dict[str, Any]:
             "sequenceCount": sum(item["kind"] == "visual-sequence" for item in relations),
             "scrollOwnerCount": sum(item["kind"] == "scroll-axis-ownership" for item in relations),
             "overlapOrderCount": sum(item["kind"] == "overlap-order" for item in relations),
+            "alignmentLaneCount": len(alignment_lanes),
         },
     }
 

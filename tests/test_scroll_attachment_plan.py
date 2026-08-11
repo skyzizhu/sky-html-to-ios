@@ -29,7 +29,11 @@ class ScrollAttachmentPlanTests(unittest.TestCase):
     def write_json(self, path: Path, payload: dict) -> None:
         path.write_text(json.dumps(payload), encoding="utf-8")
 
-    def build(self, root: Path, nodes: list[dict], *, root_axis: str = "vertical", top_behavior: str = "fixed") -> dict:
+    def build(
+        self, root: Path, nodes: list[dict], *, root_axis: str = "vertical",
+        top_behavior: str = "fixed", bottom_node_id: str | None = None,
+        bottom_behavior: str = "none",
+    ) -> dict:
         ir = root / "ir.json"
         architecture = root / "architecture.json"
         probe = root / "probe.json"
@@ -45,7 +49,7 @@ class ScrollAttachmentPlanTests(unittest.TestCase):
                     "contentContainer": {"nodeId": "home.root", "scrollAxis": root_axis},
                     "screenRegions": {
                         "top": {"nodeId": "home.top", "behavior": top_behavior},
-                        "bottom": {"nodeId": None, "behavior": "none"},
+                        "bottom": {"nodeId": bottom_node_id, "behavior": bottom_behavior},
                     },
                 },
             }],
@@ -101,6 +105,27 @@ class ScrollAttachmentPlanTests(unittest.TestCase):
             screen = payload["screens"][0]
             self.assertEqual(screen["regions"]["top"]["behavior"], "scroll-away")
             self.assertFalse(screen["regions"]["top"]["liftedFromContent"])
+
+    def test_overlay_bottom_bar_fills_viewport_and_uses_source_padding_once(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root_node = node("home.root", None, "scroll", "vertical")
+            root_node["style"]["padding"] = ["0px", "0px", "96px", "0px"]
+            bottom = node("home.bottom", "home.root", "footer", position="fixed")
+            bottom["layout"]["rect"] = {"x": 0, "y": 756, "width": 393, "height": 96}
+            payload = self.build(
+                root,
+                [root_node, node("home.top", "home.root", "navigation"), bottom],
+                bottom_node_id="home.bottom",
+                bottom_behavior="fixed",
+            )
+            occupancy = payload["screens"][0]["viewportOccupancy"]
+            self.assertEqual(occupancy["framePolicy"], "fill-available-bounds")
+            self.assertEqual(occupancy["bottomBarRelationship"], "overlay")
+            self.assertEqual(occupancy["bottomReservationOwner"], "source-padding")
+            self.assertEqual(occupancy["additionalBottomContentInsetPt"], 0)
+            self.assertFalse(occupancy["subtractBottomBarFromFrame"])
+            self.assertEqual(self.validate(root, payload).returncode, 0)
 
     def test_same_axis_nested_scroll_fails_but_explicit_data_table_both_axis_passes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -12,6 +12,7 @@
 - 每个滚动节点的 owner、coordinate space 和 directional lock；
 - top/bottom region 的 `scroll-content`、`scroll-sticky` 或 `viewport-overlay` 归属；
 - Safe Area owner 和系统 `contentInsetAdjustment` 策略；
+- `viewportOccupancy`：根容器宽高所有权、底栏 overlay/docked 关系及底部空间唯一 owner；
 - 底部输入区域是否使用 keyboard layout guide；
 - 是否允许经过明确声明的数据表、画布、地图或图表根双轴滚动。
 
@@ -24,6 +25,12 @@
 - `scroll-away` 与普通文档 header/footer：保留在内容树中，不提升为固定栏。
 - 行为 probe 只有 selector/runtime ID/node ID 精确匹配时才能覆盖架构计划；同一 edge 的其他候选不能被误套。
 - 自绘栏位高度只追加一次。系统 Safe Area 不从 UIScrollView/ScrollView 的宽高预扣。
+
+## Viewport Occupancy
+
+Screen Container 永远拥有页面根容器的可用宽高，`framePolicy` 固定为 `fill-available-bounds`。来源 Screen Root 的实测高度仅用于校验，不能把 Scroll/Table/Collection/普通根 View 截成内容高度；页面底部存在系统 Home Indicator 时，也不得手工从容器高度再次扣除 Safe Area。
+
+底栏使用 `viewport-overlay` 时，主内容 frame 仍延伸到物理屏幕底部，底栏作为 sibling/overlay 覆盖其上；`subtractBottomBarFromFrame` 必须为 false。内容避让只能由一个 owner 负责：来源滚动根已有 bottom padding 时使用 `source-padding` 且原生 additional inset 为 0；来源没有预留时使用 `native-content-inset` 并按栏高追加一次。`safe-area-inset` 底栏由原生 inset 机制拥有，不得同时保留同等来源 padding。
 
 ## 轴向规则
 
