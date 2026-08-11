@@ -75,8 +75,8 @@ def main() -> int:
         raise ValueError("--architecture-plan must use native-architecture-plan-1.1")
     if args.application_plan and application_plan.get("schemaVersion") != "native-application-plan-1.0":
         raise ValueError("--application-plan must use native-application-plan-1.0")
-    if native_layout.get("schemaVersion") != "native-layout-plan-1.1":
-        raise ValueError("--native-layout-plan must use native-layout-plan-1.1")
+    if native_layout.get("schemaVersion") not in {"native-layout-plan-1.1", "native-layout-plan-1.2"}:
+        raise ValueError("--native-layout-plan must use native-layout-plan-1.1 or native-layout-plan-1.2")
     if args.scroll_attachment_plan and scroll_attachment.get("schemaVersion") != "scroll-and-attachment-plan-1.0":
         raise ValueError("--scroll-attachment-plan must use scroll-and-attachment-plan-1.0")
     if args.control_configuration_plan and control_configuration.get("schemaVersion") not in {"native-control-configuration-plan-1.0", "native-control-configuration-plan-1.1"}:

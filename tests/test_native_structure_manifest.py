@@ -207,6 +207,48 @@ class NativeStructureManifestTests(unittest.TestCase):
                 self.assertEqual(manifest["summary"]["missingNodeCount"], 0)
                 self.assertEqual(manifest["summary"]["unconsumedRelationCount"], 0)
 
+    def test_layout_plan_1_1_remains_readable_without_geometry_system(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            graph, architecture, layout_path, _, _ = self.build_chain(root, "swiftui")
+            layout = json.loads(layout_path.read_text(encoding="utf-8"))
+            self.assertEqual(layout["schemaVersion"], "native-layout-plan-1.2")
+            layout["schemaVersion"] = "native-layout-plan-1.1"
+            for screen in layout["screens"]:
+                for container in screen["containers"]:
+                    container.pop("geometrySystem", None)
+            layout_path.write_text(json.dumps(layout), encoding="utf-8")
+
+            ir_path = root / "ui-ir.json"
+            self.run_command([
+                "python3", str(LAYOUT_PLAN_VALIDATOR_SCRIPT), "--plan", str(layout_path),
+                "--ir", str(ir_path), "--architecture-plan", str(architecture),
+                "--layout-graph", str(graph), "--out", str(root / "legacy-validation.json"),
+            ])
+            legacy_output = root / "Legacy" / "Generated" / "HTMLToIOS"
+            self.run_command([
+                "python3", str(GENERATOR_SCRIPT), "--ir", str(ir_path),
+                "--out-dir", str(legacy_output), "--ui-stack", "swiftui",
+                "--architecture-plan", str(architecture),
+                "--layout-relation-graph", str(graph),
+                "--native-layout-plan", str(layout_path),
+            ])
+            self.assertTrue((legacy_output / ".html-to-ios-generation.json").exists())
+
+            layout["schemaVersion"] = "native-layout-plan-1.2"
+            layout_path.write_text(json.dumps(layout), encoding="utf-8")
+            result = self.run_command([
+                "python3", str(LAYOUT_PLAN_VALIDATOR_SCRIPT), "--plan", str(layout_path),
+                "--ir", str(ir_path), "--architecture-plan", str(architecture),
+                "--layout-graph", str(graph), "--out", str(root / "strict-validation.json"),
+            ], expect_success=False)
+            self.assertEqual(result.returncode, 1)
+            report = json.loads((root / "strict-validation.json").read_text(encoding="utf-8"))
+            self.assertIn(
+                "CONTAINER_GEOMETRY_SYSTEM_MISSING",
+                {item["code"] for item in report["issues"]},
+            )
+
     def test_target_point_content_geometry_is_not_scaled_twice(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -257,6 +299,109 @@ class NativeStructureManifestTests(unittest.TestCase):
             self.assertEqual(collection["status"], "consumed")
             self.assertTrue(collection["checks"]["breakpoints"])
             self.assertTrue(collection["checks"]["insets"])
+
+    def test_equal_share_geometry_is_planned_and_consumed_by_both_stacks(self) -> None:
+        for ui_stack in ("swiftui", "uikit"):
+            with self.subTest(ui_stack=ui_stack), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                payload = make_ir(ui_stack)
+                nodes = {item["id"]: item for item in payload["screens"][0]["nodes"]}
+                toolbar = nodes["home.toolbar"]
+                toolbar["style"]["gap"] = "8px"
+                toolbar["style"]["columnGap"] = "8px"
+                for index, node_id in enumerate(("home.icon", "home.title", "home.count")):
+                    child = nodes[node_id]
+                    child["layout"]["rect"].update({"x": 16 + index * 123, "width": 115})
+                    child["style"]["flexGrow"] = "1"
+                    child["style"]["flexShrink"] = "1"
+
+                outputs = self.build_chain(root, ui_stack, payload)
+                _, report = self.validate_chain(root, *outputs)
+                self.assertEqual(report["status"], "passed")
+                layout = json.loads(outputs[2].read_text(encoding="utf-8"))["screens"][0]
+                toolbar_plan = next(item for item in layout["containers"] if item["containerNodeId"] == "home.toolbar")
+                geometry = toolbar_plan["geometrySystem"]
+                self.assertEqual(geometry["mainAxisDistribution"], "equal-share")
+                self.assertEqual(
+                    [item["mainAxisSizingMode"] for item in geometry["childContracts"]],
+                    ["equal-share", "equal-share", "equal-share"],
+                )
+
+                generated = json.loads((outputs[4] / "Resources/Payload/HTMLToIOSGeneratedPayload.json").read_text(encoding="utf-8"))
+                indexed: dict[str, dict] = {}
+
+                def visit(value: object) -> None:
+                    if isinstance(value, dict):
+                        if isinstance(value.get("id"), str) and "semantic" in value:
+                            indexed[value["id"]] = value
+                        for child in value.values():
+                            visit(child)
+                    elif isinstance(value, list):
+                        for child in value:
+                            visit(child)
+
+                visit(generated)
+                self.assertEqual(indexed["home.toolbar"]["style"]["stackDistributionMode"], "equal-share")
+                self.assertTrue(all(
+                    indexed[node_id]["layoutContract"]["mainAxisSizingMode"] == "equal-share"
+                    for node_id in ("home.icon", "home.title", "home.count")
+                ))
+                manifest = json.loads(outputs[3].read_text(encoding="utf-8"))
+                toolbar_consumption = next(
+                    item for item in manifest["screens"][0]["layoutPlanConsumption"]["containers"]
+                    if item["containerNodeId"] == "home.toolbar"
+                )
+                self.assertEqual(toolbar_consumption["status"], "consumed")
+                self.assertTrue(toolbar_consumption["checks"]["geometryDistribution"])
+                self.assertTrue(manifest["runtimeCapabilities"]["equalShareGeometry"]["consumed"])
+
+    def test_equal_measured_fixed_children_remain_source_sized(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = make_ir("uikit")
+            nodes = {item["id"]: item for item in payload["screens"][0]["nodes"]}
+            toolbar = nodes["home.toolbar"]
+            toolbar["layout"]["rect"]["width"] = 256
+            toolbar["style"]["gap"] = "8px"
+            toolbar["style"]["columnGap"] = "8px"
+            for index, node_id in enumerate(("home.icon", "home.title", "home.count")):
+                child = nodes[node_id]
+                child["layout"]["rect"].update({"x": 16 + index * 88, "width": 80})
+                child["style"]["authoredLayout"] = {"width": {"value": "80px"}}
+                child["style"]["flexGrow"] = "0"
+
+            outputs = self.build_chain(root, "uikit", payload)
+            _, report = self.validate_chain(root, *outputs)
+            self.assertEqual(report["status"], "passed")
+            layout = json.loads(outputs[2].read_text(encoding="utf-8"))["screens"][0]
+            toolbar_plan = next(item for item in layout["containers"] if item["containerNodeId"] == "home.toolbar")
+            geometry = toolbar_plan["geometrySystem"]
+            self.assertEqual(geometry["mainAxisDistribution"], "source-sized")
+            self.assertEqual(
+                [item["mainAxisSizingMode"] for item in geometry["childContracts"]],
+                ["fixed", "fixed", "fixed"],
+            )
+
+    def test_space_between_intrinsic_children_are_not_promoted_to_equal_share(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload = make_ir("swiftui")
+            nodes = {item["id"]: item for item in payload["screens"][0]["nodes"]}
+            toolbar = nodes["home.toolbar"]
+            toolbar["style"]["justifyContent"] = "space-between"
+            toolbar["style"]["gap"] = "0px"
+            toolbar["style"]["columnGap"] = "0px"
+            for index, node_id in enumerate(("home.icon", "home.title", "home.count")):
+                child = nodes[node_id]
+                child["layout"]["rect"].update({"x": 16 + index * 140.5, "width": 80})
+                child["style"]["flexGrow"] = "0"
+
+            outputs = self.build_chain(root, "swiftui", payload)
+            _, report = self.validate_chain(root, *outputs)
+            self.assertEqual(report["status"], "passed")
+            layout = json.loads(outputs[2].read_text(encoding="utf-8"))["screens"][0]
+            toolbar_plan = next(item for item in layout["containers"] if item["containerNodeId"] == "home.toolbar")
+            self.assertEqual(toolbar_plan["geometrySystem"]["mainAxisDistribution"], "source-sized")
 
     def test_per_corner_and_per_edge_appearance_survives_native_lowering(self) -> None:
         for ui_stack in ("swiftui", "uikit"):

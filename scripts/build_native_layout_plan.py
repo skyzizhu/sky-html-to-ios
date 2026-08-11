@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = "native-layout-plan-1.1"
+SCHEMA_VERSION = "native-layout-plan-1.2"
 CONTROL_SEMANTICS = {
     "button", "icon-button", "link", "menu-item", "tab-item", "file-input",
     "checkbox", "radio", "switch", "toggle", "select", "picker",
@@ -316,6 +316,113 @@ def inferred_column_count(item_nodes: list[dict[str, Any]], tolerance: float = 2
         if not any(abs(x - existing) <= tolerance for existing in columns):
             columns.append(x)
     return max(len(columns), 1)
+
+
+def container_geometry_system(
+    container: dict[str, Any],
+    nodes: dict[str, dict[str, Any]],
+    node_plans: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Lower browser geometry into one executable parent/child sizing system."""
+    container_id = str(container.get("containerNodeId") or "")
+    axis = str(container.get("axis") or "vertical")
+    dimension = "width" if axis == "horizontal" else "height"
+    content_key = "contentWidthPt" if axis == "horizontal" else "contentHeightPt"
+    source_key = "sourceWidthPt" if axis == "horizontal" else "sourceHeightPt"
+    mode_key = "widthMode" if axis == "horizontal" else "heightMode"
+    contract_key = "widthContract" if axis == "horizontal" else "heightContract"
+    ordered = [str(item) for item in container.get("orderedChildNodeIds") or []]
+    sizing_by_id = {
+        str(item.get("nodeId") or ""): item
+        for item in container.get("childSizing") or []
+        if isinstance(item, dict) and item.get("nodeId")
+    }
+    available = number(((node_plans.get(container_id) or {}).get("boxModel") or {}).get(content_key))
+    source_sizes = [
+        number(((node_plans.get(node_id) or {}).get("contentGeometry") or {}).get(source_key))
+        for node_id in ordered
+    ]
+    gap_total = sum(
+        number((sizing_by_id.get(node_id) or {}).get("gapBeforePt"), number(container.get("gapPt")))
+        for node_id in ordered[1:]
+    )
+    grows = [number(((nodes.get(node_id) or {}).get("style") or {}).get("flexGrow")) for node_id in ordered]
+    contracts = [((node_plans.get(node_id) or {}).get("boxModel") or {}).get(contract_key) or {} for node_id in ordered]
+    explicit_fixed = [contract.get("kind") == "fixed" for contract in contracts]
+    relative_multipliers = [contract.get("affineMultiplier") for contract in contracts]
+    fills_available = bool(
+        available > 0
+        and abs(sum(source_sizes) + gap_total - available) <= max(2.0, available * 0.02)
+    )
+    equal_grow = bool(
+        len(ordered) >= 2
+        and all(value > 0 for value in grows)
+        and nearly_uniform(grows, tolerance=0.001)
+    )
+    equal_relative = bool(
+        len(ordered) >= 2
+        and all(value is not None and number(value) > 0 for value in relative_multipliers)
+        and nearly_uniform([number(value) for value in relative_multipliers], tolerance=0.001)
+        and fills_available
+    )
+    observed_equal_fill = bool(
+        axis == "horizontal"
+        and container.get("layoutAlgorithm") == "stack"
+        and len(ordered) >= 2
+        and not any(explicit_fixed)
+        and str(container.get("sourceDistribution") or "normal") not in {"space-between", "space-around", "space-evenly"}
+        and not any(bool((sizing_by_id.get(node_id) or {}).get("flexibleGapBefore")) for node_id in ordered)
+        and nearly_uniform(source_sizes, tolerance=max(1.5, (median(source_sizes) or 0) * 0.03))
+        and fills_available
+    )
+    equal_share = bool(equal_grow or equal_relative or observed_equal_fill)
+    evidence = []
+    if equal_grow:
+        evidence.append("equal-flex-grow")
+    if equal_relative:
+        evidence.append("equal-parent-relative-width")
+    if observed_equal_fill:
+        evidence.append("uniform-measured-widths-fill-content-box")
+
+    child_contracts = []
+    for index, node_id in enumerate(ordered):
+        content_geometry = (node_plans.get(node_id) or {}).get("contentGeometry") or {}
+        box = (node_plans.get(node_id) or {}).get("boxModel") or {}
+        source_mode = str(content_geometry.get(mode_key) or "intrinsic")
+        size_mode = "equal-share" if equal_share else source_mode
+        child_contracts.append({
+            "nodeId": node_id,
+            "mainAxisSizingMode": size_mode,
+            "sourceSizingMode": source_mode,
+            "sourceSizePt": number(content_geometry.get(source_key)),
+            "weight": 1.0 if equal_share else max(grows[index], 0),
+            "minSizePt": box.get("minWidthPt" if axis == "horizontal" else "minHeightPt"),
+            "maxSizePt": box.get("maxWidthPt" if axis == "horizontal" else "maxHeightPt"),
+            "resistsCompression": bool(content_geometry.get("resistsHorizontalCompression")) if axis == "horizontal" else False,
+            "gapBeforePt": (sizing_by_id.get(node_id) or {}).get("gapBeforePt") if index else None,
+            "flexibleGapBefore": bool((sizing_by_id.get(node_id) or {}).get("flexibleGapBefore")) if index else False,
+        })
+
+    distribution = "equal-share" if equal_share else "source-sized"
+    return {
+        "schemaVersion": "container-geometry-system-1.0",
+        "containerNodeId": container_id,
+        "axis": axis,
+        "availableContentSizePt": available,
+        "mainAxisDistribution": distribution,
+        "childContracts": child_contracts,
+        "solveOrder": [
+            "resolve-container-content-box",
+            "measure-intrinsic-children",
+            "resolve-parent-relative-children",
+            "distribute-residual-main-axis-space",
+            "resolve-cross-axis-alignment",
+        ],
+        "requiresIntrinsicMeasurementPass": any(item["sourceSizingMode"] == "intrinsic" for item in child_contracts),
+        "requiresResidualDistributionPass": equal_share,
+        "confidence": "high" if equal_share else "deterministic-source-contracts",
+        "evidence": evidence or ["per-child-source-sizing"],
+    }
 
 
 def responsive_node_index(analysis: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
@@ -874,6 +981,8 @@ def build_screen(
         })
 
     node_plan_by_id = {item["nodeId"]: item for item in node_plans}
+    for container in containers:
+        container["geometrySystem"] = container_geometry_system(container, nodes, node_plan_by_id)
     reusable = layers.get("reusableContent") or {}
     strategies = {
         str(item.get("nodeId") or ""): str(item.get("kind") or "")

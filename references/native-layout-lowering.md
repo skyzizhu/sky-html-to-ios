@@ -17,7 +17,7 @@
 - `native-layout-plan.json`；
 - `native-layout-plan-validation.json`。
 
-当前 schema 是 `native-layout-plan-1.1`。计划按 Screen 保存 Content Container、所有有意义容器、每个节点的盒模型、Flex/Grid item、定位参照系、状态布局增量和复合控件槽位。
+当前输出 schema 是 `native-layout-plan-1.2`。代码生成与下游验证仍可读取旧版 `native-layout-plan-1.1`，但只有 `1.2` 强制每个可执行容器提供 `container-geometry-system-1.0`。计划按 Screen 保存 Content Container、所有有意义容器、每个节点的盒模型、Flex/Grid item、定位参照系、状态布局增量和复合控件槽位。
 
 ## 容器降级
 
@@ -114,6 +114,14 @@ Wrapping stack 在 SwiftUI 中使用原生 `Layout` 协议实现，在 UIKit 中
 
 horizontal/vertical 容器必须逐项保留 `gapBeforePt`，整体 row/column gap 只作为缺失几何时的 fallback。逐项 spacing contract 同时保存 signed 实测 border-box gap、authored CSS gap、前项 trailing margin、当前项 leading margin、残差和 `fixed|flexible|overlap` 模式，便于区分真正 gap、margin 分组、弹性分配和负间距重叠。实测最终距离拥有首次生成的几何优先级；这些 `*Pt` 已经处于目标坐标系，生成器不得再次乘设计倍率。原生端消费后必须清除相邻主轴 margin，防止 CSS margin 与 Spacer 被重复计算。
 
+## 容器几何系统
+
+每个可执行容器都必须包含 `geometrySystem`，由布局计划在代码生成前完成主轴尺寸决策。求解顺序固定为：父内容盒、intrinsic 测量、父相对尺寸、剩余空间分配、交叉轴对齐。每个直接子项保存 `mainAxisSizingMode`、来源模式、来源尺寸、权重、min/max、抗压缩和前置间距。
+
+主轴默认是 `source-sized`。只有以下强证据可以使用 `equal-share`：全部子项具有相等的正 `flex-grow`；全部子项具有相等的父相对尺寸；或横向 Stack 中没有显式固定宽度，实测宽度稳定相等且连同间距完整占满父内容盒。显式固定宽度、横向滚动 item、intrinsic 图标/标题/计数混排不能因为节点重复或宽度接近而均分。
+
+Payload 必须保存容器的 `stackDistributionMode` 与 `geometrySolveOrder`，子节点 Layout Contract 必须保存 `mainAxisSizingMode` 和权重。SwiftUI/UIKit 只执行该结果；生成后结构清单逐容器核对分配模式、求解顺序和全部子项，不允许 UIKit 根据当前 arrangedSubview 数量临时选择 `.fillEqually`，也不允许 SwiftUI 重新猜测无限宽度。
+
 对齐值先归一化为 `start|center|end|stretch|baseline`，再按轴映射。横向 Stack 的 cross-axis 对应 top/center/bottom/fill/firstBaseline，纵向 Stack 对应 leading/center/trailing/fill；`text-align` 只控制文字绘制，不能偷偷改变容器子项对齐。Grid 的 `justify-items` 与 `align-items` 分别控制水平和垂直 item 对齐。
 
 同页状态使用 `stateLayouts` 保存 insert/remove/replace 对应的目标父容器、生成节点布局和原节点基线布局。状态节点仍消费普通 Node Layout Contract；状态变化不得另建一套截图坐标或独立页面。
@@ -162,6 +170,7 @@ UIKit 页面级 typed wrapper 和模块 ContentView 必须在加入 Screen Conta
 7. 状态布局集合与 UI IR state delta 一致；
 8. 复合槽位唯一、完整并保持视觉顺序。
 9. 每个容器的 paint order 完整、唯一并满足全部 overlap-order 关系；stacking context owner 和 overflow clip owner 必须闭合。
+10. 每个容器具有完整 `geometrySystem`，其 owner、axis、视觉子项顺序、尺寸模式、equal-share 权重和五阶段求解顺序可执行。
 
 生成后，`native-structure-manifest.json` 再逐容器核对算法、axis、child order、row/column gap、wrap、alignment 和 distribution，逐集合核对 item order、尺寸模式、列数、supplementary、pinning、insets、间距和滚动隔离，逐节点核对尺寸/定位契约，逐状态核对布局操作，并逐复合控件核对 `compoundLayout` 与 `contentItems`。Manifest 还必须证明生成运行时具备并消费当前页面要求的相对约束、显式 Grid placement、集合尺寸、pinned supplementary 和状态重排能力。任一项未消费时不得接入 Xcode target。
 

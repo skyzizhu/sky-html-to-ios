@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-GENERATOR_VERSION = "1.47.0"
+GENERATOR_VERSION = "1.48.0"
 MANIFEST_NAME = ".html-to-ios-generation.json"
 SUPPORTED_API_FALLBACKS = {
     "custom-overlay-container", "over-full-screen-container",
@@ -169,8 +169,8 @@ def load_native_layout_plan(path: Path | None) -> tuple[dict[str, Any], dict[str
     if path is None:
         return {}, {}
     data = json.loads(path.read_text(encoding="utf-8"))
-    if data.get("schemaVersion") != "native-layout-plan-1.1":
-        raise ValueError(f"{path}: expected native-layout-plan-1.1")
+    if data.get("schemaVersion") not in {"native-layout-plan-1.1", "native-layout-plan-1.2"}:
+        raise ValueError(f"{path}: expected native-layout-plan-1.1 or native-layout-plan-1.2")
     screens = {
         str(screen.get("screenId") or ""): screen
         for screen in data.get("screens") or []
@@ -1499,6 +1499,12 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
         )
     layout_node = context.layout_nodes.get(node_id) or {}
     content_geometry = layout_node.get("contentGeometry") or {}
+    geometry_system = layout_container.get("geometrySystem") or {}
+    parent_geometry_system = (context.layout_containers.get(parent_id) or {}).get("geometrySystem") or {}
+    parent_geometry_child = next((
+        item for item in parent_geometry_system.get("childContracts") or []
+        if str(item.get("nodeId") or "") == node_id
+    ), {})
     inline_runs = rich_text_runs(context, node, allow_block_children=True)
     inline_text_container = bool(
         semantic == "container"
@@ -2227,6 +2233,8 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
                 else layout_spacing
             ),
             "layoutAlgorithm": str(layout_container.get("layoutAlgorithm") or "stack"),
+            "stackDistributionMode": geometry_system.get("mainAxisDistribution"),
+            "geometrySolveOrder": geometry_system.get("solveOrder") or None,
             "wraps": bool(layout_container.get("wraps")),
             "reversesChildren": bool(layout_container.get("reverse")),
             "flexGrow": max(number(layout_sizing.get("flexGrow"), number(style.get("flexGrow"))), 0),
@@ -2315,6 +2323,8 @@ def node_payload(context: ScreenBuildContext, node_id: str, presentation: bool =
             "gridColumnSpan": (layout_node.get("gridItem") or {}).get("columnSpan"),
             "gridRowStart": ((layout_node.get("gridItem") or {}).get("rowStart") or {}).get("index"),
             "gridRowSpan": (layout_node.get("gridItem") or {}).get("rowSpan"),
+            "mainAxisSizingMode": parent_geometry_child.get("mainAxisSizingMode"),
+            "mainAxisWeight": parent_geometry_child.get("weight"),
         },
         "accessibilityLabel": compact_text(content.get("accessibilityLabel"), 120) or None,
         "contextualActions": context.contextual_actions.get(node_id) or [],
@@ -3425,6 +3435,8 @@ struct HTMLToIOSNodeLayoutContractSpec: Codable {{
     let gridColumnSpan: Int?
     let gridRowStart: Int?
     let gridRowSpan: Int?
+    let mainAxisSizingMode: String?
+    let mainAxisWeight: Double?
 }}
 
 struct HTMLToIOSCollectionItemSizingSpec: Codable {{
@@ -3748,6 +3760,8 @@ struct HTMLToIOSStyleSpec: Codable {{
     let rowSpacing: Double?
     let columnSpacing: Double?
     let layoutAlgorithm: String?
+    let stackDistributionMode: String?
+    let geometrySolveOrder: [String]?
     let wraps: Bool?
     let reversesChildren: Bool?
     let flexGrow: Double?
@@ -6193,7 +6207,10 @@ struct HTMLToIOSNativeNodeView: View {
                 bypassTypedNodeID: bypassTypedNodeID
             )
                 .frame(
-                    maxWidth: (child.style.flexGrow ?? 0) > 0 ? .infinity : nil,
+                    maxWidth: (
+                        child.layoutContract.mainAxisSizingMode == "equal-share"
+                        || (child.style.flexGrow ?? 0) > 0
+                    ) ? .infinity : nil,
                     alignment: childSlotAlignment(child)
                 )
         }
@@ -8529,16 +8546,10 @@ final class HTMLToIOSNodeRenderer {
             $0.gapBefore != nil || $0.flexibleGapBefore == true
         }
         stack.spacing = usesMeasuredSpacing ? 0 : (spec.style.spacing ?? 8)
-        let directChildren = spec.contentItems.compactMap { item in
-            item.childID.flatMap { childID in spec.children.first(where: { $0.id == childID }) }
-        }
-        if spec.axis == "horizontal",
-           directChildren.count >= 2,
-           directChildren.allSatisfy({ ($0.style.flexGrow ?? 0) > 0 }) {
-            let firstGrow = directChildren.first?.style.flexGrow ?? 0
-            stack.distribution = directChildren.allSatisfy {
-                abs(($0.style.flexGrow ?? 0) - firstGrow) < 0.001
-            } ? .fillEqually : .fillProportionally
+        if spec.style.stackDistributionMode == "equal-share" {
+            stack.distribution = .fillEqually
+        } else {
+            stack.distribution = .fill
         }
         if let dynamicItems = state.contentOverrides[spec.id], !dynamicItems.isEmpty {
             dynamicItems.forEach { stack.addArrangedSubview(makeDynamicView($0, in: spec)) }
@@ -11759,6 +11770,11 @@ def build_native_structure_manifest(
         for screen in all_layout_screens
         for item in screen.get("collectionLayouts") or []
     )
+    requires_equal_share_geometry = any(
+        ((container.get("geometrySystem") or {}).get("mainAxisDistribution") == "equal-share")
+        for screen in all_layout_screens
+        for container in screen.get("containers") or []
+    )
     requires_per_corner_appearance = any(
         len(set(round(number(value), 4) for value in (node.get("appearance") or {}).get("cornerRadiiXPt") or [])) > 1
         or len(set(round(number(value), 4) for value in (node.get("appearance") or {}).get("cornerRadiiYPt") or [])) > 1
@@ -11812,6 +11828,13 @@ def build_native_structure_manifest(
             "consumed": not requires_pinned_supplementary or (
                 "pinnedSectionViews" in runtime_text
                 if ui_stack == "swiftui" else "sectionHeadersPinToVisibleBounds" in runtime_text
+            ),
+        },
+        "equalShareGeometry": {
+            "required": requires_equal_share_geometry,
+            "consumed": not requires_equal_share_geometry or (
+                'mainAxisSizingMode == "equal-share"' in runtime_text
+                if ui_stack == "swiftui" else 'stackDistributionMode == "equal-share"' in runtime_text
             ),
         },
         "perCornerAppearance": {
@@ -11987,6 +12010,14 @@ def build_native_structure_manifest(
             ]
             actual_expected_order = [item for item in actual_children if item in expected_children]
             style = payload_container.get("style") or {}
+            planned_geometry = container_plan.get("geometrySystem") or {}
+            generated_geometry_children = {
+                str(item.get("nodeId") or ""): (
+                    payload_nodes.get(str(item.get("nodeId") or "")) or {}
+                ).get("layoutContract") or {}
+                for item in planned_geometry.get("childContracts") or []
+                if isinstance(item, dict) and item.get("nodeId")
+            }
             checks = {
                 "axis": str(payload_container.get("axis") or "") == str(container_plan.get("axis") or ""),
                 "visualOrder": actual_expected_order == expected_children,
@@ -11999,6 +12030,14 @@ def build_native_structure_manifest(
                 "wrap": bool(style.get("wraps")) == bool(container_plan.get("wraps")),
                 "alignment": str(style.get("alignItems") or "normal") == str(container_plan.get("alignment") or "normal"),
                 "distribution": str(style.get("justifyContent") or "normal") == str(container_plan.get("distribution") or "normal"),
+                "geometryDistribution": style.get("stackDistributionMode") == planned_geometry.get("mainAxisDistribution"),
+                "geometrySolveOrder": (style.get("geometrySolveOrder") or []) == (planned_geometry.get("solveOrder") or []),
+                "geometryChildren": all(
+                    (generated_geometry_children.get(str(item.get("nodeId") or "")) or {}).get("mainAxisSizingMode")
+                        == item.get("mainAxisSizingMode")
+                    and abs(number((generated_geometry_children.get(str(item.get("nodeId") or "")) or {}).get("mainAxisWeight")) - number(item.get("weight"))) <= 0.001
+                    for item in planned_geometry.get("childContracts") or []
+                ),
             }
             optimization_reason = native_optimization_reason(
                 ir_nodes.get(container_id) or {}, payload_nodes, merge_evidence, motion_node_ids

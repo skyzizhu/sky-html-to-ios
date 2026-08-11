@@ -28,8 +28,8 @@ def main() -> int:
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args()
     layout = load(args.native_layout_plan)
-    if layout.get("schemaVersion") != "native-layout-plan-1.1":
-        raise ValueError("--native-layout-plan must use native-layout-plan-1.1")
+    if layout.get("schemaVersion") not in {"native-layout-plan-1.1", "native-layout-plan-1.2"}:
+        raise ValueError("--native-layout-plan must use native-layout-plan-1.1 or native-layout-plan-1.2")
     layout_screens = {str(item.get("screenId") or ""): item for item in layout.get("screens") or []}
     screens = []
     for path in args.ir:

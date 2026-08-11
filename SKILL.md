@@ -75,6 +75,7 @@ description: 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换�
 64. 固定 border-box 只约束外框，不代表内部内容居中。盒内水平/垂直位置必须按容器 axis 联合消费 `justify-content`、`align-items`、Grid `justify-items`、文字 `text-align` 与复合槽位角色；可伸展文字槽必须在自身分配宽度内保持来源对齐。Screen Root 的实测高度只用于几何验收，Payload 必须清除根 `fixedHeight`，由内容 intrinsic height、Scroll owner 与 Screen Container 上界共同决定，禁止因 SwiftUI `.frame` 默认居中造成整页纵向漂移。
 65. JavaScript/CSS 状态切换造成的 width/height、滚动轴或内容变化必须从隔离浏览器 probe 的 before/after 证据生成可逆 State Variant，不能只切换无视觉消费方的布尔标记。若页面 Content Root 位于被裁出原生树的 HTML Scroll 祖先内，Scroll ownership 必须转交给 Screen Root；展开后的屏外控件由同一原生 Scroll owner 负责到达。Sheet/Popover/Overlay 的原生宿主必须暴露来源面板节点 ID，并保留内部状态 ID 防重入，使交互、无障碍与视觉验收共享同一身份契约。
 66. HTML 中带点击行为的 `span`、`div`、图片或组合文本即使视觉语义不是按钮，也必须由原生事件宿主承担点击，显示子视图不得截获触摸；原生控件、输入控件和滚动容器仍保留自身事件语义。弹层触发器的 anchor rect 与弹层自身 panel rect 必须分开保存：系统 popover 使用 anchor rect，自定义 overlay/popover 使用 panel rect 布局，禁止用触发器尺寸压缩弹层内容。
+67. 每个线性容器必须在 `native-layout-plan.json` 中形成唯一的 `geometrySystem`：先解析父内容盒，再测量 intrinsic 子项、解析父相对尺寸、分配主轴剩余空间，最后处理交叉轴对齐。`equal-share` 只允许来自相等正 `flex-grow`、相等父相对比例，或无固定宽度且实测等宽并完整占满内容盒的强证据；显式固定宽度和 intrinsic 混排不得因为节点重复或尺寸碰巧接近而均分。SwiftUI/UIKit 必须消费同一分配结果，禁止运行时根据子 View 数量重新猜测 `.fillEqually`。
 
 ## 支持范围
 

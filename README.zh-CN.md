@@ -190,9 +190,9 @@ UI IR 保存：
 
 复用容器不会统一依赖 `automaticSize`，而是生成可执行的 Section 契约：有序 item IDs、fixed/fractional/full-width 尺寸模式、内容估算高度、宽高比、列数、content insets、主/交叉轴间距、方向锁定以及 supplementary header/footer 所有权。来源中的 sticky header 会映射为 SwiftUI pinned Section 或 UIKit supplementary view；无法确认原生所有权的 sticky 会阻断生成。
 
-每个 screen 还会生成强类型布局契约，保存子节点视觉顺序、轴向、对齐、分布、换行、间距、尺寸策略、宽高比和抗压缩证据。输入控件、显式/项目组件、特殊媒体和稳定业务控件会生成强类型叶子 View；普通文本、SVG 内部路径、装饰节点和自动编号 DOM 叶子继续由公共运行时处理，不会形成一节点一 Swift 文件。
+每个 screen 还会生成强类型布局契约，保存子节点视觉顺序、轴向、对齐、分布、换行、间距、尺寸策略、宽高比和抗压缩证据。每个可执行容器还会生成 `geometrySystem`，在代码生成前依次求解父内容盒、intrinsic 子项、父相对尺寸、主轴剩余空间和交叉轴对齐。均分必须具有明确 Flex/父相对证据或高置信度的实测填满关系；固定和 intrinsic 子项不会因为重复出现就被强制均分。输入控件、显式/项目组件、特殊媒体和稳定业务控件会生成强类型叶子 View；普通文本、SVG 内部路径、装饰节点和自动编号 DOM 叶子继续由公共运行时处理，不会形成一节点一 Swift 文件。
 
-生成 Swift 之前，`layout-relation-graph-1.0` 会把单节点测量提升为跨节点约束，`structural-fidelity-report-1.0` 检查六层架构能否表达这些关系；随后 `native-layout-plan-1.1` 形成 SwiftUI/UIKit 共用的唯一可执行布局契约。`native-appearance-plan-1.0` 独立保存四角水平/垂直半径、四边宽度/颜色/线型、背景、透明度、裁剪、媒体适配和排版外观；文字行盒、baseline 和 intrinsic 几何仍由布局计划拥有。`native-control-configuration-plan-1.1` 保存语义候选、上下文、系统候选、有界几何适配和最终控件决策；`native-interaction-motion-plan-1.0` 为每个动作和动画指定唯一原生 owner 与 executor。代码生成后，`native-structure-manifest-1.0` 再证明 Swift/Payload 已实际消费这些契约。整套核心门禁不需要截图、Simulator 或多模态模型。
+生成 Swift 之前，`layout-relation-graph-1.0` 会把单节点测量提升为跨节点约束，`structural-fidelity-report-1.0` 检查六层架构能否表达这些关系；随后 `native-layout-plan-1.2` 形成 SwiftUI/UIKit 共用的唯一可执行布局契约，并为每个可执行容器提供确定性的几何系统；旧版 `native-layout-plan-1.1` 输入仍可读取。`native-appearance-plan-1.0` 独立保存四角水平/垂直半径、四边宽度/颜色/线型、背景、透明度、裁剪、媒体适配和排版外观；文字行盒、baseline 和 intrinsic 几何仍由布局计划拥有。`native-control-configuration-plan-1.1` 保存语义候选、上下文、系统候选、有界几何适配和最终控件决策；`native-interaction-motion-plan-1.0` 为每个动作和动画指定唯一原生 owner 与 executor。代码生成后，`native-structure-manifest-1.0` 再证明 Swift/Payload 已实际消费这些契约。整套核心门禁不需要截图、Simulator 或多模态模型。
 
 ## 控件与视图支持
 

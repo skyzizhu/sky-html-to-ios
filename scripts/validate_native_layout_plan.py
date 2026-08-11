@@ -34,8 +34,10 @@ def main() -> int:
     plan = load_json(args.plan)
     architecture = load_json(args.architecture_plan)
     graph = load_json(args.layout_graph)
-    if plan.get("schemaVersion") != "native-layout-plan-1.1":
-        raise ValueError("--plan must use native-layout-plan-1.1")
+    layout_schema = str(plan.get("schemaVersion") or "")
+    if layout_schema not in {"native-layout-plan-1.1", "native-layout-plan-1.2"}:
+        raise ValueError("--plan must use native-layout-plan-1.1 or native-layout-plan-1.2")
+    requires_geometry_system = layout_schema == "native-layout-plan-1.2"
     issues: list[dict[str, Any]] = []
 
     def add(code: str, screen_id: str | None, message: str, reference_id: str | None = None) -> None:
@@ -134,6 +136,41 @@ def main() -> int:
                     add("GRID_TRACKS_MISSING", screen_id, "Grid containers require explicit column tracks.", container_id)
             if float(container.get("rowGapPt") or 0) < 0 or float(container.get("columnGapPt") or 0) < 0:
                 add("NEGATIVE_CONTAINER_GAP", screen_id, "Container row/column gaps cannot be negative.", container_id)
+            if requires_geometry_system:
+                geometry = container.get("geometrySystem") or {}
+                if geometry.get("schemaVersion") != "container-geometry-system-1.0":
+                    add("CONTAINER_GEOMETRY_SYSTEM_MISSING", screen_id, "Container has no executable geometry system.", container_id)
+                if geometry.get("containerNodeId") != container_id or geometry.get("axis") != container.get("axis"):
+                    add("CONTAINER_GEOMETRY_OWNER_MISMATCH", screen_id, "Geometry system owner or axis differs from its container.", container_id)
+                geometry_children = [
+                    str(item.get("nodeId") or "")
+                    for item in geometry.get("childContracts") or []
+                    if isinstance(item, dict)
+                ]
+                if geometry_children != expected_order:
+                    add("CONTAINER_GEOMETRY_CHILD_ORDER_MISMATCH", screen_id, "Geometry system must preserve every child in visual order.", container_id)
+                if geometry.get("mainAxisDistribution") not in {"equal-share", "source-sized"}:
+                    add("INVALID_MAIN_AXIS_DISTRIBUTION", screen_id, "Container main-axis distribution is not executable.", container_id)
+                valid_sizing_modes = {"equal-share", "fixed", "intrinsic", "flexible", "parent-relative"}
+                if any(
+                    str(item.get("mainAxisSizingMode") or "") not in valid_sizing_modes
+                    for item in geometry.get("childContracts") or []
+                    if isinstance(item, dict)
+                ):
+                    add("INVALID_CHILD_GEOMETRY_SIZING", screen_id, "Geometry child has an unsupported main-axis sizing mode.", container_id)
+                if geometry.get("mainAxisDistribution") == "equal-share" and any(
+                    item.get("mainAxisSizingMode") != "equal-share" or float(item.get("weight") or 0) <= 0
+                    for item in geometry.get("childContracts") or []
+                    if isinstance(item, dict)
+                ):
+                    add("INCOMPLETE_EQUAL_SHARE_GEOMETRY", screen_id, "Every child in an equal-share container must consume one positive share.", container_id)
+                required_solve_steps = {
+                    "resolve-container-content-box", "measure-intrinsic-children",
+                    "resolve-parent-relative-children", "distribute-residual-main-axis-space",
+                    "resolve-cross-axis-alignment",
+                }
+                if not required_solve_steps.issubset(set(geometry.get("solveOrder") or [])):
+                    add("INCOMPLETE_GEOMETRY_SOLVE_ORDER", screen_id, "Geometry system is missing a required layout pass.", container_id)
             architecture_sizing = {
                 str(item.get("nodeId") or ""): item
                 for item in (architecture_relations.get(container_id) or {}).get("childSizing") or []
