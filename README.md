@@ -29,6 +29,7 @@ Convert runnable, high-fidelity HTML/CSS/JavaScript mobile prototypes into compi
 - [Scope and Limitations](#scope-and-limitations)
 - [Quality Status](#quality-status)
 - [FAQ](#faq)
+- [License](#license)
 
 ## Why This Skill Exists
 
@@ -686,6 +687,10 @@ Yes. The manifest protects manual changes and records conflicts. General fidelit
 ### What defines a complete conversion?
 
 UI IR must pass, critical interactions must be resolved, files must belong to the intended target, the selected verification mode must pass, and all fallbacks must be reported. Required screenshots and visual states are mandatory only when `visual` verification was selected.
+
+## License
+
+This project is released under the [MIT License](LICENSE). Anyone may use, copy, modify, distribute, sublicense, or sell the software, including for commercial purposes, provided that the copyright and license notice are retained. The software is provided without warranty.
 
 ## Repository
 
