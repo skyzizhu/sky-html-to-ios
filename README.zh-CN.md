@@ -1,5 +1,7 @@
 # sky-html-to-ios
 
+[![CI](https://github.com/skyzizhu/sky-html-to-ios/actions/workflows/ci.yml/badge.svg)](https://github.com/skyzizhu/sky-html-to-ios/actions/workflows/ci.yml)
+
 [English](README.md) | **简体中文**
 
 将可运行的移动端 HTML/CSS/JavaScript 高保真原型转换为可编译、可维护的 iOS 原生页面。截图对比和视觉纠偏是可选的生成后兜底，不是转换前提。
@@ -681,6 +683,20 @@ Web Font 无法合法嵌入时会使用明确 fallback，并在报告中记录�
 - 本地 HTML 可以正常运行。
 
 Skill 会优先使用显式 `--node`、`CODEX_NODE`、PATH 或 Codex bundled Node runtime。Xcode 视觉验证只适用于 macOS。
+
+### 仓库质量检查
+
+Pull Request 和推送到 `main` 的提交会在 Python 3.9 与 3.12 上运行确定性检查。CI 会校验 Skill 元数据及渐进式披露行数、编译全部 Python 源码、检查空白错误并运行完整标准库测试。Xcode、Simulator 和视觉基准仍作为显式的 macOS 验证阶段，不占用每次普通提交的 CI。
+
+本地可运行同等检查：
+
+```bash
+python3 -m pip install Pillow
+python3 scripts/validate_skill.py .
+python3 -m compileall -q scripts tests
+git diff --check
+python3 -m unittest discover -s tests -p 'test_*.py'
+```
 
 ## 安装与使用
 
