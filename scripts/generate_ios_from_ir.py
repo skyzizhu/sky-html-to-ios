@@ -4002,6 +4002,7 @@ private struct HTMLToIOSSearchBarRepresentable: UIViewRepresentable {
     let foreground: String?
     let background: String?
     let contentInsets: [Double]
+    let textAlignment: String?
 
     final class Coordinator: NSObject, UISearchBarDelegate {
         var owner: HTMLToIOSSearchBarRepresentable
@@ -4023,6 +4024,12 @@ private struct HTMLToIOSSearchBarRepresentable: UIViewRepresentable {
         view.tintColor = htmlToIOSUIColor(tint)
         view.searchTextField.textColor = htmlToIOSUIColor(foreground)
         view.searchTextField.backgroundColor = htmlToIOSUIColor(background) ?? .clear
+        switch textAlignment {
+        case "center": view.searchTextField.textAlignment = .center
+        case "end", "right", "flex-end": view.searchTextField.textAlignment = .right
+        case "justify", "justified": view.searchTextField.textAlignment = .justified
+        default: view.searchTextField.textAlignment = .left
+        }
         if contentInsets.count == 4 {
             view.directionalLayoutMargins = NSDirectionalEdgeInsets(
                 top: contentInsets[0], leading: contentInsets[3],
@@ -5069,13 +5076,21 @@ private struct HTMLToIOSControlButtonStyle: ButtonStyle {
 }
 
 private struct HTMLToIOSCheckboxToggleStyle: ToggleStyle {
+    let reversesContent: Bool
+    let spacing: Double
+
     func makeBody(configuration: Configuration) -> some View {
         Button {
             configuration.isOn.toggle()
         } label: {
-            HStack(spacing: 8) {
-                Image(systemName: configuration.isOn ? "checkmark.square.fill" : "square")
-                configuration.label
+            HStack(spacing: spacing) {
+                if reversesContent {
+                    configuration.label
+                    Image(systemName: configuration.isOn ? "checkmark.square.fill" : "square")
+                } else {
+                    Image(systemName: configuration.isOn ? "checkmark.square.fill" : "square")
+                    configuration.label
+                }
             }
         }
         .buttonStyle(HTMLToIOSControlButtonStyle())
@@ -5083,13 +5098,21 @@ private struct HTMLToIOSCheckboxToggleStyle: ToggleStyle {
 }
 
 private struct HTMLToIOSRadioToggleStyle: ToggleStyle {
+    let reversesContent: Bool
+    let spacing: Double
+
     func makeBody(configuration: Configuration) -> some View {
         Button {
             configuration.isOn = true
         } label: {
-            HStack(spacing: 8) {
-                Image(systemName: configuration.isOn ? "circle.inset.filled" : "circle")
-                configuration.label
+            HStack(spacing: spacing) {
+                if reversesContent {
+                    configuration.label
+                    Image(systemName: configuration.isOn ? "circle.inset.filled" : "circle")
+                } else {
+                    Image(systemName: configuration.isOn ? "circle.inset.filled" : "circle")
+                    configuration.label
+                }
             }
         }
         .buttonStyle(HTMLToIOSControlButtonStyle())
@@ -5643,6 +5666,7 @@ struct HTMLToIOSNativeNodeView: View {
             .disabled(!spec.isEnabled)
         case "text-field", "input", "search-field", "text-input", "search-input", "number-input":
             HStack(spacing: spec.controlConfig?.options.isEmpty == false ? 4 : 0) {
+                if spec.style.reversesChildren == true { inputSuggestionMenu }
                 TextField(
                     "",
                     text: store.binding(
@@ -5653,6 +5677,7 @@ struct HTMLToIOSNativeNodeView: View {
                     prompt: inputPrompt
                 )
                 .textFieldStyle(.plain)
+                .multilineTextAlignment(controlTextAlignment)
                 .keyboardType(htmlToIOSKeyboardType(spec.textBehavior?.keyboardType))
                 .textContentType(htmlToIOSTextContentType(spec.textBehavior?.contentType))
                 .submitLabel(htmlToIOSSubmitLabel(spec.textBehavior?.returnKey ?? spec.textBehavior?.submitLabel))
@@ -5665,7 +5690,7 @@ struct HTMLToIOSNativeNodeView: View {
                 }
                 .allowsHitTesting(spec.textBehavior?.editable != false)
                 .disabled(!spec.isEnabled || spec.textBehavior?.enabled == false)
-                inputSuggestionMenu
+                if spec.style.reversesChildren != true { inputSuggestionMenu }
             }
         case "secure-field", "secure-input":
             SecureField(
@@ -5678,6 +5703,7 @@ struct HTMLToIOSNativeNodeView: View {
                 prompt: inputPrompt
             )
             .textFieldStyle(.plain)
+            .multilineTextAlignment(controlTextAlignment)
             .keyboardType(htmlToIOSKeyboardType(spec.textBehavior?.keyboardType))
             .textContentType(htmlToIOSTextContentType(spec.textBehavior?.contentType))
             .submitLabel(htmlToIOSSubmitLabel(spec.textBehavior?.returnKey ?? spec.textBehavior?.submitLabel))
@@ -5696,15 +5722,15 @@ struct HTMLToIOSNativeNodeView: View {
                 initialValue: spec.textBehavior?.initialValue ?? spec.text,
                 maxLength: spec.textBehavior?.maxLength
             )
-            ZStack(alignment: .topLeading) {
+            ZStack(alignment: inputTopAlignment) {
                 if value.wrappedValue.isEmpty && !spec.placeholder.isEmpty {
                     inputPrompt
                         .allowsHitTesting(false)
                 }
                 TextEditor(text: value)
+                    .multilineTextAlignment(controlTextAlignment)
                     .scrollContentBackground(.hidden)
-                    .padding(.horizontal, -5)
-                    .padding(.vertical, -8)
+                    .contentShape(Rectangle())
                     .keyboardType(htmlToIOSKeyboardType(spec.textBehavior?.keyboardType))
                     .modifier(HTMLToIOSInputPolicyModifier(behavior: spec.textBehavior))
                     .accessibilityIdentifier(spec.id)
@@ -5716,14 +5742,29 @@ struct HTMLToIOSNativeNodeView: View {
                     .disabled(!spec.isEnabled || spec.textBehavior?.enabled == false)
             }
         case "switch", "toggle":
-            Toggle(spec.text, isOn: store.flagBinding(for: spec.id, initialValue: spec.isInitiallySelected ?? false))
+            let binding = store.flagBinding(for: spec.id, initialValue: spec.isInitiallySelected ?? false)
+            if spec.style.reversesChildren == true {
+                HStack(spacing: spec.controlConfig?.itemSpacing ?? spec.style.spacing ?? 8) {
+                    Toggle("", isOn: binding).labelsHidden()
+                    Text(spec.text).multilineTextAlignment(controlTextAlignment)
+                }
                 .modifier(HTMLToIOSOptionalTintModifier(value: nativeControlAppearance?.fillTint ?? spec.controlConfig?.fillTint ?? spec.controlConfig?.tint))
+            } else {
+                Toggle(spec.text, isOn: binding)
+                    .modifier(HTMLToIOSOptionalTintModifier(value: nativeControlAppearance?.fillTint ?? spec.controlConfig?.fillTint ?? spec.controlConfig?.tint))
+            }
         case "checkbox":
             Toggle(spec.text, isOn: store.flagBinding(for: spec.id, initialValue: spec.isInitiallySelected ?? false))
-                .toggleStyle(HTMLToIOSCheckboxToggleStyle())
+                .toggleStyle(HTMLToIOSCheckboxToggleStyle(
+                    reversesContent: spec.style.reversesChildren == true,
+                    spacing: spec.controlConfig?.itemSpacing ?? spec.style.spacing ?? 8
+                ))
         case "radio":
             Toggle(spec.text, isOn: store.flagBinding(for: spec.id, initialValue: spec.isInitiallySelected ?? false))
-                .toggleStyle(HTMLToIOSRadioToggleStyle())
+                .toggleStyle(HTMLToIOSRadioToggleStyle(
+                    reversesContent: spec.style.reversesChildren == true,
+                    spacing: spec.controlConfig?.itemSpacing ?? spec.style.spacing ?? 8
+                ))
         case "slider":
             let config = spec.controlConfig
             Slider(
@@ -5841,7 +5882,8 @@ struct HTMLToIOSNativeNodeView: View {
                 tint: nativeControlAppearance?.tint ?? spec.controlConfig?.tint,
                 foreground: nativeControlAppearance?.foreground ?? spec.controlConfig?.selectedForeground ?? spec.style.foreground,
                 background: nativeControlAppearance?.trackTint ?? spec.controlConfig?.trackTint,
-                contentInsets: spec.controlConfig?.contentInsets ?? [0, 0, 0, 0]
+                contentInsets: spec.controlConfig?.contentInsets ?? [0, 0, 0, 0],
+                textAlignment: spec.style.textAlignment
             )
         case "activity-indicator", "loading":
             ProgressView()
@@ -6300,6 +6342,20 @@ struct HTMLToIOSNativeNodeView: View {
         case "center": return .center
         case "end", "flex-end", "bottom": return .bottom
         default: return .top
+        }
+    }
+    private var controlTextAlignment: TextAlignment {
+        switch spec.style.textAlignment {
+        case "center": return .center
+        case "end", "right": return .trailing
+        default: return .leading
+        }
+    }
+    private var inputTopAlignment: Alignment {
+        switch spec.style.textAlignment {
+        case "center": return .top
+        case "end", "right": return .topTrailing
+        default: return .topLeading
         }
     }
     private var isTextOnlyControl: Bool {
@@ -7530,6 +7586,10 @@ final class HTMLToIOSManagedTextView: UITextView, UITextViewDelegate {
     private var placeholderLeadingConstraint: NSLayoutConstraint?
     private var placeholderTrailingConstraint: NSLayoutConstraint?
 
+    var placeholderTextAlignment: NSTextAlignment = .natural {
+        didSet { placeholderLabel.textAlignment = placeholderTextAlignment }
+    }
+
     var placeholderAttributedText: NSAttributedString? {
         didSet { placeholderLabel.attributedText = placeholderAttributedText }
     }
@@ -8248,13 +8308,7 @@ final class HTMLToIOSNodeRenderer {
                 button.setAttributedTitle(attributedText(displayText(spec), spec: spec), for: .normal)
                 button.titleLabel?.numberOfLines = spec.style.textLineLimit ?? 0
                 button.titleLabel?.lineBreakMode = lineBreakMode(spec)
-                switch spec.style.textAlignment {
-                case "center": button.contentHorizontalAlignment = .center
-                case "right", "end", "flex-end": button.contentHorizontalAlignment = .trailing
-                case "justified": button.contentHorizontalAlignment = .fill
-                default: button.contentHorizontalAlignment = .leading
-                }
-                button.contentVerticalAlignment = .center
+                configureButtonAlignment(button, spec: spec)
                 button.isEnabled = spec.isEnabled
                 button.addAction(UIAction { [actionHandler] _ in actionHandler(spec.action) }, for: .touchUpInside)
                 view = button
@@ -8281,6 +8335,7 @@ final class HTMLToIOSNodeRenderer {
             field.attributedPlaceholder = attributedPlaceholder(spec)
             let initialValue = state.values[spec.id] ?? spec.textBehavior?.initialValue ?? spec.text
             field.attributedText = attributedText(initialValue, spec: spec)
+            field.textAlignment = controlTextAlignment(spec)
             field.isEnabled = spec.isEnabled && spec.textBehavior?.enabled != false
             field.isUserInteractionEnabled = spec.textBehavior?.editable != false
             field.keyboardType = keyboardType(spec.textBehavior?.keyboardType)
@@ -8302,6 +8357,7 @@ final class HTMLToIOSNodeRenderer {
             field.contentInsets = contentInsets(spec)
             let initialValue = state.values[spec.id] ?? spec.textBehavior?.initialValue ?? spec.text
             field.attributedText = attributedText(initialValue, spec: spec)
+            field.textAlignment = controlTextAlignment(spec)
             field.isSecureTextEntry = spec.semantic == "secure-field" || spec.semantic == "secure-input" || spec.textBehavior?.secure == true
             field.isEnabled = spec.isEnabled && spec.textBehavior?.enabled != false
             field.isUserInteractionEnabled = spec.textBehavior?.editable != false
@@ -8329,6 +8385,7 @@ final class HTMLToIOSNodeRenderer {
             let textView = HTMLToIOSManagedTextView()
             let initialValue = state.values[spec.id] ?? spec.textBehavior?.initialValue ?? spec.text
             textView.attributedText = attributedText(initialValue, spec: spec)
+            textView.textAlignment = controlTextAlignment(spec)
             textView.textContainer.lineFragmentPadding = 0
             textView.contentInsets = contentInsets(spec)
             textView.backgroundColor = .clear
@@ -8343,6 +8400,7 @@ final class HTMLToIOSNodeRenderer {
             textView.autocorrectionType = autocorrectionType(spec.textBehavior?.autocorrection)
             textView.maxLength = spec.textBehavior?.maxLength
             textView.placeholderAttributedText = attributedPlaceholder(spec)
+            textView.placeholderTextAlignment = controlTextAlignment(spec)
             textView.onValueChanged = { [state] value in state.values[spec.id] = value }
             textView.refreshPlaceholder()
             if spec.textBehavior?.autofocus == true {
@@ -8362,7 +8420,7 @@ final class HTMLToIOSNodeRenderer {
             if spec.action != nil {
                 toggle.addAction(UIAction { [actionHandler] _ in actionHandler(spec.action) }, for: .valueChanged)
             }
-            row.addArrangedSubview(label); row.addArrangedSubview(toggle)
+            arrangeLabeledControl(row, label: label, control: toggle, spec: spec)
             view = row
         case "checkbox", "radio":
             let button = HTMLToIOSStatefulButton(type: .system)
@@ -8374,7 +8432,8 @@ final class HTMLToIOSNodeRenderer {
             button.setImage(UIImage(systemName: offImage), for: .normal)
             button.setImage(UIImage(systemName: onImage), for: .selected)
             button.setTitle(spec.text, for: .normal)
-            button.contentHorizontalAlignment = .leading
+            configureButtonAlignment(button, spec: spec)
+            button.semanticContentAttribute = spec.style.reversesChildren == true ? .forceRightToLeft : .forceLeftToRight
             button.addAction(UIAction { [weak button, actionHandler] _ in
                 guard let button else { return }
                 button.isSelected = spec.semantic == "radio" ? true : !button.isSelected
@@ -8388,7 +8447,7 @@ final class HTMLToIOSNodeRenderer {
             let trigger = spec.children.first
             let button = HTMLToIOSStatefulButton(type: .system)
             button.setTitle(trigger?.text ?? spec.text, for: .normal)
-            button.contentHorizontalAlignment = .leading
+            configureButtonAlignment(button, spec: trigger ?? spec)
             button.isEnabled = spec.isEnabled
             let body = UIStackView()
             body.axis = .vertical
@@ -8436,7 +8495,7 @@ final class HTMLToIOSNodeRenderer {
         case "stepper":
             let row = UIStackView()
             row.axis = .horizontal; row.spacing = spec.controlConfig?.itemSpacing ?? 8
-            if !spec.text.isEmpty { row.addArrangedSubview(makeLabel(spec.text, spec: spec)) }
+            let rowLabel = spec.text.isEmpty ? nil : makeLabel(spec.text, spec: spec)
             let stepper = UIStepper()
             let config = spec.controlConfig
             stepper.minimumValue = config?.minimum ?? 0
@@ -8476,9 +8535,9 @@ final class HTMLToIOSNodeRenderer {
                     valueLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 28),
                     valueLabel.heightAnchor.constraint(equalToConstant: max(config?.sourceHeight ?? 32, 32)),
                 ])
-                row.addArrangedSubview(container)
+                arrangeLabeledControl(row, label: rowLabel, control: container, spec: spec)
             } else {
-                row.addArrangedSubview(stepper)
+                arrangeLabeledControl(row, label: rowLabel, control: stepper, spec: spec)
             }
             view = row
         case "segmented-control":
@@ -8519,7 +8578,7 @@ final class HTMLToIOSNodeRenderer {
             button.accessibilityIdentifier = spec.id
             button.accessibilityLabel = initialTitle
             button.accessibilityValue = initialTitle
-            button.contentHorizontalAlignment = .leading
+            configureButtonAlignment(button, spec: spec)
             button.showsMenuAsPrimaryAction = true
             button.menu = UIMenu(children: options.map { option in
                 UIAction(
@@ -8584,6 +8643,7 @@ final class HTMLToIOSNodeRenderer {
             searchBar.tintColor = UIColor(htmlToIOS: spec.controlConfig?.tint)
             searchBar.searchTextField.textColor = UIColor(htmlToIOS: spec.controlConfig?.selectedForeground ?? spec.style.foreground)
             searchBar.searchTextField.backgroundColor = UIColor(htmlToIOS: spec.controlConfig?.trackTint) ?? .clear
+            searchBar.searchTextField.textAlignment = controlTextAlignment(spec)
             if #available(iOS 16.4, *) {
                 searchBar.isEnabled = spec.isEnabled
             } else {
@@ -8639,7 +8699,7 @@ final class HTMLToIOSNodeRenderer {
         case "file-input":
             let button = HTMLToIOSStatefulButton(type: .system)
             button.setTitle(displayText(spec), for: .normal)
-            button.contentHorizontalAlignment = .leading
+            configureButtonAlignment(button, spec: spec)
             button.isEnabled = spec.isEnabled
             if spec.action != nil {
                 button.addAction(UIAction { [actionHandler] _ in actionHandler(spec.action) }, for: .touchUpInside)
@@ -9263,6 +9323,65 @@ final class HTMLToIOSNodeRenderer {
         )
     }
 
+    private func controlTextAlignment(_ spec: HTMLToIOSNodeSpec) -> NSTextAlignment {
+        switch spec.style.textAlignment {
+        case "center": return .center
+        case "end", "right", "flex-end": return .right
+        case "justify", "justified": return .justified
+        default: return .left
+        }
+    }
+
+    private func controlHorizontalAlignment(_ spec: HTMLToIOSNodeSpec) -> UIControl.ContentHorizontalAlignment {
+        let value = [nil, "normal", "stretch"].contains(spec.style.justifyContent)
+            ? spec.style.textAlignment
+            : spec.style.justifyContent
+        switch value {
+        case "center": return .center
+        case "right", "end", "flex-end": return .trailing
+        case "stretch", "justify", "justified": return .fill
+        default: return .leading
+        }
+    }
+
+    private func controlVerticalAlignment(_ spec: HTMLToIOSNodeSpec) -> UIControl.ContentVerticalAlignment {
+        switch spec.style.alignItems {
+        case "start", "flex-start", "top": return .top
+        case "end", "flex-end", "bottom": return .bottom
+        case "stretch": return .fill
+        default: return .center
+        }
+    }
+
+    private func configureButtonAlignment(_ button: UIButton, spec: HTMLToIOSNodeSpec) {
+        button.contentHorizontalAlignment = controlHorizontalAlignment(spec)
+        button.contentVerticalAlignment = controlVerticalAlignment(spec)
+        button.titleLabel?.textAlignment = controlTextAlignment(spec)
+    }
+
+    private func arrangeLabeledControl(_ row: UIStackView, label: UIView?, control: UIView, spec: HTMLToIOSNodeSpec) {
+        let reversed = spec.style.reversesChildren == true
+        if reversed {
+            row.addArrangedSubview(control)
+            if let label { row.addArrangedSubview(label) }
+        } else {
+            if let label { row.addArrangedSubview(label) }
+            row.addArrangedSubview(control)
+        }
+        switch spec.style.justifyContent {
+        case "center": row.distribution = .equalCentering
+        case "space-between", "space-around", "space-evenly": row.distribution = .equalSpacing
+        default: row.distribution = .fill
+        }
+        switch spec.style.alignItems {
+        case "start", "flex-start", "top": row.alignment = .top
+        case "end", "flex-end", "bottom": row.alignment = .bottom
+        case "stretch": row.alignment = .fill
+        case "baseline": row.alignment = .firstBaseline
+        default: row.alignment = .center
+        }
+    }
+
     private func configureSuggestions(_ field: UITextField, spec: HTMLToIOSNodeSpec) {
         guard let options = spec.controlConfig?.options, !options.isEmpty else { return }
         let button = UIButton(type: .system)
@@ -9282,8 +9401,13 @@ final class HTMLToIOSNodeRenderer {
                 field?.sendActions(for: .editingChanged)
             }
         })
-        field.rightView = button
-        field.rightViewMode = .always
+        if spec.style.reversesChildren == true {
+            field.leftView = button
+            field.leftViewMode = .always
+        } else {
+            field.rightView = button
+            field.rightViewMode = .always
+        }
     }
 
     private func attributedPlaceholder(_ spec: HTMLToIOSNodeSpec) -> NSAttributedString {
@@ -9296,6 +9420,7 @@ final class HTMLToIOSNodeRenderer {
             style: spec.style.fontStyle
         )
         let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = controlTextAlignment(spec)
         if let lineHeight = placeholder?.lineHeight, lineHeight > 0 {
             paragraph.minimumLineHeight = lineHeight
             paragraph.maximumLineHeight = lineHeight
@@ -12327,6 +12452,18 @@ def build_native_structure_manifest(
                 else "switch spec.style.alignItems" in runtime_text
                 and "stack.alignment = .fill" in runtime_text
                 and "addTrailingContentSpacerIfNeeded" in runtime_text
+            ),
+        },
+        "nativeControlContentAlignment": {
+            "required": True,
+            "consumed": (
+                ".multilineTextAlignment(controlTextAlignment)" in runtime_text
+                and "reversesContent: spec.style.reversesChildren == true" in runtime_text
+                and "textAlignment: spec.style.textAlignment" in runtime_text
+                if ui_stack == "swiftui"
+                else "configureButtonAlignment(button, spec: spec)" in runtime_text
+                and "field.textAlignment = controlTextAlignment(spec)" in runtime_text
+                and "arrangeLabeledControl" in runtime_text
             ),
         },
         "parentWidthStretch": {

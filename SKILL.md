@@ -88,7 +88,7 @@ description: 将本地或可运行的移动端 HTML/CSS/JavaScript 高保真原�
 55. HTML 中带点击行为的非按钮元素也必须由原生事件宿主承担点击。Popover 的触发器 anchor 与 panel rect 分开保存，禁止用触发器尺寸压缩弹层。
 56. 每个线性容器只有一份 `geometrySystem`，按父内容盒、intrinsic 子项、父相对尺寸、剩余空间和交叉轴对齐顺序求解；`equal-share` 只来自明确强证据，两套生成器不得重新猜测。
 57. 一个滚动轴只能有一个原生 owner；嵌套横向集合只拥有横轴，不得让 Screen Container 再包装同轴 Scroll。
-58. 控件内部 normal/selected/checked 等状态配置必须在 `native-control-configuration-plan.json` 中归一化并由两套生成器共同消费。
+58. 控件内部 normal/selected/checked 等状态，以及文字对齐、复合内容顺序和 item spacing，必须在统一契约中归一化并由两套生成器共同消费。输入值与 placeholder 不得跳位，Checkbox/Radio/Switch/Stepper/Select 不得写死 leading 或固定前后顺序；无文字对齐语义的纯系统指示控件保留 Apple 内部布局。
 59. 回归使用 L1 控件、L2 完整页面和 L3 状态/弹层基准，同时检查构建、结构、原生控件比例和分维度视觉质量；不得为了单例像素分数牺牲原生架构。
 60. 系统导航标题模式由显式契约或来源几何决定，不能全局写死；系统控件同时消费语义和有界几何，视觉适配不得重写系统状态机。
 61. 系统导航替换来源顶部栏时必须输出来源 frame、已消费 chrome 高度、保留内容间距、Safe Area owner 和锚点策略，禁止重复 inset。

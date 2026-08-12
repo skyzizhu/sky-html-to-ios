@@ -21,6 +21,13 @@
 - wrapper 只能承载阴影、渐变、非对称装饰或外框布局，不能截获系统控件事件与无障碍语义。
 - 来源尺寸与系统固有尺寸明显不一致时，配置计划自动选择 `semantic-wrapper`：wrapper 拥有外框尺寸、背景、边框、圆角和阴影，内部系统控件继续拥有交互、焦点、状态机和无障碍。禁止仅为匹配外框尺寸把系统控件改造成普通 View。
 
+## 内容对齐与顺序
+
+- 所有带文字的系统控件统一消费 computed `text-align`；输入值、placeholder、Button/Select/File/Disclosure 标题必须保持一致，禁止空态与编辑态切换时跳位。
+- 复合控件读取 `justify-content`、`align-items`、实测 item spacing 与 `row-reverse`/`reversesChildren`。Checkbox/Radio 图标、Switch/Stepper 标签、输入建议按钮和 Select 内容不得固定为 leading 或固定前后顺序。
+- Slider、Progress、PageControl、ActivityIndicator 等没有文字内容对齐语义的系统控件保留 Apple 内部布局；外框位置、尺寸和对齐由父容器与 wrapper 契约承担。
+- 禁止用固定负 padding 抵消某个 SDK 版本的 TextEditor/UITextView 默认 inset。来源 padding 由唯一 content-inset owner 消费，无法公开配置的系统内部留白作为系统固有行为保留。
+
 ## 状态规则
 
 系统控件必须保留原生状态机。`UIControl.Event`、editing lifecycle、Binding 或 selection 驱动视觉状态；禁止用普通 View 的点击手势伪造 pressed、selected、focused 或 disabled。缺少某个来源状态时保留系统行为或继承 normal，不猜测截图专用颜色。

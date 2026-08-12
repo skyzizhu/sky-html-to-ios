@@ -647,9 +647,13 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             file_input = node("controls.file", root_node["id"], "file-input", "Choose file")
             switch = node("controls.switch", root_node["id"], "switch", "Enabled")
             switch["state"] = {"checked": True}
+            switch["style"].update({"flexDirection": "row-reverse", "textAlign": "right", "justifyContent": "space-between"})
+            checkbox["style"].update({"flexDirection": "row-reverse", "textAlign": "center"})
+            select["style"]["textAlign"] = "right"
             switch_thumb = node("controls.switch-thumb", switch["id"], "decoration")
             switch_thumb["style"]["backgroundColor"] = "rgb(255, 255, 255)"
             search_input = node("controls.search-input", root_node["id"], "search-input")
+            search_input["style"]["textAlign"] = "center"
             suggestion_input = node("controls.city", root_node["id"], "text-input")
             suggestion_input["state"] = {"listID": "cities", "enabled": True}
             suggestion_group = node("controls.cities", root_node["id"], "option-group")
@@ -810,6 +814,9 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "inputSuggestionMenu",
                 "multiSelectionTitle(controlID:",
                 "toggleMultiSelection(controlID:",
+                ".multilineTextAlignment(controlTextAlignment)",
+                "inputTopAlignment",
+                "reversesContent: spec.style.reversesChildren == true",
             ):
                 self.assertIn(expected, swiftui_runtime)
             self.assertEqual(swiftui_runtime.count('case "search-bar":'), 1)
@@ -853,14 +860,24 @@ class GenerateIOSFromIRTests(unittest.TestCase):
                 "styledView.accessibilityIdentifier = spec.id",
                 "configureSuggestions(field, spec: spec)",
                 "field.rightViewMode = .always",
+                "field.leftViewMode = .always",
                 "pageControl.currentPageIndicatorTintColor",
                 "applyNativeControlStateAppearance",
                 "nativeControlStateName",
                 "setContentCompressionResistancePriority(.required",
                 'contract.widthKind == "fixed"',
                 'contract.heightKind == "fixed"',
+                "configureButtonAlignment(button, spec: spec)",
+                "field.textAlignment = controlTextAlignment(spec)",
+                "textView.textAlignment = controlTextAlignment(spec)",
+                "searchBar.searchTextField.textAlignment = controlTextAlignment(spec)",
+                "arrangeLabeledControl(row, label: label, control: toggle, spec: spec)",
+                "button.semanticContentAttribute = spec.style.reversesChildren == true",
             ):
                 self.assertIn(expected, uikit_runtime)
+            self.assertNotIn("button.contentHorizontalAlignment = .leading", uikit_runtime)
+            self.assertNotIn(".padding(.horizontal, -5)", swiftui_runtime)
+            self.assertNotIn(".padding(.vertical, -8)", swiftui_runtime)
 
     def test_multi_page_payload_and_modified_file_ownership(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1615,7 +1632,7 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn('? view.keyboardLayoutGuide.topAnchor', uikit_runtime)
             self.assertIn('screen.bottomBarPlacement == "viewport-overlay"', uikit_runtime)
             self.assertIn('? view.bottomAnchor', uikit_runtime)
-            self.assertIn('case "center": button.contentHorizontalAlignment = .center', uikit_runtime)
+            self.assertIn("configureButtonAlignment(button, spec: spec)", uikit_runtime)
             self.assertIn('CGFloat(screen.fixedArtboardCropInsets?[2] ?? 0)', uikit_runtime)
             self.assertIn("func scrollViewDidScroll(_ scrollView: UIScrollView)", uikit_runtime)
             self.assertIn('case "appearance-change":', uikit_runtime)
@@ -2784,7 +2801,8 @@ class GenerateIOSFromIRTests(unittest.TestCase):
             self.assertIn("nativeFormElementOwnsIdentifier", swiftui_runtime)
             self.assertIn(".accessibilityIdentifier(spec.id)", swiftui_runtime)
             self.assertIn("prompt: inputPrompt", swiftui_runtime)
-            self.assertIn(".padding(.horizontal, -5)", swiftui_runtime)
+            self.assertIn(".multilineTextAlignment(controlTextAlignment)", swiftui_runtime)
+            self.assertNotIn(".padding(.horizontal, -5)", swiftui_runtime)
             self.assertIn("HTMLToIOSControlButtonStyle", swiftui_runtime)
             self.assertIn("activeControlVisualStyle", swiftui_runtime)
 
