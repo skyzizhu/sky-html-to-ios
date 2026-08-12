@@ -1,0 +1,67 @@
+name: Feature request
+description: Propose a new mapping, workflow capability, validation rule, or compatibility improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Feature area
+      options:
+        - HTML/CSS/JavaScript extraction
+        - Native control mapping
+        - Layout and responsive adaptation
+        - Navigation, presentation, or interaction
+        - SwiftUI generation
+        - UIKit generation
+        - Xcode integration
+        - Validation and benchmarking
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the concrete limitation or user workflow, rather than only naming a solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Explain how the Skill should detect, map, generate, and validate this capability.
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Example HTML or interaction
+      description: Add a minimal example, standards reference, or public prototype when possible.
+  - type: textarea
+    id: native
+    attributes:
+      label: Expected native implementation
+      description: Name the preferred SwiftUI/UIKit primitives and any required fallback.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - [ ] The source pattern is detected deterministically.
+        - [ ] SwiftUI and UIKit consume the same contract.
+        - [ ] Generated projects compile.
+        - [ ] Regression coverage is included.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing Issues for a similar request.
+          required: true
+        - label: The request is related to converting runnable HTML/CSS/JavaScript into native iOS UI.
+          required: true

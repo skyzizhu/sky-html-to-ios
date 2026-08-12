@@ -1,0 +1,85 @@
+name: UI fidelity report
+description: Report a systematic visual or geometric mismatch between rendered HTML and generated native UI.
+title: "[Fidelity]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for repeatable fidelity problems. Prefer source geometry and generated reports over screenshot-only observations.
+  - type: dropdown
+    id: dimension
+    attributes:
+      label: Primary mismatch dimension
+      options:
+        - Structure or native component choice
+        - Position, size, or spacing
+        - Text measurement or wrapping
+        - Alignment or child order
+        - Color, border, corner, or shadow
+        - System control internal appearance
+        - Navigation, tab bar, or safe area
+        - Scroll, fixed region, or bottom bar
+        - Animation or interaction state
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: stack
+    attributes:
+      label: Target UI stack
+      options:
+        - SwiftUI
+        - UIKit
+        - Both
+    validations:
+      required: true
+  - type: textarea
+    id: mismatch
+    attributes:
+      label: Mismatch details
+      description: Identify the affected selector/node, source behavior, and generated behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Deterministic evidence
+      description: Include computed CSS, DOM order, source/native geometry, UI IR node IDs, or validation report excerpts.
+    validations:
+      required: true
+  - type: textarea
+    id: attachments
+    attributes:
+      label: Visual evidence
+      description: Attach normalized HTML and iOS screenshots when available, and state the viewport/device used.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment and revision
+      placeholder: |
+        Source viewport:
+        Simulator/device:
+        Xcode/iOS SDK:
+        sky-html-to-ios commit or release:
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Generalization
+      description: Explain whether this affects one page, one control family, or a reusable conversion rule.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: The mismatch is reproducible from runnable HTML/CSS/JavaScript.
+          required: true
+        - label: I searched existing Issues for the same mismatch.
+          required: true
+        - label: Attached artifacts contain no sensitive information.
+          required: true

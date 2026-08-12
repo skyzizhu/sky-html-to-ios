@@ -1,0 +1,91 @@
+name: Bug report
+description: Report a conversion, build, runtime, or generated-code defect.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Remove private data from prototypes and logs before attaching them.
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Affected stage
+      options:
+        - HTML/CSS/JavaScript extraction
+        - Mobile screen and state detection
+        - Native control or container mapping
+        - SwiftUI code generation
+        - UIKit code generation
+        - Xcode project integration
+        - Build or runtime validation
+        - Visual comparison
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: stack
+    attributes:
+      label: Target UI stack
+      options:
+        - SwiftUI
+        - UIKit
+        - Both
+        - Not applicable
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Problem description
+      description: Explain what happened and what you expected instead.
+      placeholder: The generated control uses..., but the rendered HTML uses...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Run the Skill with...
+        2. Choose UIKit...
+        3. Build the generated project...
+        4. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Source prototype
+      description: Link a minimal repository or attach a reduced HTML/CSS/JS example. Do not upload secrets or private customer data.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: |
+        macOS:
+        Xcode:
+        iOS deployment target:
+        Simulator/device:
+        sky-html-to-ios commit or release:
+    validations:
+      required: true
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: Relevant artifacts
+      description: Attach the orchestration report, validation report, logs, screenshots, or a focused diff when available.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I verified that the source is runnable HTML/CSS/JavaScript, not only a screenshot.
+          required: true
+        - label: I removed passwords, tokens, customer data, and other sensitive information.
+          required: true
+        - label: I searched existing Issues for the same problem.
+          required: true
