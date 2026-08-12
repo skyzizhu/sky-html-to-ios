@@ -1,5 +1,7 @@
 # sky-html-to-ios
 
+[![CI](https://github.com/skyzizhu/sky-html-to-ios/actions/workflows/ci.yml/badge.svg)](https://github.com/skyzizhu/sky-html-to-ios/actions/workflows/ci.yml)
+
 **English** | [简体中文](README.zh-CN.md)
 
 Convert runnable, high-fidelity HTML/CSS/JavaScript mobile prototypes into compilable and maintainable native iOS interfaces. Screenshot comparison and visual correction are optional post-generation safeguards, not conversion prerequisites.
@@ -486,6 +488,20 @@ Geometry instrumentation expands the accessibility tree only under generated UI-
 - Write access to the destination project
 
 Node resolution checks explicit `--node`, `CODEX_NODE`, `PATH`, and the bundled Codex Node runtime. Xcode validation requires macOS.
+
+### Repository quality checks
+
+Pull Requests and pushes to `main` run deterministic validation on Python 3.9 and 3.12. CI validates Skill metadata and progressive disclosure, compiles Python sources, checks whitespace errors, and runs the complete standard-library test suite. Xcode, Simulator, and visual benchmarks remain explicit macOS validation stages.
+
+Run the equivalent deterministic checks locally:
+
+```bash
+python3 -m pip install Pillow
+python3 scripts/validate_skill.py .
+python3 -m compileall -q scripts tests
+git diff --check
+python3 -m unittest discover -s tests -p 'test_*.py'
+```
 
 ## Installation and Usage
 
